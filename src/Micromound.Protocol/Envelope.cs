@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -70,13 +71,31 @@ public static class ProtocolVersion
     public const int Current = 0;
 }
 
-/// <summary>Shared serializer options — snake_case via explicit JsonPropertyName, no surprises.</summary>
+/// <summary>
+/// Shared serializer options — snake_case via explicit JsonPropertyName, no surprises.
+///
+/// Every setting here is load-bearing for the M3 C mirror, because these bytes are what gets
+/// signed and hashed. Two implementations that agree on the data and disagree on the encoding
+/// produce different digests, and the disagreement only shows up as an unverifiable device in
+/// the field.
+/// </summary>
 public static class ProtocolJson
 {
     public static readonly JsonSerializerOptions Options = new()
     {
+        // Every field always present, even when null. That looks wasteful on a constrained device
+        // and is the opposite: a fixed shape means the firmware encoder never branches on whether
+        // an optional field is set, and the golden fixtures pin one layout rather than a family.
         DefaultIgnoreCondition = JsonIgnoreCondition.Never,
         PropertyNamingPolicy = null, // names are explicit on every contract
+
+        // System.Text.Json's default encoder escapes conservatively for HTML contexts: '+' becomes
+        // +, '"' inside a string becomes ". Legal JSON, and a trap here — no hand-written
+        // C encoder emits those forms, so the mirror's digests would differ for identical data.
+        // Relaxed escaping produces the minimal, natural encoding: literal '+', and \" for quotes.
+        // "Unsafe" refers only to embedding output in HTML, which a signed wire format never does.
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+
         WriteIndented = false
     };
 }

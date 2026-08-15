@@ -17,8 +17,8 @@ public class AuthorityTests
         CharterId = Guid.NewGuid().ToString(),
         MoundId = moundId,
         MissionRef = "m1",
-        IssuedAt = Now.ToString("O"),
-        ExpiresAt = Now.AddHours(1).ToString("O"),
+        IssuedAt = Now.ToWire(),
+        ExpiresAt = Now.AddHours(1).ToWire(),
         LeaseTtlSeconds = 900,
         ActionCeiling = "benign",
         Capabilities = ["sense.temp", "act.relay_1"],
@@ -51,12 +51,50 @@ public class AuthorityTests
 
         var later = Now.AddSeconds(charter.LeaseTtlSeconds + 1);
         Assert.True(mound.QuiesceIfExpired(later));
-        Assert.Equal("observe_only", mound.State);
+
+        // PROTOCOL.md §5: the charter is retained for reporting but authorizes nothing, and the
+        // mound reports `quiesced` rather than pretending it was never chartered.
+        Assert.Equal("quiesced", mound.State);
         Assert.Equal("refused", mound.Actuate("act.relay_1", later).Outcome);
 
         // Renewal after expiry does nothing without a fresh charter.
         mound.RenewLease(later);
         Assert.Equal("refused", mound.Actuate("act.relay_1", later).Outcome);
+    }
+
+    [Fact]
+    public void Quiescing_queues_a_report_the_colony_reads_on_reconnect()
+    {
+        var mound = new SimMound("mm-1");
+        var charter = Benign("mm-1");
+        mound.OfferCharter(charter, Now);
+        mound.DrainUplink();
+
+        mound.QuiesceIfExpired(Now.AddSeconds(charter.LeaseTtlSeconds + 1));
+
+        var backlog = mound.DrainUplink();
+        Assert.Contains(backlog, e =>
+            e.Kind == EnvelopeKinds.MoundSync && e.Body.GetRawText().Contains("quiesced"));
+    }
+
+    [Fact]
+    public void Only_a_fresh_charter_lifts_a_quiesce()
+    {
+        var mound = new SimMound("mm-1");
+        var charter = Benign("mm-1");
+        mound.OfferCharter(charter, Now);
+
+        var later = Now.AddSeconds(charter.LeaseTtlSeconds + 1);
+        mound.QuiesceIfExpired(later);
+        Assert.Equal("refused", mound.Actuate("act.relay_1", later).Outcome);
+
+        var renewed = Benign("mm-1");
+        renewed.IssuedAt = later.ToWire();
+        renewed.ExpiresAt = later.AddHours(1).ToWire();
+        Assert.True(mound.OfferCharter(renewed, later).IsValid);
+
+        Assert.Equal("chartered", mound.State);
+        Assert.Equal("succeeded", mound.Actuate("act.relay_1", later, requestedOnSeconds: 5).Outcome);
     }
 
     [Fact]
@@ -127,7 +165,7 @@ public class EnvelopeChainTests
             mound.EnqueueUplink(EnvelopeKinds.MoundSync, new { beat = i }, Now.AddSeconds(i));
 
         var backlog = mound.DrainUplink().ToList();
-        backlog[1].SentAt = Now.AddDays(1).ToString("O"); // tamper
+        backlog[1].SentAt = Now.AddDays(1).ToWire(); // tamper
 
         var result = EnvelopeValidator.ValidateChain(backlog, "");
         Assert.False(result.IsValid);
@@ -150,7 +188,7 @@ public class EnvelopeChainTests
     {
         var mission = new Envelope
         {
-            MoundId = "mm-1", Seq = 0, SentAt = Now.ToString("O"),
+            MoundId = "mm-1", Seq = 0, SentAt = Now.ToWire(),
             Kind = EnvelopeKinds.Mission
         };
         Assert.True(EnvelopeValidator.Validate(mission).IsValid);
@@ -164,7 +202,7 @@ public class EnvelopeChainTests
     {
         var envelope = new Envelope
         {
-            MoundId = "mm-1", Seq = 0, SentAt = Now.ToString("O"),
+            MoundId = "mm-1", Seq = 0, SentAt = Now.ToWire(),
             Kind = "mystery_kind"
         };
         var result = EnvelopeValidator.Validate(envelope);

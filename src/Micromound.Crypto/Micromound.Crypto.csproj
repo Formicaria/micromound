@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Crypto</RootNamespace>
+    <Description>Ed25519 signing and verification for MICROMOUND envelopes. Micromound.Protocol declares the signing discipline; this project supplies one implementation, so the wire contracts stay dependency-free and an Edge Queen may swap in libsodium later.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

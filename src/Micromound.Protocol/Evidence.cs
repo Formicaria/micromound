@@ -2,6 +2,26 @@ using System.Text.Json.Serialization;
 
 namespace Micromound.Protocol;
 
+/// <summary>
+/// The closed set of action outcomes — PROTOCOL.md §6.
+/// <c>clamped</c> means the work happened but a limit narrowed it; <c>unverified</c> means the
+/// work may have happened but nothing proves it, and the Verifier treats it as failed-until-proven.
+/// </summary>
+public static class ActionOutcomes
+{
+    public const string Succeeded = "succeeded";
+    public const string Failed = "failed";
+    public const string Clamped = "clamped";
+    public const string Refused = "refused";
+    public const string Stopped = "stopped";
+    public const string Unverified = "unverified";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Succeeded, Failed, Clamped, Refused, Stopped, Unverified
+    };
+}
+
 /// <summary>Outcome of one actuation — PROTOCOL.md §6. Commands are not evidence.</summary>
 public sealed class ActionRecord
 {
@@ -11,10 +31,16 @@ public sealed class ActionRecord
     [JsonPropertyName("parameters")] public Dictionary<string, double> Parameters { get; set; } = [];
     [JsonPropertyName("started_at")] public string StartedAt { get; set; } = "";
     [JsonPropertyName("ended_at")] public string EndedAt { get; set; } = "";
-    /// <summary>succeeded | failed | clamped | refused | stopped | unverified</summary>
-    [JsonPropertyName("outcome")] public string Outcome { get; set; } = "unverified";
+    /// <summary>succeeded | failed | clamped | refused | stopped | unverified — see <see cref="ActionOutcomes"/>.</summary>
+    [JsonPropertyName("outcome")] public string Outcome { get; set; } = ActionOutcomes.Unverified;
     /// <summary>Ids of evidence items proving the outcome. Empty ⇒ outcome is `unverified`.</summary>
     [JsonPropertyName("evidence_refs")] public List<string> EvidenceRefs { get; set; } = [];
+    /// <summary>
+    /// Why this outcome, in words: the limit that clamped it, the rule that refused it, the
+    /// evidence that was missing. Additive field (PROTOCOL.md §10) — SAFETY.md prohibits silent
+    /// failure, so every non-success outcome carries its reason on the wire.
+    /// </summary>
+    [JsonPropertyName("detail")] public string Detail { get; set; } = "";
 }
 
 /// <summary>One sensor window, reading set, or content-addressed image reference.</summary>
