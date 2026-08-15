@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Protocol</RootNamespace>
+    <Description>Shared MICROMOUND wire contracts: envelopes, charters, evidence, validation. Normative source: docs/PROTOCOL.md.</Description>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,18 @@
+<Project>
+  <!--
+    Shared build settings for every MICROMOUND .NET project, mirroring ANTHILL's
+    Directory.Build.props so the two solutions stay convention-compatible.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <MicromoundVersion>0.0.1</MicromoundVersion>
+    <Version>$(MicromoundVersion)</Version>
+    <Authors>ANTHILL Project</Authors>
+    <Product>MICROMOUND</Product>
+  </PropertyGroup>
+</Project>
