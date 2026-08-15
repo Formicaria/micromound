@@ -6,3 +6,7 @@ publish/
 .idea/
 firmware/esp32/build/
 firmware/esp32/sdkconfig
+
+# dotnet pack output — packages are published, never committed
+artifacts/
+*.nupkg
