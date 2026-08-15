@@ -12,8 +12,8 @@ public class CharterValidationTests
         CharterId = "c1",
         MoundId = "mm-1",
         MissionRef = "m1",
-        IssuedAt = Now.AddMinutes(-1).ToString("O"),
-        ExpiresAt = Now.AddHours(1).ToString("O"),
+        IssuedAt = Now.AddMinutes(-1).ToWire(),
+        ExpiresAt = Now.AddHours(1).ToWire(),
         LeaseTtlSeconds = 900,
         ActionCeiling = "benign",
         Capabilities = ["sense.temp"],
@@ -48,7 +48,7 @@ public class CharterValidationTests
     public void Expired_charter_is_refused()
     {
         var charter = Valid();
-        charter.ExpiresAt = Now.AddMinutes(-5).ToString("O");
+        charter.ExpiresAt = Now.AddMinutes(-5).ToWire();
         var result = CharterValidator.Validate(charter, "mm-1", Now);
         Assert.False(result.IsValid);
     }

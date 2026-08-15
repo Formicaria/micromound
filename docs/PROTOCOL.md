@@ -36,8 +36,35 @@ Every message either direction is one signed envelope:
 
 - `seq` is per-mound, monotonic, gap-checkable. `prev_digest` hash-chains a mound's uplink
   stream so offline gaps and tampering are detectable (§6).
-- `sig`: Ed25519. Mounds sign uplink with their device key; ANTHILL signs downlink with the
-  colony key. Unsigned or badly signed envelopes are dropped and audited, never processed.
+- `sig`: `ed25519:<lowercase hex>`. Mounds sign uplink with their device key; ANTHILL signs
+  downlink with the colony key. Unsigned or badly signed envelopes are dropped and audited, never
+  processed. There is no unsigned mode and no trust-on-first-use: a key the verifier's directory
+  does not hold is a refusal, because enrollment (§3) is the only way a key becomes known.
+- The signature covers the envelope's **canonical bytes**: every field except `sig` itself,
+  serialized with the shared options. `prev_digest` hashes those same bytes, so signing never
+  perturbs the chain and the chain never covers the signature — both are checked, separately.
+  A device can therefore sign and hash one buffer it has already built, which is what makes the
+  reduced ESP32 profile (§8) practical.
+- Refusals are specific, not boolean: `missing`, `malformed_format`, `unsupported_algorithm`,
+  `unknown_key`, `bad_signature`. "Dropped and audited" is only auditable if the reason survives.
+
+### Encoding rules (normative — these bytes are what gets signed)
+
+Two implementations that agree on the data and disagree on the encoding produce different
+digests, and the disagreement surfaces as an unverifiable device in the field. So:
+
+- **Timestamps** are exactly `yyyy-MM-ddTHH:mm:ssZ` — UTC, second precision, no fractional
+  digits, no numeric offset. Twenty fixed bytes, formattable with one `snprintf`. Emitters must
+  produce this form; readers should accept an offset form too, because a mound built against an
+  older library is better read than bricked.
+- **Escaping is minimal**: `+` is a literal `+`, a quote inside a string is `\"`. Not `+`
+  and not `"` — no hand-written C encoder emits those, and the C# side must not either.
+- **Every field is always present**, including nulls for unset optional limits. A fixed shape
+  means the firmware encoder never branches on whether an optional field is set.
+- Field order is declaration order, and it is part of the contract.
+
+`tests/Micromound.Tests/Golden/` freezes the resulting bytes; the M3 C mirror is verified against
+those files.
 - Unknown `kind` or unknown fields: ignore fields, refuse unknown kinds with an `ack` carrying
   `status: "refused_unknown_kind"`. Refusal is loud, never silent (ContractGate discipline).
 
@@ -89,7 +116,19 @@ Every message either direction is one signed envelope:
 ## 6. Action records and evidence
 
 - Every actuation produces an `action_record`: capability used, parameters, charter_id,
-  start/end, outcome code, and references to evidence items.
+  start/end, outcome code, references to evidence items, and a `detail` string.
+- Outcomes are a closed set: `succeeded`, `failed`, `clamped`, `refused`, `stopped`,
+  `unverified`. `clamped` means the work happened but a limit narrowed it — the record carries
+  the parameters that actually ran, not the ones requested.
+- `detail` carries the reason for any non-plain-success outcome: the limit that clamped it, the
+  rule that refused it, the evidence that was missing. SAFETY.md prohibits silent failure, so a
+  refusal without a reason is itself a contract violation. Refused actions are queued for the
+  colony exactly like successful ones.
+- Evidence gating is mechanical. An outcome that asserts physical work happened (`succeeded`,
+  `clamped`) survives only if every referenced evidence item resolves, parses, and — where
+  `evidence.required_for` covers the capability — was captured within `min_interval_s` of the
+  action start. Anything else becomes `unverified`. A `refused` or `stopped` record needs no
+  proof: it is a definite outcome, not a claim about the physical world.
 - `evidence_bundle`: batched sensor windows, images (content-addressed, fetched lazily),
   telemetry summaries. Bundles are hash-chained via envelope `prev_digest`.
 - An action whose referenced evidence is missing, stale, or contradictory is `unverified`.

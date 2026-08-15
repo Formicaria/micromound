@@ -1,0 +1,25 @@
+# MICROMOUND canonical wire bytes — golden fixture
+#
+# Frozen by tests/Micromound.Tests/Golden/CanonicalBytesTests.cs.
+# The M3 ESP32 C mirror must produce byte-identical output for the same input.
+# `sig` is excluded from canonical bytes by construction — see Envelope.CanonicalBytes.
+
+## seq 0 — mound_sync
+prev_digest: (chain anchor)
+canonical:   {"v":0,"id":"11111111-1111-4111-8111-111111111111","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":0,"sent_at":"2026-08-14T21:04:11Z","kind":"mound_sync","body":{"state":"chartered","uptime_s":3600},"prev_digest":"","sig":""}
+digest:      sha256:a7d0bbc72703cdac778eba6545e792992a9234f3c52fdc0cfd5bd214182316e3
+
+## seq 1 — action_record
+prev_digest: sha256:a7d0bbc72703cdac778eba6545e792992a9234f3c52fdc0cfd5bd214182316e3
+canonical:   {"v":0,"id":"22222222-2222-4222-8222-222222222222","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":1,"sent_at":"2026-08-14T21:04:12Z","kind":"action_record","body":{"action_id":"a0000000-0000-4000-8000-000000000001","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","parameters":{"on_s":30},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:41Z","outcome":"succeeded","evidence_refs":["e0000000-0000-4000-8000-000000000001"],"detail":""},"prev_digest":"sha256:a7d0bbc72703cdac778eba6545e792992a9234f3c52fdc0cfd5bd214182316e3","sig":""}
+digest:      sha256:a72746246f87ed89710a7521abbef404c372d351a130e07a893c5d80a5896cbb
+
+## seq 2 — evidence_bundle
+prev_digest: sha256:a72746246f87ed89710a7521abbef404c372d351a130e07a893c5d80a5896cbb
+canonical:   {"v":0,"id":"33333333-3333-4333-8333-333333333333","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":2,"sent_at":"2026-08-14T21:04:13Z","kind":"evidence_bundle","body":{"bundle_id":"b0000000-0000-4000-8000-000000000001","items":[{"evidence_id":"e0000000-0000-4000-8000-000000000001","type":"sensor_window","captured_at":"2026-08-14T21:04:41Z","source":"sim.act.relay_1","payload_json":"{\"before\":0,\"after\":1}","content_digest":""}],"evicted_acked_items":0},"prev_digest":"sha256:a72746246f87ed89710a7521abbef404c372d351a130e07a893c5d80a5896cbb","sig":""}
+digest:      sha256:a6d3129c33948b1b2733dd0c293a77848016c7d9169dcde44cb080a6c153e44a
+
+## seq 3 — charter
+prev_digest: sha256:a6d3129c33948b1b2733dd0c293a77848016c7d9169dcde44cb080a6c153e44a
+canonical:   {"v":0,"id":"44444444-4444-4444-8444-444444444444","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":3,"sent_at":"2026-08-14T21:04:14Z","kind":"charter","body":{"charter_id":"c0000000-0000-4000-8000-000000000001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","mission_ref":"mission-0001","issued_at":"2026-08-14T21:04:11Z","expires_at":"2026-08-14T22:04:11Z","lease_ttl_s":900,"action_ceiling":"benign","capabilities":["sense.temp","act.relay_1"],"limits":{"act.relay_1":{"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":null}},"evidence":{"required_for":["act.*"],"min_interval_s":60},"safe_state":"all_actuators_off","sync_interval_s":15},"prev_digest":"sha256:a6d3129c33948b1b2733dd0c293a77848016c7d9169dcde44cb080a6c153e44a","sig":""}
+digest:      sha256:2de31cc606be0cfaf95b4d5b50eb25bd01c85ddcec20f5ea71c9db458fb646ce

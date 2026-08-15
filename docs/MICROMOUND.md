@@ -55,7 +55,7 @@ against the ANTHILL repository when M1 begins.
 
 | Phase | Status | Scope |
 |---|---|---|
-| M0 — Protocol + simulator | **In progress** | Shared contracts (envelopes, charters, evidence), simulated mounds, network-free protocol tests. Nothing physical, nothing in ANTHILL yet |
+| M0 — Protocol + simulator | **In progress** | Shared contracts (envelopes, charters, evidence), Ed25519 signing, Layer 1 limit clamping and evidence gating on the simulated actuation path, golden-file wire fixtures, network-free protocol tests. Nothing physical, nothing in ANTHILL yet |
 | M1 — ANTHILL read-only integration | Planned | `Anthill.Modules.Micromound`: mound registry, enrollment, telemetry/inventory sync, Integrations-tab widgets. Zero command path — ANTHILL can see mounds, not direct them |
 | M2 — Edge Queen runtime | Planned | Pi-class runtime: charter acceptance, mission execution, offline continuation, local evidence store, reconnect sync. Actions still limited to `benign` class |
 | M3 — Deterministic Controller firmware | Planned | ESP32 firmware skeleton: charter-limited routine execution, sensor reporting, hardware watchdog integration |
@@ -145,6 +145,8 @@ Authority flows one way: Primary Colony → Micromound, always explicit, always 
 
 ```text
 src/Micromound.Protocol/     Shared contracts: envelopes, charters, evidence, action classes
+src/Micromound.Crypto/       Ed25519 signing/verification (one implementation of the discipline
+                             Micromound.Protocol declares, so contracts carry no crypto dependency)
 src/Micromound.EdgeQueen/    Pi-class runtime (M2)
 src/Micromound.Sim/          Simulated mounds — protocol development and tests without hardware
 firmware/esp32/              Deterministic Controller firmware skeleton (M3, ESP-IDF)

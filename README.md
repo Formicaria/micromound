@@ -29,6 +29,7 @@ yet, and the ANTHILL-side integration (Integrations tab) lands in M1. See
 
 ```text
 src/Micromound.Protocol/     Shared wire contracts: envelopes, charters, evidence, validation
+src/Micromound.Crypto/       Ed25519 signing and verification for envelopes
 src/Micromound.Sim/          Simulated mounds — protocol work without hardware
 src/Micromound.EdgeQueen/    Pi-class runtime (M2 scaffold)
 firmware/esp32/              Deterministic Controller firmware (M3 placeholder)

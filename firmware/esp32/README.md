@@ -31,3 +31,10 @@ firmware/esp32/
 The C protocol mirror is verified against the C# implementation by golden-file tests in
 `tests/Micromound.Tests` (same canonical bytes, same digests) so the two implementations
 cannot drift silently.
+
+Those fixtures exist now, ahead of the firmware: see
+[`tests/Micromound.Tests/Golden/`](../../tests/Micromound.Tests/Golden/README.md). `mm_protocol`'s
+Unity host tests read the same files and must reproduce every `canonical:` line and `digest:` line
+byte for byte. The signature format they have to parse is deliberately trivial —
+`ed25519:<lowercase hex>`, no base64, no JSON nesting — and `sig` is excluded from the canonical
+bytes, so the firmware can sign and hash a buffer it has already built.

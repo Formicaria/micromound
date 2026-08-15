@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+    <ProjectReference Include="..\Micromound.Crypto\Micromound.Crypto.csproj" />
   </ItemGroup>
 
 </Project>
