@@ -1,0 +1,20 @@
+# Keep NuGet packages and Action pins current without anyone having to remember to.
+# PRs land like any other change: through CI, the guards, and the branch protection.
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      test-dependencies:
+        patterns:
+          - "xunit*"
+          - "Microsoft.NET.Test.Sdk"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

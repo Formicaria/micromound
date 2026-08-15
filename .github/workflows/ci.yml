@@ -1,0 +1,215 @@
+name: CI
+
+# The V&V gate for MICROMOUND, following ANTHILL's ci.yml pattern: a real .NET build+test on
+# Linux and Windows, a simulator smoke run that walks the full authority lifecycle (clamping,
+# evidence gating, quiesce, signed chain verification), and deterministic consistency guards
+# (version markers, safety invariants, frozen wire bytes) so docs, code, and binaries can never
+# drift apart silently. A green run here is the merge signal for main.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & test (.NET, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore Micromound.sln
+
+      - name: Build (Release)
+        run: dotnet build Micromound.sln -c Release --no-restore
+
+      # MICROMOUND_UPDATE_GOLDEN must never be set here: golden files that regenerate in CI pin
+      # nothing. A missing or drifted golden file is a red run, by design.
+      - name: Test
+        run: dotnet test Micromound.sln -c Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory ./test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: test-results/*.trx
+          if-no-files-found: ignore
+
+  sim-smoke:
+    name: Simulator smoke run (authority lifecycle, end to end)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # The unit tests prove the rules in isolation; this proves the demo path a human would run:
+      # charter → clamped actuation → duty-cycle refusal → dead-sensor `unverified` → offline
+      # lease expiry → quiesce → signed chained backlog verified, impostor key refused.
+      - name: Run Micromound.Sim and assert the expected lifecycle
+        run: |
+          dotnet run --project src/Micromound.Sim -c Release | tee /tmp/sim.out
+          assert() { grep -q "$1" /tmp/sim.out || { echo "::error::sim output missing: $1"; exit 1; }; }
+          assert "charter accepted=True state=chartered"
+          assert "actuate 60s -> clamped"
+          assert "actuate 30s later -> refused"
+          assert "actuate with dead sensor -> unverified"
+          assert "lease expired -> quiesced=True state=quiesced"
+          assert "actuate after expiry -> refused"
+          assert "chain+signatures valid=True"
+          assert "same backlog under a wrong key -> valid=False"
+          echo "Sim lifecycle OK."
+
+  consistency:
+    name: Docs + version consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every version marker must agree — Directory.Build.props, README, CHANGELOG — so docs and
+      # binaries never drift from the code. (ANTHILL's rule, repointed at MICROMOUND's markers.)
+      - name: Version markers agree
+        run: |
+          python3 - <<'PY'
+          import re, sys, os
+          problems = []
+          for f in ("docs/MICROMOUND.md", "docs/PROTOCOL.md", "docs/SAFETY.md"):
+              if not os.path.exists(f):
+                  problems.append(f"{f} (canonical doc) is missing")
+          props = open("Directory.Build.props", encoding="utf-8").read()
+          pm = re.search(r"<MicromoundVersion>([^<]+)</MicromoundVersion>", props)
+          pver = pm.group(1).strip() if pm else None
+          if not pver:
+              problems.append("Directory.Build.props has no <MicromoundVersion>")
+          readme = open("README.md", encoding="utf-8").read()
+          rm = re.search(r"\*\*Current version:\*\*\s*v([0-9][0-9A-Za-z.\-]*)", readme)
+          rver = rm.group(1) if rm else None
+          if not rver:
+              problems.append("README.md has no '**Current version:** vX.Y.Z' marker")
+          if pver and rver and pver != rver:
+              problems.append(f"README 'v{rver}' != Directory.Build.props '{pver}'")
+          changelog = open("CHANGELOG.md", encoding="utf-8").read()
+          if pver and not re.search(r"^##\s+v" + re.escape(pver) + r"\b", changelog, re.M):
+              problems.append(f"CHANGELOG.md has no '## v{pver}' entry for the current version")
+          if problems:
+              print("Docs/version consistency problems:")
+              for x in problems: print("  -", x)
+              sys.exit(1)
+          print(f"Docs/version OK: README == props == CHANGELOG == v{pver}.")
+          PY
+
+  safety-guards:
+    name: Safety invariant guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Structural guards in the spirit of ANTHILL's repo-guards job: each one pins a safety
+      # invariant from docs/SAFETY.md to a concrete line of code or test, so weakening it
+      # requires editing this workflow — a loud, reviewable act, never a quiet drive-by.
+      - name: Hazardous is never a legal charter ceiling
+        run: |
+          grep -q "hazardous' is never a legal charter ceiling" src/Micromound.Protocol/Validation.cs \
+            || { echo "::error::CharterValidator no longer refuses hazardous ceilings (SAFETY.md Layer 2)"; exit 1; }
+          grep -q "Hazardous_is_never_a_legal_ceiling" tests/Micromound.Tests/CharterValidationTests.cs \
+            || { echo "::error::The hazardous-ceiling test was removed"; exit 1; }
+          echo "Hazardous-ceiling guard intact."
+
+      - name: Charters can only narrow firmware limits, never widen
+        run: |
+          grep -q "class LimitClamp" src/Micromound.Protocol/Validation.cs \
+            || { echo "::error::LimitClamp removed (SAFETY.md Layer 1)"; exit 1; }
+          grep -q "A_charter_cannot_widen_firmwares_on_time" tests/Micromound.Tests/LimitEnforcementTests.cs \
+            || { echo "::error::The firmware-widening test was removed"; exit 1; }
+          echo "Limit-clamp guard intact."
+
+      - name: Commands are not evidence (the gate exists and bites)
+        run: |
+          grep -q "class EvidenceGate" src/Micromound.Protocol/EvidenceGate.cs \
+            || { echo "::error::EvidenceGate removed — unverified work would pass as done"; exit 1; }
+          grep -q '"unverified"' src/Micromound.Protocol/Evidence.cs \
+            || { echo "::error::The unverified outcome vanished from ActionOutcomes"; exit 1; }
+          echo "Evidence-gate guard intact."
+
+      - name: No unsigned mode exists
+        run: |
+          grep -q "An_unsigned_envelope_is_refused" tests/Micromound.Tests/SignatureTests.cs \
+            || { echo "::error::The unsigned-envelope refusal test was removed (PROTOCOL.md §2)"; exit 1; }
+          grep -q "One_forged_envelope_spoils_an_otherwise_intact_backlog" tests/Micromound.Tests/SignatureTests.cs \
+            || { echo "::error::The forged-backlog test was removed"; exit 1; }
+          echo "Signature guards intact."
+
+      - name: Frozen wire bytes are pinned (golden files present, never CI-regenerated)
+        run: |
+          for f in tests/Micromound.Tests/Golden/files/canonical-envelopes.txt \
+                   tests/Micromound.Tests/Golden/files/canonical-bodies.txt; do
+            [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
+          done
+          if grep -rn "MICROMOUND_UPDATE_GOLDEN" .github/workflows/ --include='*.yml' | grep -v "must never be set\|never CI-regenerated\|grep -rn"; then
+            echo "::error::A workflow sets MICROMOUND_UPDATE_GOLDEN — golden files that regenerate in CI pin nothing"
+            exit 1
+          fi
+          echo "Golden-file guard intact."
+
+      - name: Reduced profile excludes mission planning
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          s = open("src/Micromound.Protocol/Envelope.cs", encoding="utf-8").read()
+          m = re.search(r"ReducedProfile\s*=\s*new HashSet<string>[^{]*\{([^}]*)\}", s)
+          if not m:
+              print("::error::EnvelopeKinds.ReducedProfile missing"); sys.exit(1)
+          body = m.group(1)
+          for banned in ("Mission", "EvidenceBundle"):
+              if re.search(r"\b" + banned + r"\b", body):
+                  print(f"::error::ReducedProfile now includes {banned} — deterministic controllers must not plan missions (PROTOCOL.md §8)")
+                  sys.exit(1)
+          print("Reduced-profile guard intact.")
+          PY
+
+      - name: SAFETY.md canonical rules present
+        run: |
+          for phrase in "not AI-addressable" "never a standing grant" "Resume is always explicit"; do
+            grep -q "$phrase" docs/SAFETY.md || { echo "::error::SAFETY.md lost canonical phrase: '$phrase'"; exit 1; }
+          done
+          echo "SAFETY.md canonical rules intact."
+
+      # ANTHILL's repo rule, inherited: no active Python in the repo (CI inline scripts are not
+      # repo files). Device code is C#/C only.
+      - name: No Python files in the repo
+        run: |
+          stray=$(find . -name '*.py' -not -path './.git/*' -not -path '*/bin/*' -not -path '*/obj/*' || true)
+          if [ -n "$stray" ]; then
+            echo "::error::Active Python files found:"
+            echo "$stray"
+            exit 1
+          fi
+          echo "No stray Python files."

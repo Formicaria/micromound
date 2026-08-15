@@ -1,5 +1,9 @@
 # OPERATION MICROMOUND
 
+[![CI](https://github.com/Formicaria/micromound/actions/workflows/ci.yml/badge.svg)](https://github.com/Formicaria/micromound/actions/workflows/ci.yml)
+
+**Current version:** v0.1.0
+
 MICROMOUND extends [ANTHILL](https://github.com/Formicaria/Anthill) into physical devices:
 Raspberry Pis, ESP32s, sensors, cameras, robots, fabrication equipment, and building systems.
 
