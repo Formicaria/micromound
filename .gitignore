@@ -1,0 +1,8 @@
+bin/
+obj/
+publish/
+*.user
+.vs/
+.idea/
+firmware/esp32/build/
+firmware/esp32/sdkconfig
