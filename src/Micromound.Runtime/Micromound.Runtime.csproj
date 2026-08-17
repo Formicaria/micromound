@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Runtime</RootNamespace>
+    <Description>The local colony runtime: Mound Major coordinator, worker registry, the six default ants, mission state machine, and deterministic workflow execution.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+    <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
+    <ProjectReference Include="..\Micromound.Evidence\Micromound.Evidence.csproj" />
+    <ProjectReference Include="..\Micromound.Reasoning\Micromound.Reasoning.csproj" />
+    <ProjectReference Include="..\Micromound.Sync\Micromound.Sync.csproj" />
+  </ItemGroup>
+
+</Project>

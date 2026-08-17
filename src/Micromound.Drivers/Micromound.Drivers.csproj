@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Drivers</RootNamespace>
+    <Description>Hardware abstraction: bus interfaces (GPIO, I2C, SPI, UART, PWM, CAN, camera) and the device drivers that expose them as semantic capabilities. Deterministic, testable, and independent of any reasoning provider.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+    <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
+  </ItemGroup>
+
+</Project>

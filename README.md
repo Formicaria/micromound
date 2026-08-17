@@ -1,45 +1,71 @@
 # OPERATION MICROMOUND
 
-MICROMOUND extends [ANTHILL](https://github.com/Formicaria/Anthill) into physical devices:
-Raspberry Pis, ESP32s, sensors, cameras, robots, fabrication equipment, and building systems.
+**A lightweight, headless edge-colony runtime for physical computing.**
 
-The Primary Colony (the ANTHILL install) remains in command, delegating missions, permissions,
-and operating limits to smaller Micromound colonies. Each Micromound runs either an intelligent
-**Edge Queen** (Pi-class) or a simple **Deterministic Controller** (ESP32-class), depending on
-its hardware.
+MicroMound runs on Raspberry Pis, Linux SBCs, ESP32-class controllers, robots, sensors, cameras,
+relays, motors, fabrication equipment, and building systems. It receives bounded work from an
+authorized upstream controller, observes the environment, executes deterministic physical actions,
+enforces hard operating limits, verifies outcomes with independent evidence, survives temporary
+network loss without gaining authority, and synchronizes its records when it reconnects.
 
-Micromounds continue authorized work when disconnected, retain mission context, record evidence,
-and synchronize with ANTHILL once reconnected. Losing communication never grants additional
-authority; hazardous actions remain prohibited without explicit authorization.
+It is not a desktop application, a UI product, or a general-purpose agent harness.
 
-Commands alone do not prove that physical work succeeded. Micromounds verify results with sensor
-data, telemetry, images, or other evidence. Independent safety systems — emergency stops,
-watchdogs, interlocks, operating limits — remain separate from AI control.
+**A standard MicroMound needs no language model.** Work executes as structured workflows,
+deterministic rules, and pre-defined routines. Optional lightweight reasoning can be enabled on
+capable hardware for genuinely ambiguous tasks — and even then, model output is a proposal that
+still has to survive the capability kernel.
 
-One colony directs the mission. Many colonies extend its reach. Each may act locally, but only
-within the authority it has been given.
+## The shape of it
+
+```text
+upstream controller
+        │  signed charter / mission / configuration
+        ▼
+MICROMOUND
+    Mound Major                 local coordinator
+        Scout Ant               observation and sensing
+        Forager Ant             requested physical action
+        Guard Ant               runtime health and operational safety
+        Witness Ant             physical outcome confirmation
+        Cache Ant               short-term operational persistence
+        Runner Ant              secure external communication
+        ▼
+    Capability Kernel           the single physical authority boundary
+        ▼
+    Drivers  →  Hardware  →  Independent evidence
+        │  signed sync / evidence / results
+        ▼
+upstream controller
+```
+
+An ant is a specialized logical worker — deterministic code, an algorithm, a sensor worker. It is
+not a language model instance, and on a constrained controller several ants compile into one
+firmware image.
+
+## Four ideas the rest follows from
+
+**Capability-based control.** Workers request `act.water_valve` for ten seconds. They never
+request `GPIO17 = HIGH` — there is no field through which they could, and no worker holds a driver
+handle to send it through. Hardware → driver → capability → ant, so new devices never change the
+runtime.
+
+**Deterministic enforcement always wins.** Every actuation passes through the capability kernel,
+which intersects three limit tiers — hardware ∩ device configuration ∩ charter — and refuses with
+a specific reason rather than a bare "no". Nothing above can widen a bound below it.
+
+**Commands are not evidence.** A command being issued does not prove a physical result occurred. A
+valve command needs flow detection; a motor command needs an encoder delta. Unsupported success
+degrades to `unverified`; it is never assumed.
+
+**Disconnection never creates authority.** Offline operation continues only inside already-issued
+bounded authority, only until the lease expires, and then the mound quiesces to its declared safe
+state. Reconnection resumes nothing.
 
 ## Status
 
-Pre-M0. The protocol contracts, simulator, and authority tests exist; nothing physical ships
-yet, and the ANTHILL-side integration (Integrations tab) lands in M1. See
-[`docs/MICROMOUND.md`](docs/MICROMOUND.md) for the phase plan.
-
-## Layout
-
-```text
-src/Micromound.Protocol/     Shared wire contracts: envelopes, charters, evidence, validation
-src/Micromound.Crypto/       Ed25519 signing and verification for envelopes
-src/Micromound.Sim/          Simulated mounds — protocol work without hardware
-src/Micromound.EdgeQueen/    Pi-class runtime (M2 scaffold)
-firmware/esp32/              Deterministic Controller firmware (M3 placeholder)
-tests/Micromound.Tests/      Contract, authority, and chain tests (network-free)
-docs/                        Design doc, protocol spec, safety model
-```
-
-## Build and test
-
-Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0), same as ANTHILL.
+**M0 in progress** — protocol contracts, Ed25519 signing, frozen wire bytes, and the capability
+kernel with deterministic authorization. Nothing physical ships yet; no real drivers, no firmware.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ```bash
 dotnet build Micromound.sln
@@ -47,11 +73,58 @@ dotnet test Micromound.sln
 dotnet run --project src/Micromound.Sim     # simulated mound smoke run
 ```
 
+Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
+
+## Layout
+
+```text
+src/Micromound.Protocol/       wire contracts: envelopes, charters, missions, manifests, evidence
+src/Micromound.Crypto/         device identity, Ed25519 signing and verification
+src/Micromound.Capabilities/   the capability kernel — the physical authority boundary
+src/Micromound.Runtime/        Mound Major, worker registry, the six default ants
+src/Micromound.Drivers/        bus abstractions and hardware drivers
+src/Micromound.Evidence/       capture, correlation, local store, pending-sync queue
+src/Micromound.Sync/           Runner Ant transport: enrollment, sync beat, durable uplink
+src/Micromound.Reasoning/      optional reasoning provider, and the null default
+src/Micromound.Host/           the headless Linux/Pi daemon
+src/Micromound.Sim/            simulated mounds — the real kernel over fake hardware
+firmware/esp32/                reduced deterministic controller (ESP-IDF)
+tests/Micromound.Tests/        contract, authority, kernel, evidence, and golden-byte tests
+```
+
+## The upstream controller
+
+MicroMound receives authority from an upstream controller: whoever holds the signing key, issues
+charters, receives evidence, and holds the stop controls. The protocol deliberately does not name
+one.
+
+[ANTHILL](https://github.com/Formicaria/Anthill) is the reference implementation and a separate
+application. **MicroMound support is an optional integration on the ANTHILL side** — ANTHILL is
+complete without it, and MicroMound runs without ANTHILL. All user-facing configuration and colony
+visualization live upstream; MicroMound ships no UI of its own.
+
+See [`docs/UPSTREAM.md`](docs/UPSTREAM.md).
+
 ## Documentation
 
-- [`docs/MICROMOUND.md`](docs/MICROMOUND.md) — canonical design doc: tiers, authority model, phase plan
-- [`docs/PROTOCOL.md`](docs/PROTOCOL.md) — wire protocol: envelopes, charters, leases, evidence, endpoints
-- [`docs/SAFETY.md`](docs/SAFETY.md) — safety model; where documents disagree, this one wins
+| Document | What it covers |
+|---|---|
+| [`docs/MICROMOUND.md`](docs/MICROMOUND.md) | Canonical design doc: mission, principles, terminology, authority model, non-goals |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Runtime layers, the capability kernel, drivers, routines, structured work, reasoning |
+| [`docs/ANTS.md`](docs/ANTS.md) | The six default workers, and how specialized ants are declared |
+| [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) | Capability naming, the registry, routines |
+| [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) | The declarative mound manifest |
+| [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | Wire contract: envelopes, charters, missions, evidence, canonical bytes |
+| [`docs/SAFETY.md`](docs/SAFETY.md) | Safety model. **Where documents disagree, this one wins** |
+| [`docs/UPSTREAM.md`](docs/UPSTREAM.md) | The controller contract, and ANTHILL as its reference integration |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestones and build order |
+
+## Non-goals
+
+Not a desktop UI, not a browser-based management application, not a coding or research agent, not
+a long-term memory platform, not a mandatory language-model runtime, not a system where model
+output controls GPIO, not a platform where edge devices expand their own authority, and **not a
+replacement for independent physical safety hardware**.
 
 ## License
 

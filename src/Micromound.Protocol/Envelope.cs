@@ -13,7 +13,11 @@ public static class EnvelopeKinds
 {
     public const string MoundSync = "mound_sync";
     public const string Charter = "charter";
+    /// <summary>Downlink declarative configuration: hardware bindings, workers, device limits.</summary>
+    public const string Config = "config";
     public const string Mission = "mission";
+    /// <summary>Uplink structured outcome for one mission.</summary>
+    public const string MissionReport = "mission_report";
     public const string ActionRecord = "action_record";
     public const string EvidenceBundle = "evidence_bundle";
     public const string Stop = "stop";
@@ -22,10 +26,15 @@ public static class EnvelopeKinds
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
-        MoundSync, Charter, Mission, ActionRecord, EvidenceBundle, Stop, Ack, Enroll
+        MoundSync, Charter, Config, Mission, MissionReport, ActionRecord, EvidenceBundle, Stop, Ack, Enroll
     };
 
-    /// <summary>Reduced profile for Deterministic Controllers — PROTOCOL.md §8.</summary>
+    /// <summary>
+    /// Reduced profile for Deterministic Controllers — PROTOCOL.md §8. Note what is absent and
+    /// why: `mission`/`mission_report` (a controller runs compiled routines selected by charter,
+    /// it does not execute open work packets), `evidence_bundle` (fixed-shape readings ride on
+    /// the action record instead), and `config` (a controller's hardware map is compiled in).
+    /// </summary>
     public static readonly IReadOnlySet<string> ReducedProfile = new HashSet<string>(StringComparer.Ordinal)
     {
         Enroll, MoundSync, Charter, ActionRecord, Stop, Ack
@@ -49,8 +58,12 @@ public sealed class Envelope
     [JsonPropertyName("sig")] public string Signature { get; set; } = "";
 
     /// <summary>
-    /// Canonical bytes covered by the signature and by the next envelope's `prev_digest`:
-    /// every field except `sig` itself, serialized with the shared options.
+    /// Canonical bytes covered by the signature and by the next envelope's `prev_digest`.
+    ///
+    /// Note precisely what happens to `sig`: it is ZEROED, not omitted. The field is present in
+    /// the output with an empty value — <c>…,"prev_digest":"","sig":""}</c>. A C mirror written to
+    /// "exclude the signature" would drop the field entirely and produce a different digest for
+    /// identical data, which is exactly the silent divergence the golden fixtures exist to catch.
     /// </summary>
     public byte[] CanonicalBytes()
     {
@@ -74,7 +87,7 @@ public static class ProtocolVersion
 /// <summary>
 /// Shared serializer options — snake_case via explicit JsonPropertyName, no surprises.
 ///
-/// Every setting here is load-bearing for the M3 C mirror, because these bytes are what gets
+/// Every setting here is load-bearing for the C mirror (M5), because these bytes are what gets
 /// signed and hashed. Two implementations that agree on the data and disagree on the encoding
 /// produce different digests, and the disagreement only shows up as an unverifiable device in
 /// the field.

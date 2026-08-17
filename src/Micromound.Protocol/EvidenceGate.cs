@@ -1,37 +1,21 @@
 namespace Micromound.Protocol;
 
 /// <summary>
-/// Capability pattern matching for charter fields that take globs (`evidence.required_for`).
-/// Deliberately tiny: exact match, a trailing ".*" prefix match, or "*". Nothing else, because
-/// the ESP32 mirror has to implement the same rule in C.
-/// </summary>
-public static class CapabilityPattern
-{
-    public static bool Matches(string pattern, string capability)
-    {
-        if (string.IsNullOrEmpty(pattern)) return false;
-        if (pattern == "*") return true;
-
-        if (pattern.EndsWith(".*", StringComparison.Ordinal))
-        {
-            var prefix = pattern[..^1]; // "act.*" -> "act."
-            return capability.StartsWith(prefix, StringComparison.Ordinal);
-        }
-
-        return string.Equals(pattern, capability, StringComparison.Ordinal);
-    }
-}
-
-/// <summary>
-/// "Commands are not evidence" (MICROMOUND.md design rule 3), enforced as a pure function.
-/// An action that claims physical work happened keeps its optimistic outcome only if the
-/// evidence it references actually resolves, parses, and is fresh. Everything else is
-/// <c>unverified</c> — never silently assumed done.
+/// "Commands are not evidence" (MICROMOUND.md core principle 6), enforced as a pure function.
+///
+/// An action that claims physical work happened keeps its optimistic outcome only if the evidence
+/// it references actually resolves, parses, and is fresh. Everything else is <c>unverified</c> —
+/// never silently assumed done.
+///
+/// This lives in Micromound.Protocol rather than Micromound.Evidence deliberately: it is a rule
+/// about what a contract means, it does no I/O, and the ESP32 mirror needs the same rule in C.
+/// Micromound.Evidence owns the stateful machinery around it — capture, correlation, the local
+/// store, the pending-sync queue — and calls this to decide the verdict.
 /// </summary>
 public static class EvidenceGate
 {
     public static bool RequiresEvidence(EvidencePolicy policy, string capability) =>
-        policy.RequiredFor.Any(pattern => CapabilityPattern.Matches(pattern, capability));
+        CapabilityPattern.MatchesAny(policy.RequiredFor, capability);
 
     /// <summary>
     /// Returns the outcome the record is entitled to. Only outcomes that assert work happened
@@ -47,7 +31,7 @@ public static class EvidenceGate
     {
         reason = "";
 
-        if (record.Outcome != ActionOutcomes.Succeeded && record.Outcome != ActionOutcomes.Clamped)
+        if (!ActionOutcomes.AssertPhysicalWork.Contains(record.Outcome))
             return record.Outcome;
 
         if (record.EvidenceRefs.Count == 0)
@@ -82,7 +66,7 @@ public static class EvidenceGate
                 return ActionOutcomes.Unverified;
             }
 
-            // Staleness only bites where the charter actually demands evidence for this
+            // Staleness only bites where the policy actually demands evidence for this
             // capability; resolution and parseability are unconditional.
             if (required && captured < oldestAcceptable)
             {

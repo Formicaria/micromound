@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Evidence</RootNamespace>
+    <Description>Evidence capture, correlation, the local hash-chained store, and the pending-sync queue. The Witness Ant's machinery; the verdict rule itself lives in Micromound.Protocol.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+    <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -32,12 +32,28 @@ Unset the variable before the verifying run. Left set, every run rewrites and fa
 fixtures stop pinning anything.
 
 Read the diff before committing. **An unexpected change here is a protocol change**, not a stale
-test — it means the bytes a deployed mound would send no longer match what a deployed colony (or
-an ESP32 in the field) expects. Fixing the golden file to match new code is only correct once
-`docs/PROTOCOL.md` says so and the version rule in §10 has been applied.
+test — it means the bytes a deployed mound would send no longer match what a deployed controller
+(or an ESP32 in the field) expects. Fixing the golden file to match new code is only correct once
+`docs/PROTOCOL.md` says so and the version rule in §11 has been applied.
 
-## What is deliberately not frozen
+> **These fixtures are currently stale, on purpose.** The v0 contracts were amended — `routines`
+> on charters, `mission_id` / `routine_id` / `requested_parameters` / `evidence_required` on
+> action records — while no device is deployed and no C mirror exists, so v0 was amended in place
+> rather than superseded (`docs/PROTOCOL.md` §11). Run the regeneration above once, read the diff,
+> and commit it. After the first firmware ships this stops being an option.
 
-`sig` is excluded from an envelope's canonical bytes, so no fixture here contains a real
-signature. That exclusion is itself the contract: a device signs the canonical bytes and chains
-the same digest, without re-serializing and without the signature perturbing either.
+## What `sig` actually does here
+
+`sig` is **zeroed, not omitted**. The canonical bytes contain the field with an empty value:
+
+```text
+…,"prev_digest":"","sig":""}
+```
+
+No fixture contains a real signature, and that is the contract: a device signs the canonical bytes
+and chains the same digest, without re-serializing and without the signature perturbing either.
+
+The distinction matters for the C mirror. An encoder written to "exclude the signature" would drop
+the field and produce a different digest for identical data — a divergence that would surface only
+as an unverifiable device in the field, which is the precise failure these files exist to prevent.
+Emit `"sig":""`.

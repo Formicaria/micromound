@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Micromound.Host</RootNamespace>
+    <AssemblyName>micromound</AssemblyName>
+    <Description>The headless Raspberry Pi / Linux daemon: configuration loading, dependency composition, service lifecycle, watchdog. No UI, no browser, no graphical environment.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Runtime\Micromound.Runtime.csproj" />
+    <ProjectReference Include="..\Micromound.Drivers\Micromound.Drivers.csproj" />
+  </ItemGroup>
+
+</Project>

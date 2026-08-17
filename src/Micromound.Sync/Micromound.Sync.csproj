@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Sync</RootNamespace>
+    <Description>Runner Ant transport: enrollment, the signed sync beat, durable uplink queue, acknowledgements, reconnect and backlog drain. Device-initiated only.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+    <ProjectReference Include="..\Micromound.Crypto\Micromound.Crypto.csproj" />
+  </ItemGroup>
+
+</Project>
