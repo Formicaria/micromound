@@ -6,7 +6,7 @@ namespace Micromound.Tests;
 /// <summary>
 /// Approval-style fixtures for the canonical wire bytes.
 ///
-/// These files are the artifact the M3 ESP32 firmware's C protocol mirror is verified against:
+/// These files are the artifact the ESP32 firmware's C protocol mirror (M5) is verified against:
 /// same input, same canonical bytes, same digest, or the two implementations have drifted.
 /// That makes an unexpected diff here a *protocol change*, never a test to re-baseline in
 /// passing — which is why a missing or regenerated golden fails the run instead of quietly
@@ -38,7 +38,7 @@ public static class GoldenFile
             Assert.Fail(
                 $"Golden file '{name}' was {(existed ? "regenerated" : "created")} at {path}. " +
                 "Review it, confirm the bytes are the wire format you intend to freeze, and commit it. " +
-                "The M3 C firmware mirror is verified against this file, so a change here is a protocol change.");
+                "The C firmware mirror is verified against this file, so a change here is a protocol change.");
         }
 
         Assert.Equal(Normalize(File.ReadAllText(path)), normalized);

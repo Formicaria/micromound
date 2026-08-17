@@ -2,11 +2,15 @@ namespace Micromound.Protocol;
 
 /// <summary>
 /// Well-known key identifiers. Uplink envelopes are verified against the sending mound's
-/// device key (keyId == mound_id); downlink envelopes against the Primary Colony key.
+/// device key (keyId == mound_id); downlink envelopes against the upstream controller's key.
+///
+/// The controller is whatever authority signs this mound's charters — ANTHILL's Primary Colony
+/// in the reference integration, a bare issuer CLI in a standalone deployment. The protocol does
+/// not care which, and deliberately does not name one.
 /// </summary>
 public static class KeyIds
 {
-    public const string PrimaryColony = "primary-colony";
+    public const string Controller = "controller";
 }
 
 /// <summary>

@@ -3,12 +3,13 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Micromound.Sim</RootNamespace>
-    <Description>Simulated Micromound devices — protocol development and testing without hardware (M0).</Description>
+    <Description>Simulated Micromound devices — fake sensors, fake actuators, failure injection, offline simulation. Runs the real capability kernel over fake hardware, so the simulator and the runtime cannot disagree about authority.</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
     <ProjectReference Include="..\Micromound.Crypto\Micromound.Crypto.csproj" />
+    <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
   </ItemGroup>
 
 </Project>

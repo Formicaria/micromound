@@ -4,13 +4,25 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Protocol", "src\Micromound.Protocol\Micromound.Protocol.csproj", "{A1000001-0000-4000-8000-000000000001}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Sim", "src\Micromound.Sim\Micromound.Sim.csproj", "{A1000001-0000-4000-8000-000000000002}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Crypto", "src\Micromound.Crypto\Micromound.Crypto.csproj", "{A1000001-0000-4000-8000-000000000002}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Crypto", "src\Micromound.Crypto\Micromound.Crypto.csproj", "{A1000001-0000-4000-8000-000000000005}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Capabilities", "src\Micromound.Capabilities\Micromound.Capabilities.csproj", "{A1000001-0000-4000-8000-000000000003}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.EdgeQueen", "src\Micromound.EdgeQueen\Micromound.EdgeQueen.csproj", "{A1000001-0000-4000-8000-000000000003}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Drivers", "src\Micromound.Drivers\Micromound.Drivers.csproj", "{A1000001-0000-4000-8000-000000000004}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Tests", "tests\Micromound.Tests\Micromound.Tests.csproj", "{A1000001-0000-4000-8000-000000000004}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Evidence", "src\Micromound.Evidence\Micromound.Evidence.csproj", "{A1000001-0000-4000-8000-000000000005}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Sync", "src\Micromound.Sync\Micromound.Sync.csproj", "{A1000001-0000-4000-8000-000000000006}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Reasoning", "src\Micromound.Reasoning\Micromound.Reasoning.csproj", "{A1000001-0000-4000-8000-000000000007}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Runtime", "src\Micromound.Runtime\Micromound.Runtime.csproj", "{A1000001-0000-4000-8000-000000000008}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Host", "src\Micromound.Host\Micromound.Host.csproj", "{A1000001-0000-4000-8000-000000000009}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Sim", "src\Micromound.Sim\Micromound.Sim.csproj", "{A1000001-0000-4000-8000-000000000010}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Micromound.Tests", "tests\Micromound.Tests\Micromound.Tests.csproj", "{A1000001-0000-4000-8000-000000000011}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -38,6 +50,30 @@ Global
 		{A1000001-0000-4000-8000-000000000005}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1000001-0000-4000-8000-000000000005}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1000001-0000-4000-8000-000000000005}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000006}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000006}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000006}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000006}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000007}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000007}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000007}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000007}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000008}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000008}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000008}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000008}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000009}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000009}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000009}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000009}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000010}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000010}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000010}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000010}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000011}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000011}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000001-0000-4000-8000-000000000011}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000001-0000-4000-8000-000000000011}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

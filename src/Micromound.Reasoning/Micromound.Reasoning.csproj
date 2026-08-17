@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Reasoning</RootNamespace>
+    <Description>Optional, pluggable reasoning. Deliberately does NOT reference Micromound.Capabilities: a reasoning provider cannot reach the capability kernel, because the project reference that would let it does not exist.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

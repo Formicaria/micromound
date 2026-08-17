@@ -2,13 +2,13 @@ namespace Micromound.Protocol;
 
 /// <summary>
 /// Deterministic, fail-closed validation. Every rejection carries its full reason list — loud,
-/// never silent (ANTHILL ContractGate discipline). No I/O, no clock reads: callers pass `now`
-/// so validation is pure and trivially testable.
+/// never silent. No I/O, no clock reads: callers pass `now` so validation is pure and trivially
+/// testable.
 /// </summary>
 public static class CharterValidator
 {
     public static ValidationResult Validate(Charter charter, string expectedMoundId, DateTimeOffset now,
-        IReadOnlySet<string>? deviceCapabilities = null)
+        IReadOnlySet<string>? deviceCapabilities = null, IReadOnlySet<string>? deviceRoutines = null)
     {
         var errors = new List<string>();
 
@@ -36,10 +36,200 @@ public static class CharterValidator
         if (charter.SyncIntervalSeconds <= 0) errors.Add("sync_interval_s must be positive");
         if (string.IsNullOrWhiteSpace(charter.SafeState)) errors.Add("safe_state missing");
 
-        if (deviceCapabilities is not null)
-            foreach (var cap in charter.Capabilities)
-                if (!deviceCapabilities.Contains(cap))
-                    errors.Add($"capability '{cap}' is not physically present on this device");
+        foreach (var cap in charter.Capabilities)
+        {
+            // One way to say a thing. A routine listed among capabilities would be a second,
+            // silently ineffective way to enable it, and the drafter would never learn otherwise.
+            if (CapabilityId.IsRoutine(cap))
+                errors.Add($"'{cap}' is a routine and belongs in 'routines', not 'capabilities'");
+            else if (deviceCapabilities is not null && !deviceCapabilities.Contains(cap))
+                errors.Add($"capability '{cap}' is not physically present on this device");
+        }
+
+        // A charter selects from routines that already exist; it cannot define new behaviour.
+        if (deviceRoutines is not null)
+            foreach (var routine in charter.Routines)
+                if (!deviceRoutines.Contains(routine))
+                    errors.Add($"routine '{routine}' is not registered on this device");
+
+        // Limits keyed to something the charter never granted are a drafting error, and silently
+        // ignoring them is how an operator comes to believe a bound is in force when it is not.
+        foreach (var key in charter.Limits.Keys)
+            if (!charter.Capabilities.Contains(key) && !charter.Routines.Contains(key))
+                errors.Add($"limits key '{key}' matches no granted capability or routine");
+
+        return new ValidationResult(errors);
+    }
+}
+
+/// <summary>
+/// Validates a structured work packet before any of it executes — PROTOCOL.md §9. A mission that
+/// references anything outside its charter is refused whole, not partially run: a half-executed
+/// mission leaves physical state nobody planned.
+/// </summary>
+public static class MissionValidator
+{
+    public static ValidationResult Validate(Mission mission, Charter charter, string expectedMoundId,
+        DateTimeOffset now)
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(mission.MissionId)) errors.Add("mission_id missing");
+
+        if (!string.Equals(mission.MoundId, expectedMoundId, StringComparison.Ordinal))
+            errors.Add($"mound_id mismatch: mission is for '{mission.MoundId}', this mound is '{expectedMoundId}'");
+
+        if (!string.Equals(mission.CharterId, charter.CharterId, StringComparison.Ordinal))
+            errors.Add($"mission cites charter '{mission.CharterId}', active charter is '{charter.CharterId}'");
+
+        if (!ProtocolTime.TryParse(mission.ExpiresAt, out var expires))
+            errors.Add($"expires_at unparseable: '{mission.ExpiresAt}'");
+        else if (expires <= now)
+            errors.Add("mission already expired");
+
+        if (mission.Steps.Count == 0) errors.Add("mission has no steps");
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < mission.Steps.Count; i++)
+        {
+            var step = mission.Steps[i];
+            var where = string.IsNullOrWhiteSpace(step.StepId) ? $"step[{i}]" : $"step '{step.StepId}'";
+
+            if (string.IsNullOrWhiteSpace(step.StepId)) errors.Add($"{where}: step_id missing");
+            else if (!seen.Add(step.StepId)) errors.Add($"{where}: duplicate step_id");
+
+            if (!MissionStepOps.All.Contains(step.Op))
+            {
+                errors.Add($"{where}: unknown op '{step.Op}'");
+                continue;
+            }
+
+            switch (step.Op)
+            {
+                case MissionStepOps.Sense:
+                case MissionStepOps.Verify:
+                case MissionStepOps.Act:
+                    if (string.IsNullOrWhiteSpace(step.Capability))
+                        errors.Add($"{where}: op '{step.Op}' requires a capability");
+                    else if (!charter.Capabilities.Contains(step.Capability))
+                        errors.Add($"{where}: capability '{step.Capability}' is not granted by the charter");
+                    break;
+
+                case MissionStepOps.Routine:
+                    if (string.IsNullOrWhiteSpace(step.RoutineId))
+                        errors.Add($"{where}: op 'routine' requires a routine_id");
+                    else if (!charter.Routines.Contains(step.RoutineId))
+                        errors.Add($"{where}: routine '{step.RoutineId}' is not enabled by the charter");
+                    else if (mission.AllowedRoutines.Count > 0 && !mission.AllowedRoutines.Contains(step.RoutineId))
+                        errors.Add($"{where}: routine '{step.RoutineId}' is outside the mission's allowed_routines");
+                    break;
+            }
+
+            if (step.Condition is not { } condition) continue;
+
+            if (!ConditionOps.All.Contains(condition.Op))
+                errors.Add($"{where}: unknown condition op '{condition.Op}'");
+
+            // Forward and self references would make execution order meaningful in a way the
+            // packet does not express. A condition may only read a step that has already run.
+            var sourceIndex = mission.Steps.FindIndex(s =>
+                string.Equals(s.StepId, condition.SourceStep, StringComparison.Ordinal));
+
+            if (sourceIndex < 0)
+                errors.Add($"{where}: condition source_step '{condition.SourceStep}' is not a step in this mission");
+            else if (sourceIndex >= i)
+                errors.Add($"{where}: condition reads step '{condition.SourceStep}', which does not run first");
+        }
+
+        foreach (var capability in mission.RequiredCapabilities)
+            if (!charter.Capabilities.Contains(capability))
+                errors.Add($"required capability '{capability}' is not granted by the charter");
+
+        foreach (var routine in mission.AllowedRoutines)
+            if (!charter.Routines.Contains(routine))
+                errors.Add($"allowed routine '{routine}' is not enabled by the charter");
+
+        // Evidence the mission promises but no step is tagged to produce.
+        var tags = new HashSet<string>(
+            mission.Steps.Select(s => s.EvidenceTag).Where(t => !string.IsNullOrWhiteSpace(t)),
+            StringComparer.Ordinal);
+
+        foreach (var required in mission.RequiredEvidence)
+            if (!tags.Contains(required))
+                errors.Add($"required evidence '{required}' is not produced by any step");
+
+        return new ValidationResult(errors);
+    }
+}
+
+/// <summary>
+/// Validates a declarative mound manifest before it is activated — CONFIGURATION.md. Invalid
+/// configuration fails closed: the previous manifest stays in force and the refusal is reported.
+/// </summary>
+public static class ManifestValidator
+{
+    public static ValidationResult Validate(MoundManifest manifest, string expectedMoundId,
+        IReadOnlySet<string>? knownDrivers = null)
+    {
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(manifest.ManifestId)) errors.Add("manifest_id missing");
+
+        if (!string.Equals(manifest.MoundId, expectedMoundId, StringComparison.Ordinal))
+            errors.Add($"mound_id mismatch: manifest is for '{manifest.MoundId}', this mound is '{expectedMoundId}'");
+
+        if (!ProtocolTime.TryParse(manifest.IssuedAt, out _))
+            errors.Add($"issued_at unparseable: '{manifest.IssuedAt}'");
+
+        if (string.IsNullOrWhiteSpace(manifest.SafeState)) errors.Add("safe_state missing");
+
+        if (!ReasoningModes.All.Contains(manifest.Reasoning.Mode))
+            errors.Add($"reasoning.mode unknown: '{manifest.Reasoning.Mode}'");
+        else if (manifest.Reasoning.Mode != ReasoningModes.None &&
+                 string.IsNullOrWhiteSpace(manifest.Reasoning.Provider))
+            errors.Add($"reasoning.mode '{manifest.Reasoning.Mode}' requires a provider");
+
+        foreach (var (name, binding) in manifest.Hardware)
+        {
+            if (string.IsNullOrWhiteSpace(binding.Driver))
+                errors.Add($"hardware '{name}': driver missing");
+            else if (knownDrivers is not null && !knownDrivers.Contains(binding.Driver))
+                errors.Add($"hardware '{name}': driver '{binding.Driver}' is not available in this build");
+        }
+
+        foreach (var capability in manifest.Capabilities)
+            if (!CapabilityId.IsWellFormed(capability))
+                errors.Add($"capability '{capability}' is not a well-formed capability id");
+
+        foreach (var routine in manifest.Routines)
+            if (!CapabilityId.IsRoutine(routine))
+                errors.Add($"routine '{routine}' must be in the 'routine.' namespace");
+
+        var workerNames = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var worker in manifest.Workers)
+        {
+            if (string.IsNullOrWhiteSpace(worker.Name)) { errors.Add("worker with no name"); continue; }
+            if (!workerNames.Add(worker.Name)) errors.Add($"duplicate worker '{worker.Name}'");
+
+            if (!ActionClasses.TryParse(worker.ActionCeiling, out var ceiling))
+                errors.Add($"worker '{worker.Name}': action_ceiling unknown '{worker.ActionCeiling}'");
+            else if (ceiling == ActionClass.Hazardous)
+                errors.Add($"worker '{worker.Name}': action_ceiling 'hazardous' is never configurable");
+
+            if (!OfflineBehaviours.All.Contains(worker.OfflineBehaviour))
+                errors.Add($"worker '{worker.Name}': offline_behaviour unknown '{worker.OfflineBehaviour}'");
+
+            if (worker.RequiresReasoning && manifest.Reasoning.Mode == ReasoningModes.None)
+                errors.Add($"worker '{worker.Name}' requires reasoning but reasoning.mode is 'none'");
+
+            foreach (var capability in worker.Consumes)
+                if (!manifest.Capabilities.Contains(capability) && !manifest.Routines.Contains(capability))
+                    errors.Add($"worker '{worker.Name}' consumes '{capability}', which this mound does not declare");
+        }
+
+        foreach (var key in manifest.DeviceLimits.Keys)
+            if (!manifest.Capabilities.Contains(key) && !manifest.Routines.Contains(key))
+                errors.Add($"device_limits key '{key}' matches no declared capability or routine");
 
         return new ValidationResult(errors);
     }
@@ -72,7 +262,7 @@ public static class EnvelopeValidator
     /// Unsigned or badly signed envelopes are dropped and audited, never processed, so the
     /// signature failure is reported alongside every other reason rather than short-circuiting.
     /// <paramref name="keyId"/> is the sending mound's id for uplink, or
-    /// <see cref="KeyIds.PrimaryColony"/> for downlink.
+    /// <see cref="KeyIds.Controller"/> for downlink.
     /// </summary>
     public static ValidationResult Validate(Envelope envelope, IEnvelopeVerifier verifier, string keyId,
         bool reducedProfile = false)
@@ -107,7 +297,7 @@ public static class EnvelopeValidator
     }
 
     /// <summary>
-    /// Chain validation plus per-envelope signature verification — what the colony runs over a
+    /// Chain validation plus per-envelope signature verification — what the controller runs over a
     /// backlog drained after an offline period. A chain that verifies structurally but carries
     /// one unsigned envelope is still refused.
     /// </summary>
@@ -125,48 +315,6 @@ public static class EnvelopeValidator
 
         return new ValidationResult(errors);
     }
-}
-
-/// <summary>
-/// Enforces the intersection of firmware limits and charter limits — SAFETY.md Layer 1.
-/// The narrower bound always wins; a charter can only narrow, never widen.
-/// </summary>
-public static class LimitClamp
-{
-    /// <summary>
-    /// Clamps a requested value into <c>[min, max]</c> where those bounds are set.
-    /// Returns true when the request was outside the bound and had to be narrowed.
-    /// </summary>
-    public static bool ClampToRange(double requested, CapabilityLimits effective, out double allowed)
-    {
-        allowed = requested;
-        if (effective.Min is { } min && allowed < min) allowed = min;
-        if (effective.Max is { } max && allowed > max) allowed = max;
-        return allowed != requested;
-    }
-
-    /// <summary>Clamps a requested on-time against <c>max_on_s</c>. True when it was narrowed.</summary>
-    public static bool ClampOnSeconds(double requested, CapabilityLimits effective, out double allowed)
-    {
-        allowed = requested;
-        if (effective.MaxOnSeconds is { } max && allowed > max) allowed = max;
-        return allowed != requested;
-    }
-
-    public static CapabilityLimits Intersect(CapabilityLimits firmware, CapabilityLimits charter) => new()
-    {
-        MaxOnSeconds = MinOf(firmware.MaxOnSeconds, charter.MaxOnSeconds),
-        MinOffSeconds = MaxOf(firmware.MinOffSeconds, charter.MinOffSeconds),
-        Min = MaxOf(firmware.Min, charter.Min),
-        Max = MinOf(firmware.Max, charter.Max),
-        MaxRatePerHour = MinOf(firmware.MaxRatePerHour, charter.MaxRatePerHour)
-    };
-
-    private static double? MinOf(double? a, double? b) =>
-        a is null ? b : b is null ? a : Math.Min(a.Value, b.Value);
-
-    private static double? MaxOf(double? a, double? b) =>
-        a is null ? b : b is null ? a : Math.Max(a.Value, b.Value);
 }
 
 public sealed class ValidationResult(List<string> errors)

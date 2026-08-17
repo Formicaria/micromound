@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Micromound.Capabilities</RootNamespace>
+    <Description>The capability kernel: the single physical authority boundary. Capability and routine registries, three-tier limit intersection, action-class enforcement, stop/lease/duty-cycle/rate checks, and structured refusals. Every actuation on every tier passes through here.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
