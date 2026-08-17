@@ -3,10 +3,10 @@
 # Field order, naming, and default emission for every typed body.
 
 ## charter
-{"charter_id":"c0000000-0000-4000-8000-000000000001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","mission_ref":"mission-0001","issued_at":"2026-08-14T21:04:11Z","expires_at":"2026-08-14T22:04:11Z","lease_ttl_s":900,"action_ceiling":"benign","capabilities":["sense.temp","act.relay_1"],"limits":{"act.relay_1":{"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":null}},"evidence":{"required_for":["act.*"],"min_interval_s":60},"safe_state":"all_actuators_off","sync_interval_s":15}
+{"charter_id":"c0000000-0000-4000-8000-000000000001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","mission_ref":"mission-0001","issued_at":"2026-08-14T21:04:11Z","expires_at":"2026-08-14T22:04:11Z","lease_ttl_s":900,"action_ceiling":"benign","capabilities":["sense.temp","act.relay_1"],"routines":[],"limits":{"act.relay_1":{"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":null}},"evidence":{"required_for":["act.*"],"min_interval_s":60},"safe_state":"all_actuators_off","sync_interval_s":15}
 
 ## action_record
-{"action_id":"a0000000-0000-4000-8000-000000000001","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","parameters":{"on_s":30},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:41Z","outcome":"succeeded","evidence_refs":["e0000000-0000-4000-8000-000000000001"],"detail":""}
+{"action_id":"a0000000-0000-4000-8000-000000000001","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{},"parameters":{"on_s":30},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:41Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e0000000-0000-4000-8000-000000000001"],"detail":""}
 
 ## evidence_bundle
 {"bundle_id":"b0000000-0000-4000-8000-000000000001","items":[{"evidence_id":"e0000000-0000-4000-8000-000000000001","type":"sensor_window","captured_at":"2026-08-14T21:04:41Z","source":"sim.act.relay_1","payload_json":"{\"before\":0,\"after\":1}","content_digest":""}],"evicted_acked_items":0}
