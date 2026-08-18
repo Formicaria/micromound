@@ -1,0 +1,176 @@
+name: CI
+
+# The V&V gate for MICROMOUND, following ANTHILL's ci.yml pattern. CHANGELOG v0.2.2 named the
+# gap this closes: "every green this project has ever had came from one Windows machine."
+#
+# The Linux leg runs scripts/validate.sh --full — deliberately the SAME command a developer runs,
+# so green-local predicts green-CI and the two can never check different things. The Windows leg
+# proves the build isn't Linux-only. The guard jobs pin safety invariants from docs/SAFETY.md to
+# concrete lines of code and tests, so weakening one requires editing this workflow — a loud,
+# reviewable act, never a quiet drive-by.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate (Linux, scripts/validate.sh --full)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # Guards (golden fixtures not regenerating, version↔CHANGELOG agreement), restore, build,
+      # test, and the simulator smoke run — the real kernel over fake hardware, end to end.
+      - name: Run the centralized validation
+        run: bash scripts/validate.sh --full
+
+  build-and-test-windows:
+    name: Build & test (.NET, windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore Micromound.sln
+
+      - name: Build (Release)
+        run: dotnet build Micromound.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Micromound.sln -c Release --no-build --logger "trx;LogFileName=test-results.trx" --results-directory ./test-results
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-windows
+          path: test-results/*.trx
+          if-no-files-found: ignore
+
+  docs-consistency:
+    name: Docs consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Every canonical doc the README's documentation table promises must exist. The
+      # version↔CHANGELOG agreement is validate.sh Guard 2 and is not re-implemented here.
+      - name: Canonical docs present
+        run: |
+          missing=0
+          for f in docs/MICROMOUND.md docs/ARCHITECTURE.md docs/ANTS.md docs/CAPABILITIES.md \
+                   docs/CONFIGURATION.md docs/PROTOCOL.md docs/SAFETY.md docs/UPSTREAM.md \
+                   docs/ROADMAP.md CHANGELOG.md; do
+            [ -f "$f" ] || { echo "::error::$f is missing"; missing=1; }
+          done
+          [ "$missing" -eq 0 ] && echo "All canonical docs present."
+          exit $missing
+
+  safety-guards:
+    name: Safety invariant guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Hazardous is never a legal charter ceiling
+        run: |
+          grep -q "hazardous' is never a legal charter ceiling" src/Micromound.Protocol/Validation.cs \
+            || { echo "::error::CharterValidator no longer refuses hazardous ceilings (SAFETY.md Layer 2)"; exit 1; }
+          grep -q "Hazardous_is_never_a_legal_ceiling" tests/Micromound.Tests/CharterValidationTests.cs \
+            || { echo "::error::The hazardous-ceiling test was removed"; exit 1; }
+          echo "Hazardous-ceiling guard intact."
+
+      - name: Nothing above the kernel widens a bound below it
+        run: |
+          grep -q "A_charter_cannot_widen_firmwares_on_time" tests/Micromound.Tests/LimitEnforcementTests.cs \
+            || { echo "::error::The limit-widening test was removed (SAFETY.md Layer 1)"; exit 1; }
+          grep -q "A_charter_cannot_widen_the_hardware_on_time" tests/Micromound.Tests/Kernel/CapabilityKernelTests.cs \
+            || { echo "::error::The kernel limit-widening test was removed"; exit 1; }
+          echo "Limit-intersection guards intact."
+
+      - name: Commands are not evidence (unverified demotion exists)
+        run: |
+          grep -rq "unverified" src/Micromound.Capabilities/ \
+            || { echo "::error::The unverified demotion vanished from the capability kernel"; exit 1; }
+          echo "Evidence-demotion guard intact."
+
+      - name: No unsigned mode exists
+        run: |
+          grep -q "An_unsigned_envelope_is_refused" tests/Micromound.Tests/SignatureTests.cs \
+            || { echo "::error::The unsigned-envelope refusal test was removed (PROTOCOL.md §2)"; exit 1; }
+          grep -q "One_forged_envelope_spoils_an_otherwise_intact_backlog" tests/Micromound.Tests/SignatureTests.cs \
+            || { echo "::error::The forged-backlog test was removed"; exit 1; }
+          echo "Signature guards intact."
+
+      - name: Frozen wire bytes are pinned, never CI-regenerated
+        run: |
+          for f in tests/Micromound.Tests/Golden/files/canonical-envelopes.txt \
+                   tests/Micromound.Tests/Golden/files/canonical-bodies.txt; do
+            [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
+          done
+          # validate.sh refuses to run under MICROMOUND_UPDATE_GOLDEN; no workflow may set it either.
+          if grep -rn "MICROMOUND_UPDATE_GOLDEN[[:space:]]*[:=]" .github/workflows/ --include='*.yml'; then
+            echo "::error::A workflow sets MICROMOUND_UPDATE_GOLDEN — golden files that regenerate in CI pin nothing"
+            exit 1
+          fi
+          echo "Golden-file guard intact."
+
+      - name: Reduced profile excludes mission planning
+        run: |
+          python3 - <<'PY'
+          import re, sys
+          s = open("src/Micromound.Protocol/Envelope.cs", encoding="utf-8").read()
+          m = re.search(r"ReducedProfile\s*=\s*new HashSet<string>[^{]*\{([^}]*)\}", s)
+          if not m:
+              print("::error::EnvelopeKinds.ReducedProfile missing"); sys.exit(1)
+          body = m.group(1)
+          for banned in ("Mission", "EvidenceBundle"):
+              if re.search(r"\b" + banned + r"\b", body):
+                  print(f"::error::ReducedProfile now includes {banned} — constrained controllers must not plan missions (PROTOCOL.md §8)")
+                  sys.exit(1)
+          print("Reduced-profile guard intact.")
+          PY
+
+      - name: SAFETY.md canonical rules present
+        run: |
+          for phrase in "single physical authority boundary" "configure, suppress, reset" "never a standing grant"; do
+            grep -q "$phrase" docs/SAFETY.md || { echo "::error::SAFETY.md lost canonical phrase: '$phrase'"; exit 1; }
+          done
+          echo "SAFETY.md canonical rules intact."
+
+      # ANTHILL's repo rule, inherited: no active Python in the repo (CI inline scripts are not
+      # repo files). Device code is C#/C only.
+      - name: No Python files in the repo
+        run: |
+          stray=$(find . -name '*.py' -not -path './.git/*' -not -path '*/bin/*' -not -path '*/obj/*' || true)
+          if [ -n "$stray" ]; then
+            echo "::error::Active Python files found:"
+            echo "$stray"
+            exit 1
+          fi
+          echo "No stray Python files."

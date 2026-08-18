@@ -1,0 +1,165 @@
+name: Release
+
+# The build half of a release. scripts/release.sh (or .ps1) is the authority half: it gates
+# (clean tree, synced main, CHANGELOG section, tag free), tags, pushes the tag, and creates the
+# GitHub Release with notes from CHANGELOG.md. That tag push triggers this workflow, which does
+# what a maintainer's machine shouldn't: full V&V on a clean runner, then self-contained binaries
+# for every target, uploaded to the release the script created.
+#
+# If the release doesn't exist yet (release.sh ran without `gh` on PATH), this workflow creates
+# it as a DRAFT with the same CHANGELOG-extracted notes — a human still presses publish.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and attach binaries for (e.g. v0.2.2)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify-version:
+    name: Verify tag matches MicromoundVersion
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+      ref: ${{ steps.extract.outputs.ref }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Compare tag to Directory.Build.props
+        id: extract
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          TAG_VERSION="${TAG#v}"
+          CODE_VERSION=$(grep -oP '(?<=<MicromoundVersion>)[^<]+' Directory.Build.props)
+          echo "Tag version:  $TAG_VERSION"
+          echo "Code version: $CODE_VERSION"
+          if [ "$TAG_VERSION" != "$CODE_VERSION" ]; then
+            echo "::error::Tag $TAG doesn't match MicromoundVersion ($CODE_VERSION). Bump the version, commit, then re-tag."
+            exit 1
+          fi
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "ref=${{ inputs.tag || github.ref }}" >> "$GITHUB_OUTPUT"
+
+  full-vv:
+    name: Full V&V before packaging
+    needs: verify-version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-version.outputs.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Run the centralized validation (guards + build + test + sim smoke)
+        run: bash scripts/validate.sh --full
+
+  build-binaries:
+    name: Publish ${{ matrix.rid }}
+    needs: [verify-version, full-vv]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          # Micromound.Host is the headless Linux/Pi daemon — the product. linux-arm64 is the
+          # Pi-class target this project exists for. Micromound.Sim rides along everywhere so
+          # anyone can exercise the kernel without hardware; win-x64 gets Sim only, because the
+          # Host daemon is a Linux artifact.
+          - rid: linux-x64
+            projects: 'src/Micromound.Host/Micromound.Host.csproj src/Micromound.Sim/Micromound.Sim.csproj'
+            archive: tar.gz
+          - rid: linux-arm64
+            projects: 'src/Micromound.Host/Micromound.Host.csproj src/Micromound.Sim/Micromound.Sim.csproj'
+            archive: tar.gz
+          - rid: win-x64
+            projects: 'src/Micromound.Sim/Micromound.Sim.csproj'
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-version.outputs.ref }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Publish (${{ matrix.rid }}, self-contained single-file)
+        run: |
+          for proj in ${{ matrix.projects }}; do
+            dotnet publish "$proj" \
+              -c Release -r ${{ matrix.rid }} --self-contained true \
+              -p:PublishSingleFile=true -p:DebugType=none \
+              -o ./publish/${{ matrix.rid }}
+          done
+          cp README.md CHANGELOG.md LICENSE ./publish/${{ matrix.rid }}/
+
+      - name: Package (${{ matrix.archive }})
+        run: |
+          V="${{ needs.verify-version.outputs.version }}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd ./publish/${{ matrix.rid }} && zip -qr "../../micromound-$V-${{ matrix.rid }}.zip" .)
+          else
+            tar -czf "micromound-$V-${{ matrix.rid }}.tar.gz" -C ./publish/${{ matrix.rid }} .
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: micromound-${{ needs.verify-version.outputs.version }}-${{ matrix.rid }}
+          path: micromound-*-${{ matrix.rid }}.*
+          if-no-files-found: error
+
+  attach:
+    name: Attach binaries to the release
+    needs: [verify-version, build-binaries]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify-version.outputs.ref }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+          merge-multiple: true
+
+      # release.sh normally created the release already; upload into it. If it doesn't exist,
+      # create it as a draft with the same notes extraction release.sh uses ("## <tag>" to the
+      # next "## ", so ### subheadings stay inside the section).
+      - name: Upload assets (create draft only if the release is missing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ needs.verify-version.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists (created by scripts/release.sh) — attaching binaries."
+            gh release upload "$TAG" ./artifacts/* --clobber
+          else
+            echo "Release $TAG missing — creating it as a DRAFT with CHANGELOG notes."
+            awk -v v="## $TAG" '
+              index($0, v) == 1 && !found {found=1; next}
+              found && /^## / {exit}
+              found {print}
+            ' CHANGELOG.md | sed '/^---$/d' > /tmp/notes.md
+            if [ ! -s /tmp/notes.md ]; then
+              echo "::error::CHANGELOG.md has no '## $TAG' section to extract."
+              exit 1
+            fi
+            gh release create "$TAG" ./artifacts/* --draft --title "$TAG" --notes-file /tmp/notes.md
+          fi
