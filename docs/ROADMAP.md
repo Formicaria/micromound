@@ -10,8 +10,8 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 
 | Milestone | Status | What it is |
 |---|---|---|
-| **M0** — Protocol, identity, kernel | **In progress** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
-| **M1** — Runtime interfaces and the Mound Major | Planned | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
+| **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
+| **M1** — Runtime interfaces and the Mound Major | **Next** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
 | **M2** — The six default ants | Planned | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
 | **M3** — Evidence, offline state, and sync | Planned | Evidence correlation, durable offline state, reconnect and backlog synchronization |
 | **M4** — The Linux/Pi host and first real drivers | Planned | The headless daemon, configuration loading, service lifecycle, watchdog, and a small initial set of real hardware drivers |
@@ -31,7 +31,13 @@ not for the rest: the wire contracts, signing, canonical-byte fixtures, and Laye
 existed, but the capability kernel those rules belong in did not — clamping lived on the simulator's
 own actuation path, which meant the simulator and any future runtime could have diverged.
 
-M0 now means: contracts **and** the kernel.
+M0 now means: contracts **and** the kernel. It froze at **`v0.2.1`**.
+
+**What "frozen" commits us to.** The v0 canonical bytes are now pinned by the golden fixtures and
+will not change again inside v0 — a later change to what gets signed and hashed is a protocol
+version bump under PROTOCOL.md §10, not an amendment. That is the property the M5 C mirror is
+built against, and it is the property that lets an upstream integration start now rather than
+after the runtime lands. Additive fields remain legal; re-encoding existing ones does not.
 
 Done:
 
@@ -46,14 +52,19 @@ Done:
 - [x] The capability kernel: stop, availability, authority, grant, worker ceiling, parameters,
       limits, duty cycle, rate, clamp, executor — with structured refusals
 - [x] The simulator rebuilt onto the real kernel
+- [x] Golden fixtures regenerated for the amended v0 contracts (`901f4dc`, shipped in `v0.2.0` —
+      this box was left unticked for a release, which is its own small lesson about trusting a
+      checklist over `git log`)
+- [x] Mission validator tests
+- [x] Manifest validator tests
+- [x] A `CHANGELOG.md`, since design rule 9 requires a changelog entry per stateful feature
 
-Remaining before M0 is frozen:
-
-- [ ] Regenerate the golden fixtures for the amended v0 contracts
-      (`MICROMOUND_UPDATE_GOLDEN=1 dotnet test`, then verify)
-- [ ] Mission validator tests
-- [ ] Manifest validator tests
-- [ ] A `CHANGELOG.md`, since design rule 9 requires a changelog entry per stateful feature
+Deliberately **not** in M0, and recorded so nobody mistakes an absence for an oversight — the v0
+validators accept a `sense` step naming an `act.` capability, accept `mission.safe_state` and
+`mission.worker` without checking them, and do not validate `WorkerDefinition.exposes`,
+`runtime_type`, or `required_evidence`. Each is a contract question that the runtime consuming
+these fields has to answer, so each belongs to M1. None is an authority hole: the kernel still
+refuses at execution on class, grant, and limits regardless of what a packet claims.
 
 ## Ordering rationale
 
