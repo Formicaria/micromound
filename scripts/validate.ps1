@@ -46,7 +46,20 @@ if ($changelog -notmatch "(?m)^## v$([regex]::Escape($ver))\b") {
     Write-Host "x Directory.Build.props says $ver, but CHANGELOG.md has no '## v$ver' section." -ForegroundColor Red
     exit 1
 }
-Write-Host "==> version $ver has a CHANGELOG section" -ForegroundColor Cyan
+# The README carries a version marker too, and CI's consistency job compares all three.
+# Checking it here means a forgotten bump fails on the machine that can fix it in a
+# second, rather than on a runner ten minutes later.
+$readme = Get-Content -Raw README.md -Encoding UTF8 -ErrorAction Stop
+if ($readme -notmatch '(?m)^\*\*Current version:\*\*\s*v([0-9][0-9A-Za-z.\-]*)') {
+    Write-Host "x README.md has no '**Current version:** vX.Y.Z' marker." -ForegroundColor Red
+    exit 1
+}
+$readmeVer = $Matches[1]
+if ($readmeVer -ne $ver) {
+    Write-Host "x README.md says v$readmeVer, Directory.Build.props says $ver." -ForegroundColor Red
+    exit 1
+}
+Write-Host "==> version $ver agrees across Directory.Build.props, README.md and CHANGELOG.md" -ForegroundColor Cyan
 
 Write-Host "==> dotnet restore" -ForegroundColor Cyan
 dotnet restore Micromound.sln

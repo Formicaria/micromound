@@ -12,6 +12,49 @@ wire change is never a footnote here.
 
 ---
 
+## v0.2.3 — one owner for the release
+
+Tooling and docs only. No `src/`, no tests, no wire change.
+
+Groundwork for the CI and release workflows landing next, done first and separately so that when
+those workflows arrive they are the only change on their own push — the one thing `dotnet test`
+structurally cannot validate should never share a push with something it could.
+
+### Changed
+
+- **`scripts/release.*` no longer creates the GitHub Release when a release workflow exists.**
+  `.github/workflows/release.yml` re-verifies the tag against `MicromoundVersion`, rebuilds and
+  retests *from the tag*, publishes `linux-x64` / `linux-arm64` / `win-x64` binaries, and opens a
+  **draft** for a human to read and publish. These scripts cannot attach binaries, so they must
+  not create the release first: two owners is a race, and the loser is whichever one was carrying
+  the artifacts. The scripts now tag, push, and point at the run.
+
+  The check is `if the workflow file exists`, which is deliberate rather than a flag. It is what
+  makes this release possible at all — the workflow does not exist yet, so `v0.2.3` is still cut
+  by the script, and the handover happens by itself the moment the workflow lands. Nothing is
+  released twice and nothing goes unreleased in between.
+
+- **Draft, not published.** Worth stating as a choice rather than a default inherited from
+  ANTHILL: a release is the project speaking in its own voice, and unattended automation should
+  not get to do that. The workflow assembles everything and stops.
+
+### Added
+
+- **`**Current version:**` marker in `README.md`,** and `scripts/validate.*` now fails when it
+  disagrees with `Directory.Build.props`. The incoming CI compares all three of props, README and
+  CHANGELOG; checking it locally means a forgotten bump fails on the machine that can fix it in a
+  second, rather than on a runner ten minutes later. Same reason the changelog check already lives
+  there.
+
+### Note on what is coming
+
+`origin/ci-train` carries the workflows this release prepares for, but it is rooted on `v0.1.0`
+and against current main it is `+1256 / −7267` — merging it would delete `Micromound.Capabilities`,
+`Micromound.Runtime`, `Micromound.Sync`, every kernel test, and both v0.2.1 validation suites. The
+`.github/**` files get lifted out of it onto current main; the branch itself is not merged. Four of
+its fourteen safety guards already point at things that moved in v0.2.0 and will be repointed on
+the way in.
+
 ## v0.2.2 — the release script releases
 
 Tooling only. No `src/`, no tests, no wire change.

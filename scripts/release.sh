@@ -20,6 +20,9 @@
 # find that out short of attempting a real release. A gate that can only be
 # exercised by the irreversible operation it guards is not a gate you can trust.
 #
+# The GitHub Release itself is created by .github/workflows/release.yml when that file
+# exists, and by this script when it does not -- see the note at the bottom.
+#
 # Kept in step with scripts/release.ps1. This file is the authoritative one.
 # ─────────────────────────────────────────────────────────────────────────────
 set -uo pipefail
@@ -125,11 +128,27 @@ git tag -a "$tag" -m "$tag" || { echo "✗ Could not create the tag."; exit 1; }
 git push "$remote" "$tag" || { echo "✗ Tag push failed. Nothing was released."; exit 1; }
 echo "✓ Pushed $tag to $remote."
 
-if command -v gh >/dev/null 2>&1; then
+# Who owns the GitHub Release.
+#
+# When .github/workflows/release.yml is present, IT owns it. The tag push triggers a
+# workflow that re-verifies the tag against MicromoundVersion, rebuilds and retests from
+# the tag itself, publishes linux-x64 / linux-arm64 / win-x64 binaries, and opens a DRAFT
+# release for a human to read and publish. This script cannot attach binaries, so it must
+# not create the release first: two owners is a race, and the loser is whichever one was
+# carrying the artifacts.
+#
+# Before that workflow exists, this script is the only thing that can create a release, so
+# it does. The conditional IS the transition -- nothing gets released twice, and nothing
+# goes unreleased in between.
+if [ -f .github/workflows/release.yml ]; then
+  echo "→ .github/workflows/release.yml owns the GitHub Release for $tag."
+  echo "  Watch it:  gh run watch"
+  echo "  It opens a DRAFT release with binaries attached. Read the notes, then publish."
+elif command -v gh >/dev/null 2>&1; then
   printf '%s\n' "$notes" > /tmp/micromound-release-notes.md
   gh release create "$tag" --title "$tag" --notes-file /tmp/micromound-release-notes.md \
-    && echo "✓ GitHub Release $tag created." \
+    && echo "✓ GitHub Release $tag created (no release workflow in this repo yet)." \
     || echo "! Tag is pushed but the GitHub Release was not created. Run: gh release create $tag --notes-file /tmp/micromound-release-notes.md"
 else
-  echo "! gh not found. The tag is pushed; create the Release manually from the section above."
+  echo "! gh not found and no release workflow. The tag is pushed; create the Release manually from the section above."
 fi
