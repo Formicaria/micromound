@@ -12,6 +12,48 @@ wire change is never a footnote here.
 
 ---
 
+## v0.2.4 — the simulator has to still enforce
+
+Tooling and docs. No `src/`, no wire change.
+
+### Added
+
+- **CI, at last** — landed in `a16b7c2`, unversioned and alone, because a workflow is the one
+  thing `dotnet test` structurally cannot validate and a red run should have exactly one candidate
+  cause. `ci.yml` runs `scripts/validate.sh --full` on Linux — deliberately the same command a
+  developer runs, so green-local and green-CI can never check different things — plus a Windows
+  build-and-test leg, a canonical-docs presence check, and safety guards pinning SAFETY.md
+  invariants to concrete lines of code and tests. `release.yml` verifies a pushed tag against
+  `MicromoundVersion`, rebuilds and retests *from the tag*, and publishes self-contained
+  `linux-x64` / `linux-arm64` / `win-x64` binaries. `codeql.yml` scans on PRs and weekly;
+  Dependabot watches NuGet and Action pins.
+
+  v0.2.2's changelog said "every green this project has ever had came from one Windows machine."
+  That is no longer true. All six jobs passed on their first run.
+
+- **`scripts/validate.* --full` now asserts what the simulator did, not merely that it ran.** Ten
+  literal claims over its output: refusal without a charter, the widening attempt reported rather
+  than silently intersected away, the clamp, the duty-cycle refusal, `unverified` on a dead
+  sensor, lease expiry into `quiesced`, refusal after expiry, the verified backlog, and the
+  impostor key refused.
+
+  `dotnet run` exits 0 whether or not the mound still refuses anything, so the previous
+  exit-code-only check would have stayed green through a regression where clamping quietly stopped
+  clamping. Both mutations were tried against the real output before this shipped; each trips
+  exactly one claim.
+
+  The assertions live in the script rather than in `ci.yml` on purpose. `ci-train` originally had
+  them as a `sim-smoke` job and the rebase dropped them; in the script, CI and a developer get
+  them from one source and cannot drift. `grep -F` on one side and `String.Contains` on the other,
+  so both sides assert literally and identically.
+
+### Corrected
+
+- v0.2.3's entry said the incoming CI "compares all three of props, README and CHANGELOG". The CI
+  that actually landed does not re-implement that — its comment says so explicitly, deferring to
+  `validate.sh` Guard 2. The `**Current version:**` marker is enforced locally only. The marker is
+  still worth having; the claim about who checks it was wrong when written.
+
 ## v0.2.3 — one owner for the release
 
 Tooling and docs only. No `src/`, no tests, no wire change.
