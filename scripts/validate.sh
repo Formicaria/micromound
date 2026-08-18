@@ -74,8 +74,42 @@ if [[ "${1:-}" == "--full" ]]; then
   # The simulator runs the real kernel over fake hardware, so this exercises the
   # authority path end to end — charter, lease, clamp, quiesce, backlog, and a
   # chain verified under the wrong key — in one process.
+  #
+  # Running it is not enough. `dotnet run` exits 0 whether or not the mound still
+  # refuses anything, so an exit-code-only check would stay green through a
+  # regression where clamping quietly stopped clamping. These assertions are the
+  # difference between "the simulator ran" and "the simulator still enforces".
   echo "==> simulator smoke run"
-  dotnet run --project src/Micromound.Sim -c Release --no-build
+
+  sim_out="$(mktemp)"
+  trap 'rm -f "$sim_out"' EXIT
+
+  # `set -o pipefail` is on from the top of this file, so a simulator that dies
+  # cannot have its exit code swallowed by the pipe into tee.
+  dotnet run --project src/Micromound.Sim -c Release --no-build | tee "$sim_out"
+
+  # -F: literal claims about the output, not patterns. A regex metacharacter
+  # sneaking into a future claim would silently change what is being asserted.
+  assert() {
+    grep -Fq "$1" "$sim_out" || {
+      echo "✗ simulator output is missing: $1"
+      echo "  The lifecycle changed, or an enforcement path stopped enforcing."
+      exit 1
+    }
+  }
+
+  assert "actuate with no charter -> no_charter"
+  assert "the hardware bound stands"
+  assert "charter accepted=True state=chartered"
+  assert "actuate 60s -> clamped"
+  assert "actuate 30s later -> refused (duty_cycle"
+  assert "actuate with dead sensor -> unverified"
+  assert "lease expired -> quiesced=True state=quiesced"
+  assert "actuate after expiry -> refused (lease_expired"
+  assert "chain+signatures valid=True"
+  assert "same backlog under a wrong key -> valid=False"
+
+  echo "==> simulator lifecycle intact (10 claims)"
 fi
 
 echo "==> ALL VALIDATIONS PASSED (v$ver)"

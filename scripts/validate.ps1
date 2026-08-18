@@ -74,9 +74,39 @@ dotnet test Micromound.sln -c Release --no-build
 if ($LASTEXITCODE -ne 0) { Write-Host "x tests failed" -ForegroundColor Red; exit 1 }
 
 if ($Full) {
+    # Running the simulator is not enough. `dotnet run` exits 0 whether or not the
+    # mound still refuses anything, so an exit-code-only check would stay green
+    # through a regression where clamping quietly stopped clamping. These claims are
+    # the difference between "the simulator ran" and "the simulator still enforces".
     Write-Host "==> simulator smoke run" -ForegroundColor Cyan
-    dotnet run --project src/Micromound.Sim -c Release --no-build
+
+    $simOut = & dotnet run --project src/Micromound.Sim -c Release --no-build 2>&1
     if ($LASTEXITCODE -ne 0) { Write-Host "x simulator smoke run failed" -ForegroundColor Red; exit 1 }
+    $simOut | ForEach-Object { Write-Host $_ }
+
+    $simText = ($simOut | Out-String)
+    $claims = @(
+        'actuate with no charter -> no_charter',
+        'the hardware bound stands',
+        'charter accepted=True state=chartered',
+        'actuate 60s -> clamped',
+        'actuate 30s later -> refused (duty_cycle',
+        'actuate with dead sensor -> unverified',
+        'lease expired -> quiesced=True state=quiesced',
+        'actuate after expiry -> refused (lease_expired',
+        'chain+signatures valid=True',
+        'same backlog under a wrong key -> valid=False'
+    )
+    # .Contains is a literal comparison, matching grep -F in validate.sh. Both sides
+    # must assert the same thing in the same way or the two stop agreeing.
+    foreach ($claim in $claims) {
+        if (-not $simText.Contains($claim)) {
+            Write-Host "x simulator output is missing: $claim" -ForegroundColor Red
+            Write-Host "  The lifecycle changed, or an enforcement path stopped enforcing."
+            exit 1
+        }
+    }
+    Write-Host "==> simulator lifecycle intact ($($claims.Count) claims)" -ForegroundColor Cyan
 }
 
 Write-Host "==> ALL VALIDATIONS PASSED (v$ver)" -ForegroundColor Green
