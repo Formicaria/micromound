@@ -171,7 +171,7 @@ public class MissionValidationTests
         var result = Validate(mission);
 
         Assert.False(result.IsValid);
-        Assert.Equal(1, result.Errors.Count);
+        Assert.Single(result.Errors);
         Assert.Contains("unknown op 'measure'", result.Errors[0]);
         Assert.DoesNotContain(result.Errors, e => e.Contains("plasma_cutter"));
     }
