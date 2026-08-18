@@ -12,6 +12,59 @@ wire change is never a footnote here.
 
 ---
 
+## v0.2.2 — the release script releases
+
+Tooling only. No `src/`, no tests, no wire change.
+
+`v0.2.1` was tagged by hand because `scripts/release.ps1` crashed before it reached its own
+confirmation prompt. Both halves of the failure were in the PowerShell layer rather than in the
+release logic, and both are the kind that only appear on a real run:
+
+### Fixed
+
+- **`$ErrorActionPreference = "Stop"` plus a native command is a trap.** Windows PowerShell turns
+  anything a native command writes to stderr into an `ErrorRecord`, and under `Stop` that
+  terminates the script — `2>$null` redirects the stream, not the record. `git rev-parse v0.2.1`
+  on a tag that does not exist yet writes to stderr *as its way of saying "no such tag"*, so the
+  script died on the good news. Both `.ps1` files now run under `Continue` and check
+  `$LASTEXITCODE` explicitly, with `-ErrorAction Stop` on the cmdlets that genuinely must not
+  fail. The same trap was live in `validate.ps1`: one NuGet warning on stderr from a *passing*
+  build would have aborted validation and read exactly like a test failure.
+- **Tag existence is now read from output, not from an exit code.** `git tag --list` and
+  `git ls-remote --tags` print the match or nothing and always succeed, so there is no stderr for
+  PowerShell to trip over.
+- **An unreachable remote no longer reads as "the tag is free".** `git ls-remote` prints nothing
+  both when a tag does not exist and when it cannot reach the remote at all, and only the exit
+  status tells the two apart. The first version of this check looked at output alone, so a network
+  failure would have been reported as a passing gate — a failure to check presented as a pass,
+  which is the same shape as `ModuleBoundaryTests` silently not looking at Micromound. Found by
+  running the new dry run against a remote that did not exist.
+- **Repository files are read as UTF-8.** PS 5.1 reads a BOM-less UTF-8 file as ANSI, which turns
+  every em dash in `CHANGELOG.md` into mojibake — and those bytes become the published release
+  notes. Caught before it shipped, but only because the first bug stopped the run.
+
+- **Two xUnit2013 warnings introduced in v0.2.1 are gone.** `Assert.Equal(1, errors.Count)` is
+  now `Assert.Single(errors)`. The long form was chosen to dodge an overload-ambiguity risk that
+  does not exist — `Assert.Single` on an `IReadOnlyList<string>` binds the generic overload
+  cleanly, as the rest of this suite already demonstrated. Caution about a hazard that was never
+  there still cost two warnings and a less readable assertion.
+
+### Added
+
+- **`--dry-run` / `-DryRun`** on both release scripts. It evaluates every gate, prints a pass/fail
+  table, and tags nothing. This exists because of exactly what happened here: the only way to
+  discover that the release script could not release was to attempt a release. A gate that can
+  only be exercised by the irreversible operation it guards is not a gate anyone can trust.
+  Outside a dry run the first failure is still fatal — a release must not walk past a red gate
+  because the ones after it happen to be green.
+
+### Not fixed, and worth naming
+
+Neither script has an automated test. `--dry-run` makes them *exercisable* on demand, which is a
+real improvement over "find out at the tag", but it is not the same as something that runs without
+being asked. There is also still no CI in this repository at all: every green this project has ever
+had came from one Windows machine. Both belong to the same piece of work.
+
 ## v0.2.1 — M0 frozen
 
 Milestone M0 is complete: the wire contracts, the identity layer, and the capability kernel are

@@ -246,7 +246,7 @@ public class ManifestValidationTests
         var result = Validate(manifest);
 
         Assert.False(result.IsValid);
-        Assert.Equal(1, result.Errors.Count);
+        Assert.Single(result.Errors);
         Assert.Contains("worker with no name", result.Errors[0]);
     }
 
