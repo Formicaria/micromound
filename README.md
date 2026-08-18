@@ -63,6 +63,8 @@ state. Reconnection resumes nothing.
 
 ## Status
 
+**Current version:** v0.2.3
+
 **M0 frozen at `v0.2.1`** — protocol contracts, Ed25519 signing, frozen wire bytes, and the
 capability kernel with deterministic authorization, all under test. The v0 canonical bytes will
 not change again inside v0. Nothing physical ships yet; no real drivers, no firmware. **M1** —

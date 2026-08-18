@@ -19,6 +19,9 @@
 # short of attempting a real release. A gate that can only be exercised by the
 # irreversible operation it guards is not a gate you can trust.
 #
+# The GitHub Release itself is created by .github/workflows/release.yml when that file
+# exists, and by this script when it does not -- see the note at the bottom.
+#
 # Same checks as scripts/release.sh. If the two ever disagree, the .sh file is
 # what CI would run and is the one that is right.
 param([switch]$DryRun, [string]$Remote = "")
@@ -154,17 +157,36 @@ git push $Remote $tag
 if ($LASTEXITCODE -ne 0) { Write-Host "x Tag push failed. Nothing was released." -ForegroundColor Red; exit 1 }
 Write-Host "OK: pushed $tag to $Remote." -ForegroundColor Green
 
+# Who owns the GitHub Release.
+#
+# When .github/workflows/release.yml is present, IT owns it. The tag push triggers a
+# workflow that re-verifies the tag against MicromoundVersion, rebuilds and retests from
+# the tag itself, publishes linux-x64 / linux-arm64 / win-x64 binaries, and opens a DRAFT
+# release for a human to read and publish. This script cannot attach binaries, so it must
+# not create the release first: two owners is a race, and the loser is whichever one was
+# carrying the artifacts.
+#
+# Before that workflow exists, this script is the only thing that can create a release, so
+# it does. The conditional IS the transition -- nothing gets released twice, and nothing
+# goes unreleased in between.
+if (Test-Path .github/workflows/release.yml) {
+    Write-Host "-> .github/workflows/release.yml owns the GitHub Release for $tag." -ForegroundColor Cyan
+    Write-Host "   Watch it:  gh run watch"
+    Write-Host "   It opens a DRAFT release with binaries attached. Read the notes, then publish."
+    exit 0
+}
+
 $gh = Get-Command gh -ErrorAction SilentlyContinue
 if ($gh) {
     $notesFile = Join-Path $env:TEMP "micromound-release-notes.md"
     [IO.File]::WriteAllText($notesFile, $notesText, [Text.UTF8Encoding]::new($false))
     gh release create $tag --title $tag --notes-file $notesFile
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "OK: GitHub Release $tag created." -ForegroundColor Green
+        Write-Host "OK: GitHub Release $tag created (no release workflow in this repo yet)." -ForegroundColor Green
     } else {
         Write-Host "! Tag is pushed but the GitHub Release was not created." -ForegroundColor Yellow
         Write-Host "  Run: gh release create $tag --notes-file $notesFile"
     }
 } else {
-    Write-Host "! gh not found. The tag is pushed; create the Release manually from the section above." -ForegroundColor Yellow
+    Write-Host "! gh not found and no release workflow. The tag is pushed; create the Release manually from the section above." -ForegroundColor Yellow
 }

@@ -46,7 +46,19 @@ grep -q "^## v$ver\b" CHANGELOG.md || {
   echo "✗ Directory.Build.props says $ver, but CHANGELOG.md has no '## v$ver' section."
   exit 1
 }
-echo "==> version $ver has a CHANGELOG section"
+# The README carries a version marker too, and CI's consistency job compares all three.
+# Checking it here means a forgotten bump fails on the machine that can fix it in a
+# second, rather than on a runner ten minutes later.
+readme_ver="$(sed -n 's/^\*\*Current version:\*\* v\([0-9][0-9A-Za-z.-]*\).*/\1/p' README.md | head -1)"
+[ -n "$readme_ver" ] || {
+  echo "✗ README.md has no '**Current version:** vX.Y.Z' marker."
+  exit 1
+}
+[ "$readme_ver" = "$ver" ] || {
+  echo "✗ README.md says v$readme_ver, Directory.Build.props says $ver."
+  exit 1
+}
+echo "==> version $ver agrees across Directory.Build.props, README.md and CHANGELOG.md"
 
 # ── The build ───────────────────────────────────────────────────────────────
 echo "==> dotnet restore"
