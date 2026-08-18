@@ -63,15 +63,20 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**M0 in progress** — protocol contracts, Ed25519 signing, frozen wire bytes, and the capability
-kernel with deterministic authorization. Nothing physical ships yet; no real drivers, no firmware.
-See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+**M0 frozen at `v0.2.1`** — protocol contracts, Ed25519 signing, frozen wire bytes, and the
+capability kernel with deterministic authorization, all under test. The v0 canonical bytes will
+not change again inside v0. Nothing physical ships yet; no real drivers, no firmware. **M1** —
+runtime interfaces and the Mound Major — is next. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
-dotnet build Micromound.sln
-dotnet test Micromound.sln
-dotnet run --project src/Micromound.Sim     # simulated mound smoke run
+bash scripts/validate.sh                    # guards + restore + build + test
+bash scripts/validate.sh --full             # and the simulator smoke run
+dotnet test Micromound.sln                  # just the tests
 ```
+
+On Windows without bash on PATH, `.\scripts\validate.ps1` runs the same steps.
+Releases are cut with `scripts/release.sh` (or `scripts/release.ps1`) from a synced `main`.
 
 Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
 
