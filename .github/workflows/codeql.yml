@@ -1,0 +1,47 @@
+name: CodeQL
+
+# Static security analysis — the production layer on top of ANTHILL's CI train. Runs on PRs,
+# main, and a weekly schedule so newly published query packs re-scan the existing code too.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '30 5 * * 1'   # Mondays 05:30 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze C#
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          build-mode: manual
+
+      - name: Build for analysis
+        run: |
+          dotnet restore Micromound.sln
+          dotnet build Micromound.sln -c Release --no-restore
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"

@@ -1,6 +1,8 @@
 bin/
 obj/
 publish/
+micromound-*.tar.gz
+micromound-*.zip
 *.user
 .vs/
 .idea/
