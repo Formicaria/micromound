@@ -90,6 +90,19 @@ public sealed class MissionStep
     /// mission's evidence requirements can name what it expects without knowing step ids.
     /// </summary>
     [JsonPropertyName("evidence_tag")] public string EvidenceTag { get; set; } = "";
+
+    /// <summary>
+    /// The earlier step whose action this one confirms. Only meaningful on a <c>verify</c> step,
+    /// and it is what makes `verify` different from `sense` at all.
+    ///
+    /// ARCHITECTURE.md: "the second sense is not redundancy… the first reading justifies the
+    /// action, the second is independent evidence of its effect, and without it the outcome is
+    /// `unverified` no matter what the driver returned." That sentence needs a link between the
+    /// confirming observation and the action being confirmed, and this is it. Naming the step
+    /// explicitly, rather than inferring the pairing from capability names, keeps missions the
+    /// deterministic packets §9 says they are: one source, named, no matching rules to learn.
+    /// </summary>
+    [JsonPropertyName("confirms")] public string Confirms { get; set; } = "";
 }
 
 /// <summary>

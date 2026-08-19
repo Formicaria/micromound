@@ -139,6 +139,25 @@ public static class MissionValidator
                     break;
             }
 
+            if (!string.IsNullOrWhiteSpace(step.Confirms))
+            {
+                var confirmedIndex = mission.Steps.FindIndex(s =>
+                    string.Equals(s.StepId, step.Confirms, StringComparison.Ordinal));
+
+                if (step.Op != MissionStepOps.Verify)
+                    errors.Add($"{where}: only a 'verify' step may confirm another; this one is '{step.Op}'");
+                else if (confirmedIndex < 0)
+                    errors.Add($"{where}: confirms '{step.Confirms}', which is not a step in this mission");
+                else if (confirmedIndex >= i)
+                    errors.Add($"{where}: confirms step '{step.Confirms}', which does not run first");
+                else if (mission.Steps[confirmedIndex].Op is not (MissionStepOps.Act or MissionStepOps.Routine))
+                    // Confirming an observation is not confirmation of anything. The point of a
+                    // verify step is to say whether physical work actually had an effect, and only
+                    // an act or a routine claims to have had one.
+                    errors.Add($"{where}: confirms step '{step.Confirms}', which does not actuate " +
+                               $"(op '{mission.Steps[confirmedIndex].Op}')");
+            }
+
             if (step.Condition is not { } condition) continue;
 
             if (!ConditionOps.All.Contains(condition.Op))

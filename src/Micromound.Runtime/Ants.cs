@@ -108,8 +108,23 @@ public interface IGuardAnt : IMoundWorker
 /// </summary>
 public interface IWitnessAnt : IMoundWorker
 {
-    /// <summary>Correlate an action with evidence and return the outcome it is entitled to.</summary>
-    string Confirm(ActionRecord record, EvidencePolicy policy, DateTimeOffset now, out string reason);
+    /// <summary>
+    /// Correlate an action with the observation offered as proof of its effect, and return the
+    /// outcome the action is entitled to.
+    ///
+    /// <paramref name="confirming"/> is an argument rather than something the Witness goes looking
+    /// for. Evidence becomes an action's evidence in exactly two ways — an executor produced it
+    /// during the work, or a mission explicitly linked it with a `verify` step's <c>confirms</c> —
+    /// and both are somebody else's decision, made before the outcome was known. A Witness that
+    /// swept up nearby readings itself would let the mound nominate its own corroboration.
+    ///
+    /// It can only ever lower the verdict. That is a property of the evidence gate rather than a
+    /// rule this implementation applies: the gate returns the record's own outcome unless that
+    /// outcome asserts physical work, so nothing here can talk an `unverified` action back into
+    /// having succeeded.
+    /// </summary>
+    string Confirm(ActionRecord record, IReadOnlyList<EvidenceItem> confirming, EvidencePolicy policy,
+        DateTimeOffset now, out string reason);
 }
 
 /// <summary>

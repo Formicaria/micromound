@@ -19,12 +19,12 @@ The roster is a design, and the runtime is catching up to it. As of `v0.4.0`:
 | Scout Ant | **Implemented** (`v0.4.0`) — submits under its own ceiling; the reading is evidence |
 | Forager Ant | **Implemented** (`v0.4.0`) — submits under its own ceiling; holds no driver |
 | Guard Ant | **Implemented** (`v0.4.0`) — the software watchdog SAFETY.md Layer 1 promised |
-| Witness Ant | Interface only — evidence correlation, next |
+| Witness Ant | **Implemented** (`v0.5.0`) — confirms an action against a later observation |
 | Cache Ant | Interface only — operational persistence |
 | Runner Ant | Interface only — transport, enrollment, durable uplink |
 
-The three implemented ones are the three a mission passes *through* while it runs. The remaining
-three act on the record afterwards, and land with evidence correlation and transport.
+Cache and Runner are what remain: operational persistence, and transport. Both are about what
+happens to a record *after* the mission, and both land with durable storage and the uplink queue.
 
 ## The default roster
 
