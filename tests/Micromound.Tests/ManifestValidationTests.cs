@@ -280,6 +280,38 @@ public class ManifestValidationTests
         Assert.Contains(result.Errors, e => e.Contains("never configurable"));
     }
 
+    /// <remarks>
+    /// Closed on purpose: "ant does not mean language model" is only enforceable if a manifest
+    /// cannot invent a kind whose meaning nothing agrees on.
+    /// </remarks>
+    [Fact]
+    public void An_unknown_runtime_type_is_refused()
+    {
+        var manifest = Valid();
+        manifest.Workers[0].RuntimeType = "autonomous_agent";
+
+        var result = Validate(manifest);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("runtime_type unknown"));
+    }
+
+    /// <remarks>
+    /// An undeclared `exposes` entry reads to every other worker as an available capability and
+    /// resolves to nothing — the same silent shape as a device limit keyed to nothing.
+    /// </remarks>
+    [Fact]
+    public void A_worker_exposing_something_the_mound_never_declared_is_refused()
+    {
+        var manifest = Valid();
+        manifest.Workers[0].Exposes = ["sense.leaf_wetness"];
+
+        var result = Validate(manifest);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("exposes") && e.Contains("does not declare"));
+    }
+
     [Fact]
     public void An_unknown_offline_behaviour_is_refused()
     {

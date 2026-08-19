@@ -25,6 +25,19 @@ internal sealed class FakeExecutor(string capabilityId) : ICapabilityExecutor
     /// <summary>Backdate produced evidence, for testing staleness.</summary>
     public TimeSpan EvidenceAge { get; set; } = TimeSpan.Zero;
 
+    /// <summary>
+    /// When set, produced evidence is a numeric reading (see <see cref="EvidenceReadings"/>)
+    /// rather than an opaque window. Mission tests need this: a condition compares an earlier
+    /// step's reading, and an opaque payload carries no number to compare.
+    /// </summary>
+    public double? Reading { get; set; }
+
+    /// <summary>
+    /// Receives every produced item, so a test can resolve evidence ids the way a real store
+    /// does. Null leaves the executor exactly as it was — kernel tests never needed this.
+    /// </summary>
+    public Action<EvidenceItem>? Publish { get; set; }
+
     public int Calls { get; private set; }
 
     public CapabilityExecution? LastExecution { get; private set; }
@@ -40,14 +53,21 @@ internal sealed class FakeExecutor(string capabilityId) : ICapabilityExecutor
         var evidence = new List<EvidenceItem>();
         if (ProducesEvidence)
         {
-            evidence.Add(new EvidenceItem
-            {
-                EvidenceId = $"ev-{CapabilityId}-{Calls}",
-                Type = "sensor_window",
-                CapturedAt = (execution.StartedAt - EvidenceAge).ToWire(),
-                Source = "fake." + CapabilityId,
-                PayloadJson = """{"before":0,"after":1}"""
-            });
+            var capturedAt = execution.StartedAt - EvidenceAge;
+            var item = Reading is { } reading
+                ? EvidenceReadings.Create($"ev-{CapabilityId}-{Calls}", CapabilityId, reading, capturedAt,
+                    source: "fake." + CapabilityId)
+                : new EvidenceItem
+                {
+                    EvidenceId = $"ev-{CapabilityId}-{Calls}",
+                    Type = "sensor_window",
+                    CapturedAt = capturedAt.ToWire(),
+                    Source = "fake." + CapabilityId,
+                    PayloadJson = """{"before":0,"after":1}"""
+                };
+
+            evidence.Add(item);
+            Publish?.Invoke(item);
         }
 
         return ExecutionOutcome.Ok(evidence);
@@ -76,6 +96,9 @@ internal sealed class KernelHarness
     public FakeExecutor SensorExecutor { get; } = new(Sensor);
     public FakeExecutor RelayExecutor { get; } = new(Relay);
     public FakeExecutor RoutineExecutor { get; } = new(WaterCycle);
+
+    /// <summary>Everything the fake drivers produced, resolvable by id like a real store.</summary>
+    public FakeEvidenceStore Evidence { get; } = new();
 
     public KernelHarness()
     {
@@ -106,6 +129,10 @@ internal sealed class KernelHarness
             Parameters = new HashSet<string>(StringComparer.Ordinal) { "on_s" },
             DurationParameter = "on_s"
         }));
+
+        SensorExecutor.Publish = Evidence.Add;
+        RelayExecutor.Publish = Evidence.Add;
+        RoutineExecutor.Publish = Evidence.Add;
 
         Kernel = new CapabilityKernel(Capabilities, Routines, Authority);
         MustRegister(Kernel.RegisterExecutor(SensorExecutor));
@@ -161,5 +188,30 @@ internal sealed class KernelHarness
 
         if (onSeconds is { } seconds) request.Parameters["on_s"] = seconds;
         return request;
+    }
+}
+
+/// <summary>
+/// The local evidence store, as far as these tests are concerned: a dictionary that answers the
+/// one question <see cref="IEvidenceLookup"/> asks. Micromound.Evidence will own the real one.
+/// </summary>
+internal sealed class FakeEvidenceStore : IEvidenceLookup
+{
+    private readonly Dictionary<string, EvidenceItem> _items = new(StringComparer.Ordinal);
+
+    public int Count => _items.Count;
+
+    public void Add(EvidenceItem item) => _items[item.EvidenceId] = item;
+
+    public bool TryGet(string evidenceId, out EvidenceItem item)
+    {
+        if (_items.TryGetValue(evidenceId, out var found))
+        {
+            item = found;
+            return true;
+        }
+
+        item = new EvidenceItem();
+        return false;
     }
 }

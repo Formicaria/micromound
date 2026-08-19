@@ -106,11 +106,25 @@ public static class MissionValidator
 
             switch (step.Op)
             {
+                // The namespace is checked before the grant. A `sense` step naming an `act.`
+                // capability is not a permission question — it is a mission that means something
+                // other than it says, and the kernel would refuse it later for the wrong reason
+                // (a Scout Ant's ceiling) while the actual mistake went unnamed.
                 case MissionStepOps.Sense:
                 case MissionStepOps.Verify:
-                case MissionStepOps.Act:
                     if (string.IsNullOrWhiteSpace(step.Capability))
                         errors.Add($"{where}: op '{step.Op}' requires a capability");
+                    else if (!CapabilityId.IsSense(step.Capability))
+                        errors.Add($"{where}: op '{step.Op}' observes, so '{step.Capability}' must be in the 'sense.' namespace");
+                    else if (!charter.Capabilities.Contains(step.Capability))
+                        errors.Add($"{where}: capability '{step.Capability}' is not granted by the charter");
+                    break;
+
+                case MissionStepOps.Act:
+                    if (string.IsNullOrWhiteSpace(step.Capability))
+                        errors.Add($"{where}: op 'act' requires a capability");
+                    else if (!CapabilityId.IsAct(step.Capability))
+                        errors.Add($"{where}: op 'act' actuates, so '{step.Capability}' must be in the 'act.' namespace");
                     else if (!charter.Capabilities.Contains(step.Capability))
                         errors.Add($"{where}: capability '{step.Capability}' is not granted by the charter");
                     break;
@@ -140,6 +154,15 @@ public static class MissionValidator
             else if (sourceIndex >= i)
                 errors.Add($"{where}: condition reads step '{condition.SourceStep}', which does not run first");
         }
+
+        // A mission carries a safe state only to restate the charter's. Two documents naming
+        // different de-energized states is a contradiction nobody can resolve at the moment it
+        // matters — which is when the watchdog trips — so it is refused before it can be one.
+        // `worker` is deliberately NOT validated here: which ants exist is a runtime question, and
+        // an unrecognised name resolves to no worker ceiling rather than to an invented one.
+        if (!string.IsNullOrWhiteSpace(mission.SafeState) &&
+            !string.Equals(mission.SafeState, charter.SafeState, StringComparison.Ordinal))
+            errors.Add($"safe_state '{mission.SafeState}' contradicts the charter's '{charter.SafeState}'");
 
         foreach (var capability in mission.RequiredCapabilities)
             if (!charter.Capabilities.Contains(capability))
@@ -219,12 +242,21 @@ public static class ManifestValidator
             if (!OfflineBehaviours.All.Contains(worker.OfflineBehaviour))
                 errors.Add($"worker '{worker.Name}': offline_behaviour unknown '{worker.OfflineBehaviour}'");
 
+            if (!RuntimeTypes.All.Contains(worker.RuntimeType))
+                errors.Add($"worker '{worker.Name}': runtime_type unknown '{worker.RuntimeType}'");
+
             if (worker.RequiresReasoning && manifest.Reasoning.Mode == ReasoningModes.None)
                 errors.Add($"worker '{worker.Name}' requires reasoning but reasoning.mode is 'none'");
 
             foreach (var capability in worker.Consumes)
                 if (!manifest.Capabilities.Contains(capability) && !manifest.Routines.Contains(capability))
                     errors.Add($"worker '{worker.Name}' consumes '{capability}', which this mound does not declare");
+
+            // A worker cannot offer what the mound does not have. An undeclared `exposes` entry
+            // reads to every other worker as an available capability and resolves to nothing.
+            foreach (var capability in worker.Exposes)
+                if (!manifest.Capabilities.Contains(capability) && !manifest.Routines.Contains(capability))
+                    errors.Add($"worker '{worker.Name}' exposes '{capability}', which this mound does not declare");
         }
 
         foreach (var key in manifest.DeviceLimits.Keys)

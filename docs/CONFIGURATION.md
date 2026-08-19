@@ -110,14 +110,22 @@ asks for. A charter cannot undo it, and the attempt is reported.
 - worker names are unique
 - no worker declares a `hazardous` ceiling
 - every worker's `offline_behaviour` is one of `continue`, `drain`, `suspend`
+- every worker's `runtime_type` is one of `deterministic`, `algorithmic`, `sensor`, `actuator`,
+  `reasoning`
 - no worker requires reasoning while `reasoning.mode` is `none`
-- every capability a worker consumes is declared by this mound
+- every capability a worker consumes **or exposes** is declared by this mound
 - every `device_limits` key matches a declared capability or routine
 - `safe_state` is present
 
 A `device_limits` entry for a capability that does not exist is an error rather than a no-op,
 because silently ignoring it is how an operator comes to believe a bound is in force when it
-is not.
+is not. An undeclared `exposes` entry is refused for the same reason from the other direction: it
+reads to every other worker as an available capability and resolves to nothing.
+
+`runtime_type` is a closed set rather than a label, because "ant does not mean language model"
+(MICROMOUND.md design rule 9) is only enforceable if a manifest cannot invent a kind whose meaning
+nothing agrees on. `reasoning` is the only value that implies a model, and even that one only
+proposes — the capability kernel remains authoritative regardless of what a worker calls itself.
 
 ## Local layout
 

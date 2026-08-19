@@ -12,6 +12,90 @@ wire change is never a footnote here.
 
 ---
 
+## v0.3.0 — the Mound Major walks a mission
+
+**M1 is done.** The kernel decided, the contracts described, and nothing walked a mission from one
+end to the other. It does now.
+
+### Added
+
+- **`MoundMajor`** (`Micromound.Runtime`) — the local coordinator, implementing `IMoundMajor`.
+  Charter acceptance with advisory widening notes, manifest application that fails closed, and the
+  mission state machine: ordered steps, deterministic conditions, dispatch to the capability
+  kernel, evidence resolution, and a structured `mission_report`.
+
+  It decides nothing about authority. It holds no executor, no driver, and no route to one; every
+  actuation goes through the kernel, which is the only thing asked. What it owns is *order* and
+  *evidence*.
+
+- **`EvidenceReading`** (`Micromound.Protocol`) — the documented numeric shape inside
+  `payload_json`: `{"value":17.0,"unit":"percent","capability":"sense.soil_moisture"}`.
+
+  This was the missing link. `StepCondition` compares an earlier step's reading against a constant
+  and `MissionStepResult.value` reports one, but `payload_json` was opaque everywhere — so both
+  contracts were written in terms of a number nothing could produce or read, and a mission could
+  be validated and never executed. Strict out, tolerant in: any payload carrying a numeric `value`
+  is accepted, whatever else it holds.
+
+  **Not a wire change.** `payload_json` already existed and is already inside the canonical bytes
+  as a string; giving its contents a documented shape adds a convention. The v0 fixtures frozen at
+  `v0.2.1` are byte-identical.
+
+### Three rules worth stating, because each cost a decision
+
+- **Refused whole, never partially run.** Validation happens before any step. There is no
+  compensating action for a valve that opened.
+- **After a halting step the mission stops acting but keeps looking.** No later step actuates —
+  its premise is gone — but later `sense`, `verify` and `report` steps still run, because a
+  reading of where the physical world was actually left is the most valuable thing a partial
+  mission can return. Halting outright would discard exactly what an operator most needs.
+- **The verdict names the first thing that went wrong**, not the worst label in the report. Steps
+  suppressed after a halt report `refused` because they were never attempted; counting those would
+  let a suppression label outrank the real cause, and a hardware fault would be reported as an
+  authority refusal — sending someone to read the charter instead of the relay.
+
+A step whose condition did not hold is `skipped` and its promised evidence was never due. A
+mission that correctly declines to water wet soil is `completed`, not `unverified` — the tests
+caught that one, and grading it otherwise would teach an operator to ignore the single outcome
+that has to keep meaning something.
+
+### Authority — narrowed
+
+The three validation gaps recorded in `v0.2.1` as belonging to M1 are closed:
+
+- A `sense` or `verify` step's capability must be in the `sense.` namespace, and an `act` step's
+  in `act.`. A step that reads an actuator is refused at validation, where the mistake can be
+  named, rather than later by a worker-ceiling refusal that describes something else.
+- `mission.safe_state` may only restate the charter's. Two documents disagreeing about where the
+  hardware goes when the watchdog trips is a contradiction nobody can resolve at the moment it
+  matters.
+- `WorkerDefinition.runtime_type` is a closed set (`deterministic`, `algorithmic`, `sensor`,
+  `actuator`, `reasoning`), and `exposes` must name capabilities the mound declares.
+
+Two of the recorded items turned out to contain no question: `mission.worker` is a runtime
+concern — an unrecognised name resolves to *no* worker ceiling rather than an invented one, which
+is the answer — and `required_evidence` holds free-form tags whose only meaningful check is
+whether a step actually produced them, which is execution's job and now `MoundMajor`'s.
+
+### Wire
+
+No change to canonical bytes. `payload_json`'s `reading` shape and the mission execution semantics
+are documented in `PROTOCOL.md` §6 and §9.
+
+### Tests
+
+208 → 214 by count of cases; 22 of the new ones are `MissionTests`, which runs the
+`ARCHITECTURE.md` "Structured work" example as an executable packet and then bends one thing about
+it at a time: wet soil, an unreadable sensor, a spent duty cycle, a driver fault, a dead witness,
+a worker ceiling, a stop, an expired lease.
+
+### Not in M1
+
+The six ants are interfaces here and services in M2. Nothing implements `IScoutAnt`, `ICacheAnt`
+or `IRunnerAnt`, so a mission runs against registered executors rather than workers with
+lifecycles. No persistence backend, no transport, no real driver. A mound cannot yet be left alone
+with a plant.
+
 ## v0.2.4 — the simulator has to still enforce
 
 Tooling and docs. No `src/`, no wire change.
