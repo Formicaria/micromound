@@ -12,7 +12,7 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 |---|---|---|
 | **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
 | **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
-| **M2** — The six default ants | **Next** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
+| **M2** — The six default ants | **In progress** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
 | **M3** — Evidence, offline state, and sync | Planned | Evidence correlation, durable offline state, reconnect and backlog synchronization |
 | **M4** — The Linux/Pi host and first real drivers | Planned | The headless daemon, configuration loading, service lifecycle, watchdog, and a small initial set of real hardware drivers |
 | **M5** — Constrained controller firmware | Planned | ESP32 reduced controller implementing the same protocol and capability concepts, verified byte-for-byte against the golden fixtures |
@@ -92,6 +92,25 @@ Done:
 `IScoutAnt`, `ICacheAnt` or `IRunnerAnt` yet, so a mission runs against registered executors
 rather than against workers with lifecycles. There is no persistence backend, no transport, and
 no real driver. A mound cannot yet be left alone with a plant.
+
+## Where M2 stands
+
+M2 is being taken in two halves, split where the seam actually is.
+
+**The ants a mission passes through — done at `v0.4.0`:**
+
+- [x] Scout Ant, Forager Ant — each stamping its own declared ceiling onto every request
+- [x] Guard Ant — the software watchdog SAFETY.md Layer 1 promised and nothing implemented
+- [x] Coordinator dispatch through the ants, with no ant registered still a working mound
+
+**The ants that act on the record — next:**
+
+- [ ] Witness Ant and evidence correlation (`IEvidenceCorrelator`, before/after pairing)
+- [ ] Cache Ant and operational persistence
+- [ ] Runner Ant over the durable uplink queue
+- [ ] Simulated drivers implementing `IDriver`, and `Micromound.Sim` rebuilt to compose
+      driver → kernel → ants → Mound Major
+- [ ] End-to-end simulator missions
 
 ## Ordering rationale
 

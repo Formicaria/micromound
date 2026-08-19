@@ -530,3 +530,77 @@ public class CapabilityKernelTests
         Assert.True(record.EvidenceRequired); // matched by the charter's "routine.*" pattern
     }
 }
+
+/// <summary>
+/// What a stop does, and what it deliberately does not.
+///
+/// PROTOCOL.md §7: "cease actuation now, enter safe_state, keep sensing and syncing" — and the
+/// same section requires the stop acknowledgement to carry a post-stop sensor snapshot. A kernel
+/// that refused every capability under stop made that snapshot impossible to produce, and blinded
+/// an operator at the moment they most need to see what the hardware is doing.
+/// </summary>
+public class StopSemanticsTests
+{
+    private readonly KernelHarness _h = new();
+    private static DateTimeOffset Now => KernelHarness.Now;
+
+    [Fact]
+    public void A_stopped_mound_still_senses()
+    {
+        _h.AcceptCharter(Now);
+        _h.Authority.Stop();
+
+        var record = _h.Kernel.Execute(KernelHarness.Request(KernelHarness.Sensor), Now, _h.Evidence);
+
+        Assert.Equal(ActionOutcomes.Succeeded, record.Outcome);
+        Assert.Equal(1, _h.SensorExecutor.Calls);
+    }
+
+    [Fact]
+    public void A_stopped_mound_refuses_actuation()
+    {
+        _h.AcceptCharter(Now);
+        _h.Authority.Stop();
+
+        var record = _h.Kernel.Execute(KernelHarness.Request(KernelHarness.Relay, 5), Now);
+
+        Assert.Equal(ActionOutcomes.Stopped, record.Outcome);
+        Assert.Equal(0, _h.RelayExecutor.Calls);
+    }
+
+    [Fact]
+    public void A_stopped_mound_refuses_a_routine_even_though_it_may_sense()
+    {
+        _h.AcceptCharter(Now);
+        _h.Authority.Stop();
+
+        var decision = _h.Kernel.Authorize(KernelHarness.Request(KernelHarness.WaterCycle, 5), Now);
+
+        Assert.Equal(RefusalReason.Stopped, decision.Refusal);
+    }
+
+    /// <remarks>
+    /// The property this preserves: stop is decided from the id's NAMESPACE, before the registry
+    /// is consulted at all, so it still works when the registry, the charter and the drivers are
+    /// every one of them broken.
+    /// </remarks>
+    [Fact]
+    public void Stop_is_still_decided_before_the_capability_is_recognised()
+    {
+        _h.Authority.Stop();
+
+        var decision = _h.Kernel.Authorize(KernelHarness.Request("act.nonexistent", 5), Now);
+
+        Assert.Equal(RefusalReason.Stopped, decision.Refusal);
+    }
+
+    [Fact]
+    public void An_unregistered_sense_capability_under_stop_is_unknown_not_stopped()
+    {
+        _h.Authority.Stop();
+
+        var decision = _h.Kernel.Authorize(KernelHarness.Request("sense.nonexistent"), Now);
+
+        Assert.Equal(RefusalReason.UnknownCapability, decision.Refusal);
+    }
+}

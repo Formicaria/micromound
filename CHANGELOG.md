@@ -12,6 +12,84 @@ wire change is never a footnote here.
 
 ---
 
+## v0.4.0 — the watchdog SAFETY.md always promised
+
+M2, first half: the three ants a mission passes *through* while it runs.
+
+### Fixed — authority, and this one is the point of the release
+
+- **A stop no longer blinds the mound.** PROTOCOL.md §7 has always specified the effect of a stop
+  as "cease actuation now, enter `safe_state`, keep sensing and syncing", and the same section
+  requires the stop acknowledgement to carry a post-stop sensor snapshot. The capability kernel
+  refused *every* capability under a stop — so the protocol mandated an artifact the
+  implementation made impossible, and an operator lost their instruments at the exact moment they
+  most needed to see what the hardware was doing.
+
+  The kernel now refuses actuation under a stop and permits observation. It decides this from the
+  capability id's **namespace**, before the registry is consulted, so stop is still genuinely
+  first: `act.nonexistent` under a stop is still refused as `stopped` rather than as
+  `unknown_capability`, which is the property that makes stop work when the registry, the charter
+  and the drivers are all broken.
+
+  This widens what a stopped mound may do, so it is recorded loudly and `SAFETY.md` — which wins
+  over every other document — was amended in the same change rather than after it.
+
+### Added
+
+- **`GuardAnt`** — the software watchdog SAFETY.md Layer 1 has promised since the first commit and
+  which nothing implemented. `IGuardAnt.SafeStateRequired` was declared and read by no code
+  anywhere in the repository.
+
+  A stale heartbeat or an observed safety trip makes it demand a safe state; the coordinator polls
+  it before every actuating step and engages the stop rather than continuing. The two triggers
+  behave differently on purpose: **a stale heartbeat is self-healing**, because a watchdog that
+  latched on a scheduling hiccup is one nobody leaves enabled, and a disabled watchdog protects
+  nothing. **A reported trip is sticky, and there is no method that clears one** — SAFETY.md Layer
+  0 says a Guard Ant reports an interlock trip and does not clear one, and the way to guarantee
+  that is to give it nowhere to enter.
+
+  Health is reported as evidence rather than as a log line: a mound that entered its safe state
+  has to be able to prove afterwards why it did, and "it just stopped" is the silent kind of
+  failure SAFETY.md forbids.
+
+- **`ScoutAnt` and `ForagerAnt`** — each stamps its **own** declared ceiling onto every request it
+  submits. A ceiling supplied by the caller is discarded; otherwise a worker's declared limit
+  would be advice rather than a limit, and the first caller in a hurry would route around it. A
+  Scout declared `observe` therefore cannot actuate under a `benign` charter — and the refusal
+  comes from the kernel naming the class, not from the ant quietly declining. One decider.
+
+  The Forager holds no driver and no executor, and there is no field through which one could be
+  supplied: its constructor takes the kernel, and the kernel is the only thing that owns executors.
+
+- **Coordinator dispatch through the ants.** A `sense`/`verify` step runs on the Scout, an
+  `act`/`routine` step on the Forager. A mission may name its worker; if that worker is registered
+  but is not the right kind of ant — an application ant declared in a manifest with no code behind
+  it yet — the coordinator submits directly under that worker's ceiling rather than substituting a
+  default ant, because substituting would apply a ceiling the mission never asked for. **With no
+  ants registered the mound still works**, submitting to the kernel directly, which is why every
+  v0.3.0 mission test passes unchanged.
+
+### Changed
+
+- `IScoutAnt.Sense` now takes a `CapabilityRequest` and returns an `ActionRecord`, matching
+  `IForagerAnt.Request`. A reading is an action the mound took and has to account for; one shape
+  means the coordinator has one place that turns a record into a step result rather than two.
+- `IGuardAnt` gained `Reason`. Part of the interface rather than an implementation detail because
+  SAFETY.md is explicit that "a refusal without a reason is itself a contract violation".
+
+### Wire
+
+No change. No new envelope kind, no new field, no change to canonical bytes.
+
+### Not yet
+
+Witness, Cache and Runner remain interfaces; they act on the record rather than on the mission and
+land with evidence correlation and transport. No simulated drivers yet, so a mission still runs
+against registered executors rather than against `IDriver` implementations. **Physically
+de-energizing hardware needs drivers and arrives in M4** — until then "enters the safe state" is
+enforced by refusing every actuation, which is the half of it this layer can guarantee on its own,
+and the changelog should say so rather than implying a relay opens.
+
 ## v0.3.0 — the Mound Major walks a mission
 
 **M1 is done.** The kernel decided, the contracts described, and nothing walked a mission from one
