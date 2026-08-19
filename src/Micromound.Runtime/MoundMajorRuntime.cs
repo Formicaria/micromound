@@ -124,6 +124,10 @@ public sealed class MoundMajor : IMoundMajor
         if (!validation.IsValid)
             return Finish(report, MissionStates.Refused, string.Join("; ", validation.Errors), now);
 
+        // The ants that run a mission, resolved once. A mound with none registered still works:
+        // the coordinator submits to the kernel directly and the charter's ceiling alone applies.
+        var guard = Workers.All.OfType<IGuardAnt>().FirstOrDefault();
+
         var values = new Dictionary<string, double>(StringComparer.Ordinal);
         var producedTags = new HashSet<string>(StringComparer.Ordinal);
 
@@ -143,16 +147,43 @@ public sealed class MoundMajor : IMoundMajor
         foreach (var step in mission.Steps)
         {
             var result = new MissionStepResult { StepId = step.StepId };
+            var actuates = step.Op is MissionStepOps.Act or MissionStepOps.Routine;
 
-            // Stop outranks everything and can arrive mid-mission.
-            if (_kernel.Authority.IsStopped)
+            // A stop arriving mid-mission ends the acting, not the looking. PROTOCOL.md §7:
+            // "cease actuation now, enter safe_state, keep sensing and syncing" — and §7 also
+            // wants the stop acknowledgement to carry a post-stop sensor snapshot, which a mound
+            // that downed tools entirely could never take.
+            if (_kernel.Authority.IsStopped && actuates)
             {
                 result.State = MissionStepStates.Stopped;
-                result.Detail = "stop order arrived mid-mission";
+                result.Detail = "stop order in force; actuation ceased";
                 report.Steps.Add(result);
                 halted = true;
                 haltState ??= MissionStepStates.Stopped;
                 continue;
+            }
+
+            // SAFETY.md Layer 1's software watchdog: loss of the runtime's own heartbeat, or an
+            // observed safety trip, drops actuation and enters the declared safe state. Engaging
+            // the stop is deliberate — recovery then goes through the one path that restores
+            // nothing, rather than through whatever failed deciding it is better now.
+            //
+            // Physically de-energizing the hardware needs drivers, which arrive in M4. Until then
+            // "enters the safe state" is enforced by refusing every actuation, which is the half
+            // of it this layer can actually guarantee.
+            if (actuates && guard is not null)
+            {
+                guard.Poll(now);
+                if (guard.SafeStateRequired)
+                {
+                    _kernel.Authority.Stop();
+                    result.State = MissionStepStates.Stopped;
+                    result.Detail = $"guard demanded safe state: {guard.Reason}";
+                    report.Steps.Add(result);
+                    halted = true;
+                    haltState ??= MissionStepStates.Stopped;
+                    continue;
+                }
             }
 
             if (step.Condition is { } condition && !Holds(condition, values, result))
@@ -172,8 +203,6 @@ public sealed class MoundMajor : IMoundMajor
 
                 continue;
             }
-
-            var actuates = step.Op is MissionStepOps.Act or MissionStepOps.Routine;
 
             if (halted && actuates)
             {
@@ -272,6 +301,26 @@ public sealed class MoundMajor : IMoundMajor
         };
 
         foreach (var (name, value) in step.Parameters) request.Parameters[name] = value;
+
+        var actuates = step.Op is MissionStepOps.Act or MissionStepOps.Routine;
+
+        // A mission may name its worker. If that worker is registered AND is the right kind of
+        // ant, it runs the step and stamps its own ceiling. If it is registered but is not — an
+        // application ant declared in a manifest with no code behind it yet — the coordinator
+        // submits directly under that worker's ceiling rather than quietly substituting a default
+        // ant, because substituting one would apply a ceiling the mission never asked for.
+        if (!string.IsNullOrWhiteSpace(mission.Worker) && Workers.TryGet(mission.Worker, out var named))
+        {
+            if (actuates && named is IForagerAnt namedForager) return namedForager.Request(request, now);
+            if (!actuates && named is IScoutAnt namedScout) return namedScout.Sense(request, now);
+            return _kernel.Execute(request, now, _evidence);
+        }
+
+        if (actuates && Workers.All.OfType<IForagerAnt>().FirstOrDefault() is { } forager)
+            return forager.Request(request, now);
+
+        if (!actuates && Workers.All.OfType<IScoutAnt>().FirstOrDefault() is { } scout)
+            return scout.Sense(request, now);
 
         return _kernel.Execute(request, now, _evidence);
     }

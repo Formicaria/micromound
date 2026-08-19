@@ -9,6 +9,23 @@ The visual colony metaphor and the runtime implementation are intentionally sepa
 controller's UI may draw six ants on an ESP32 that is running one firmware image with six
 functions in it, and both descriptions are correct.
 
+## Implementation status
+
+The roster is a design, and the runtime is catching up to it. As of `v0.4.0`:
+
+| Ant | Status |
+|---|---|
+| Mound Major | **Implemented** (`v0.3.0`) — mission state machine, conditions, dispatch, reports |
+| Scout Ant | **Implemented** (`v0.4.0`) — submits under its own ceiling; the reading is evidence |
+| Forager Ant | **Implemented** (`v0.4.0`) — submits under its own ceiling; holds no driver |
+| Guard Ant | **Implemented** (`v0.4.0`) — the software watchdog SAFETY.md Layer 1 promised |
+| Witness Ant | Interface only — evidence correlation, next |
+| Cache Ant | Interface only — operational persistence |
+| Runner Ant | Interface only — transport, enrollment, durable uplink |
+
+The three implemented ones are the three a mission passes *through* while it runs. The remaining
+three act on the record afterwards, and land with evidence correlation and transport.
+
 ## The default roster
 
 A standard Pi-class mound ships with one Mound Major and six ants.
@@ -154,6 +171,10 @@ in the runtime — see [`CONFIGURATION.md`](CONFIGURATION.md).
 `action_ceiling` is intersected with the charter's ceiling on every request the ant makes. A Scout
 Ant declared at `observe` cannot actuate even under a charter that would otherwise allow it — the
 kernel refuses it as `action_class_exceeded`, naming the worker.
+
+The ceiling is stamped onto the request **by the ant making it**, not by its caller. A ceiling
+supplied from outside is discarded; otherwise a worker's declared limit would be advice rather
+than a limit, and the first caller in a hurry would route around it.
 
 `requires_reasoning: true` on a mound configured `reasoning.mode: none` fails manifest validation
 rather than producing an ant that silently never works.

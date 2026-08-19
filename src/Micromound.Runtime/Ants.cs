@@ -64,8 +64,13 @@ public interface IMoundWorker
 /// <summary>Observation and sensing. Readings are evidence, and are returned as such.</summary>
 public interface IScoutAnt : IMoundWorker
 {
-    /// <summary>Read a capability. The reading is returned as an evidence item, not a bare number.</summary>
-    MissionStepResult Sense(string capability, DateTimeOffset now);
+    /// <summary>
+    /// Read a capability. Deliberately the same shape as <see cref="IForagerAnt.Request"/> and
+    /// returning the same <see cref="ActionRecord"/>: a reading is an action the mound took and
+    /// has to account for, its evidence refs are what make it checkable, and one shape means the
+    /// coordinator has one place that turns a record into a step result rather than two.
+    /// </summary>
+    ActionRecord Sense(CapabilityRequest request, DateTimeOffset now);
 }
 
 /// <summary>
@@ -88,6 +93,13 @@ public interface IGuardAnt : IMoundWorker
 
     /// <summary>True when the runtime should drop actuation and enter the declared safe state.</summary>
     bool SafeStateRequired { get; }
+
+    /// <summary>
+    /// Why, in words, for the record that refuses the work. Part of the interface rather than an
+    /// implementation detail because SAFETY.md forbids silent anything: "a refusal without a
+    /// reason is itself a contract violation". Empty when nothing is wrong.
+    /// </summary>
+    string Reason { get; }
 }
 
 /// <summary>

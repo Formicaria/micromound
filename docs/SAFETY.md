@@ -37,7 +37,12 @@ validation.
 Also at this layer:
 
 - **Software watchdog.** Loss of the runtime's own heartbeat drops actuation and enters the
-  declared `safe_state`. Safe states are de-energized or passive by construction.
+  declared `safe_state`. Safe states are de-energized or passive by construction. Enforced by the
+  Guard Ant (`Micromound.Runtime`): a stale heartbeat or an observed safety trip makes it demand a
+  safe state, and the coordinator engages the stop rather than continuing. A stale heartbeat is
+  self-healing — a watchdog that latched on a scheduling hiccup is one nobody leaves enabled — but
+  **an observed trip is sticky and nothing in software clears it**, because software that could
+  clear a trip is software that could be asked to.
 - **Clamp, don't lie.** Where a limit narrows a request, the work proceeds and the outcome is
   `clamped`, carrying both the requested and the effective parameters plus the limit responsible.
   A silent clamp is a false statement about what the mound did.
@@ -67,6 +72,13 @@ Also at this layer:
 - Stops: physical (Layer 0), per-mound, and global. Stop processing precedes all other downlink
   and needs no valid charter. Clearing a stop restores nothing — the mound returns to
   observe-only and waits for a fresh charter.
+- **A stop ceases actuation; it does not blind the mound.** Observation continues, as PROTOCOL.md
+  §7 has always specified, and the same section requires the stop acknowledgement to carry a
+  post-stop sensor snapshot — which a mound that refused to sense could never produce. Refusing
+  every capability would also darken the instruments at the exact moment an operator most needs to
+  see what the hardware is doing. The kernel decides this from the capability id's namespace,
+  before the registry is consulted, so stop still works when the registry, the charter and the
+  drivers are all broken.
 - An approval pipeline fronts all `controlled` actions.
 
 ## Prohibited by construction

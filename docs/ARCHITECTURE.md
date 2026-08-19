@@ -62,6 +62,21 @@ A step whose condition did not hold is `skipped`, and its promised evidence was 
 mission that correctly declines to water wet soil is `completed`, not `unverified` — grading it
 otherwise would teach an operator to ignore the one outcome that has to keep meaning something.
 
+**Dispatch goes through the ants.** A `sense` or `verify` step runs on the Scout, an `act` or
+`routine` step on the Forager, and each ant stamps its **own** declared ceiling onto the request
+it submits — so a worker's limit is a property of that worker rather than of whoever called it.
+A mission may name its worker; if that worker is registered but is not the right kind of ant, the
+coordinator submits directly under that worker's ceiling rather than quietly substituting a
+default one, because substituting would apply a ceiling the mission never asked for. With no ants
+registered at all the coordinator submits to the kernel directly and the charter's ceiling alone
+applies.
+
+**The Guard gates actuation, and only actuation.** Before every actuating step the coordinator
+polls the Guard Ant; a stale heartbeat or an observed safety trip engages the stop — SAFETY.md
+Layer 1's software watchdog. Sensing continues through all of it. Physically de-energizing the
+hardware needs drivers and arrives in M4; until then "enters the safe state" is enforced by
+refusing every actuation, which is the half of it this layer can guarantee on its own.
+
 ### Layer 3 — Capability kernel
 
 The most important boundary in the system. See [`Micromound.Capabilities`](../src/Micromound.Capabilities/README.md)

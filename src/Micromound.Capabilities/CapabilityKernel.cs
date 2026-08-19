@@ -109,9 +109,20 @@ public sealed class CapabilityKernel(
         var requested = new Dictionary<string, double>(request.Parameters, StringComparer.Ordinal);
 
         // 1. Stop precedes all other downlink and needs no valid charter (SAFETY.md Layer 3).
-        if (Authority.IsStopped)
+        //
+        // It refuses ACTUATION, not observation. PROTOCOL.md §7 is explicit about the effect of a
+        // stop — "cease actuation now, enter safe_state, keep sensing and syncing" — and the same
+        // section requires the stop acknowledgement to carry a post-stop sensor snapshot, which a
+        // mound that refused to sense could never produce. Refusing everything also blinds an
+        // operator at the exact moment they most need to see what the hardware is doing.
+        //
+        // The NAMESPACE is read here, not the registry. That keeps stop genuinely first: it still
+        // decides before anything is resolved, so it works when the registry, the charter, and the
+        // drivers are all broken — which is the property `act.nonexistent` being refused as
+        // `stopped` rather than as `unknown_capability` exists to pin.
+        if (Authority.IsStopped && !CapabilityId.IsSense(request.Capability))
             return KernelDecision.Refuse(RefusalReason.Stopped,
-                "a stop order is in force; stop precedes all work", requested);
+                "a stop order is in force; stop precedes all work except observation", requested);
 
         // 2 & 3. Resolve what was asked for, and refuse specifically if it does not resolve.
         var target = Resolve(request.Capability, requested, out var resolutionFailure);
