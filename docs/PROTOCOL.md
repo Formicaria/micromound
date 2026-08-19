@@ -262,7 +262,9 @@ execution representation stays executable with no language model in the loop.
       "condition": { "source_step": "soil_before", "op": "lt", "value": 20 },
       "evidence_tag": "watering_action" },
     { "step_id": "soil_after", "op": "sense", "capability": "sense.soil_moisture",
-      "parameters": {}, "condition": null, "evidence_tag": "soil_after" }
+      "parameters": {}, "condition": null, "evidence_tag": "soil_after" },
+    { "step_id": "confirm", "op": "verify", "capability": "sense.soil_moisture",
+      "confirms": "water", "parameters": {}, "condition": null, "evidence_tag": "" }
   ],
   "required_evidence": ["soil_before", "watering_action", "soil_after"],
   "safe_state": "all_actuators_off",
@@ -301,6 +303,31 @@ execution representation stays executable with no language model in the loop.
   everything wherever it appears.
 - A step whose condition did not hold is `skipped` and its `evidence_tag` was never due. A mission
   that correctly declines to act is `completed`, not `unverified`.
+
+### Verification (normative)
+
+`confirms` names the earlier step whose action a `verify` step confirms. It is the only thing that
+distinguishes `verify` from `sense`, and it is what makes the second half of the default workflow —
+`SENSE → ACT → SENSE AGAIN → VERIFY` — able to affect an outcome at all.
+
+- `confirms` is legal only on a `verify` step, must name a step that runs **before** it, and that
+  step's op must be `act` or `routine`. Confirming an observation is not confirmation of anything.
+- When the verify step produces a resolvable observation, its evidence ids are **added to the
+  confirmed action's own `evidence_refs`**, so a controller re-running the evidence gate over the
+  synced record reaches the same verdict the mound did.
+- When the verify step produces no resolvable observation, the confirmed action degrades to
+  `unverified` — "without it the outcome is `unverified` no matter what the driver returned".
+- **Confirmation can only lower a verdict, never raise one.** A reading taken afterwards proves
+  the state of the world afterwards; it does not prove the command caused it. An action already
+  `unverified` stays `unverified`, and a `refused` or `stopped` action needs no proof at all —
+  demanding it would invent a failure out of a correctly reported no.
+- The confirmed **step** remains `executed`; the action's outcome and the mission's state are what
+  degrade. The step ran, and ran correctly; what changed is what the mound may claim about its
+  effect.
+
+Evidence becomes an action's evidence in exactly two ways: an executor produced it during the
+work, or a mission linked it with `confirms`. Both are somebody else's decision, made before the
+outcome was known. A mound does not nominate its own corroboration.
 
 ## 10. Configuration
 

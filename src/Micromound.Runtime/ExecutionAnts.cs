@@ -1,4 +1,5 @@
 using Micromound.Capabilities;
+using Micromound.Evidence;
 using Micromound.Protocol;
 
 namespace Micromound.Runtime;
@@ -198,5 +199,67 @@ public sealed class GuardAnt : IGuardAnt
 
         _publish?.Invoke(item);
         return [item];
+    }
+}
+
+/// <summary>
+/// Physical outcome confirmation — ANTS.md, and the ant that makes the second half of the default
+/// workflow mean something.
+///
+/// ARCHITECTURE.md has always said of `SENSE → ACT → SENSE AGAIN → VERIFY`: "the second sense is
+/// not redundancy. It is the entire reason the mound can claim anything happened… without it the
+/// outcome is `unverified` no matter what the driver returned." Until now nothing revisited an
+/// action after it ran — the evidence gate fired once, inside the kernel, at the moment of
+/// execution — so the confirming reading arrived after the verdict was already final and could
+/// not affect it. A `verify` step was indistinguishable from a `sense` step in every line of code
+/// in the repository.
+///
+/// Distinct from any upstream Verifier, deliberately: a controller's Verifier judges whether a
+/// mission succeeded, and this judges whether a valve actually opened.
+/// </summary>
+public sealed class WitnessAnt(IEvidenceCorrelator correlator, WorkerDescriptor? descriptor = null)
+    : IWitnessAnt
+{
+    public WorkerDescriptor Descriptor { get; } = descriptor ?? new WorkerDescriptor
+    {
+        Name = DefaultAnts.Witness,
+        Purpose = "physical outcome confirmation, independent of the actuation path",
+        RuntimeType = RuntimeTypes.Deterministic,
+        Ceiling = ActionClass.Observe
+    };
+
+    public WorkerState State => WorkerState.Idle;
+
+    public string Confirm(ActionRecord record, IReadOnlyList<EvidenceItem> confirming,
+        EvidencePolicy policy, DateTimeOffset now, out string reason)
+    {
+        reason = "";
+
+        // A refusal or a stop is a definite result, not a claim about the physical world, and has
+        // nothing to prove. Asking for confirmation of an action that never happened would invent
+        // a failure out of a correctly reported no.
+        if (!ActionOutcomes.AssertPhysicalWork.Contains(record.Outcome)) return record.Outcome;
+
+        if (confirming.Count == 0)
+        {
+            reason = "no confirming observation was produced";
+            return ActionOutcomes.Unverified;
+        }
+
+        // The confirming items join the record's own refs, which is what makes them part of the
+        // audit trail rather than a private judgement: a controller re-running the gate over the
+        // synced record reaches the same verdict this did.
+        foreach (var item in confirming)
+            if (!record.EvidenceRefs.Contains(item.EvidenceId))
+                record.EvidenceRefs.Add(item.EvidenceId);
+
+        var view = new Dictionary<string, EvidenceItem>(correlator.For(record, policy, now),
+            StringComparer.Ordinal);
+
+        // Merged in directly as well: a confirming reading taken moments ago may not have reached
+        // the store yet, and an action must not be demoted for a race in our own plumbing.
+        foreach (var item in confirming) view[item.EvidenceId] = item;
+
+        return EvidenceGate.Gate(record, policy, view, now, out reason);
     }
 }

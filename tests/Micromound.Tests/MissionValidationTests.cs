@@ -359,6 +359,71 @@ public class MissionValidationTests
         Assert.Contains(result.Errors, e => e.Contains("unknown condition op"));
     }
 
+    /// <remarks>
+    /// `confirms` is what makes a `verify` step different from a `sense` step at all — the link
+    /// between a confirming observation and the action it confirms.
+    /// </remarks>
+    [Fact]
+    public void A_verify_step_may_confirm_an_earlier_actuating_step()
+    {
+        var mission = ValidMission();
+        mission.Steps[3].Confirms = "water";
+
+        Assert.True(Validate(mission).IsValid, string.Join("; ", Validate(mission).Errors));
+    }
+
+    [Fact]
+    public void Only_a_verify_step_may_confirm_another()
+    {
+        var mission = ValidMission();
+        mission.Steps[2].Confirms = "water";   // a `sense` step
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("only a 'verify' step may confirm"));
+    }
+
+    [Fact]
+    public void Confirming_a_step_that_has_not_run_yet_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps[3].Confirms = "report";
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("does not run first"));
+    }
+
+    /// <remarks>
+    /// Confirming an observation is not confirmation of anything. The point of a verify step is to
+    /// say whether physical work had an effect, and only an act or a routine claims to have had one.
+    /// </remarks>
+    [Fact]
+    public void Confirming_a_step_that_does_not_actuate_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps[3].Confirms = "soil_before";
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("does not actuate"));
+    }
+
+    [Fact]
+    public void Confirming_a_step_that_is_not_in_the_mission_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps[3].Confirms = "nowhere";
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("is not a step in this mission"));
+    }
+
     [Fact]
     public void Required_capabilities_are_checked_even_when_no_step_uses_them()
     {

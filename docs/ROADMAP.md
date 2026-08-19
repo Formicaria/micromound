@@ -103,14 +103,30 @@ M2 is being taken in two halves, split where the seam actually is.
 - [x] Guard Ant — the software watchdog SAFETY.md Layer 1 promised and nothing implemented
 - [x] Coordinator dispatch through the ants, with no ant registered still a working mound
 
+**Verification — done at `v0.5.0`:**
+
+- [x] Witness Ant, `InMemoryEvidenceStore`, `EvidenceCorrelator`
+- [x] `MissionStep.confirms` — the link that makes `verify` differ from `sense` at all
+- [x] The evidence gate applied a second time, so the confirming reading can change an outcome
+
 **The ants that act on the record — next:**
 
-- [ ] Witness Ant and evidence correlation (`IEvidenceCorrelator`, before/after pairing)
 - [ ] Cache Ant and operational persistence
 - [ ] Runner Ant over the durable uplink queue
 - [ ] Simulated drivers implementing `IDriver`, and `Micromound.Sim` rebuilt to compose
       driver → kernel → ants → Mound Major
 - [ ] End-to-end simulator missions
+
+## Known gaps, recorded
+
+- **Missions and mission reports are pinned by no golden fixture.** The frozen bodies are
+  `charter`, `action_record` and `evidence_bundle`. A constrained controller never decodes a
+  mission (§8 excludes it from the reduced profile), which is why the omission was reasonable —
+  but a Pi-class mound and a controller both encode them, and nothing checks that they agree.
+- **Evidence storage is unbounded when nothing is acknowledged.** `InMemoryEvidenceStore` exceeds
+  its capacity rather than dropping unacknowledged proof, which is the right trade between those
+  two and not a complete answer. Bounding a device that has been offline for a week is the Cache
+  Ant's problem, and the Cache Ant is durable storage rather than a dictionary.
 
 ## Ordering rationale
 

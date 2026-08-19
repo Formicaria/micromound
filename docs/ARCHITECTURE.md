@@ -156,6 +156,13 @@ and hash-chained so offline gaps, reordering, and modification are detectable.
 Outcomes are closed: `succeeded`, `failed`, `clamped`, `refused`, `stopped`, `unverified`. If
 required evidence is missing or invalid, success degrades to `unverified` — it is never assumed.
 
+**The gate fires twice, and the second time is the point.** Once inside the kernel, on whatever the
+executor produced, and again when a `verify` step confirms the action (PROTOCOL.md §9). Without
+that second pass the confirming reading arrives after the verdict is already final, and the second
+half of `SENSE → ACT → SENSE AGAIN → VERIFY` cannot affect anything — which is precisely what the
+Witness Ant exists to fix. Confirmation only ever lowers a verdict: a reading taken afterwards
+proves the state of the world afterwards, not that the command caused it.
+
 Pairings that make an outcome real:
 
 | Action | Evidence |

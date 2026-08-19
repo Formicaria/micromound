@@ -127,6 +127,14 @@ public sealed class MoundMajor : IMoundMajor
         // The ants that run a mission, resolved once. A mound with none registered still works:
         // the coordinator submits to the kernel directly and the charter's ceiling alone applies.
         var guard = Workers.All.OfType<IGuardAnt>().FirstOrDefault();
+        var witness = Workers.All.OfType<IWitnessAnt>().FirstOrDefault();
+        var policy = _kernel.Authority.EffectiveEvidencePolicy();
+
+        // What each step actually did, so a later `verify` step can reach back to the action it
+        // confirms. Nothing else in the mission needs this; verification is the only thing that
+        // looks backwards.
+        var actions = new Dictionary<string, ActionRecord>(StringComparer.Ordinal);
+        var results = new Dictionary<string, MissionStepResult>(StringComparer.Ordinal);
 
         var values = new Dictionary<string, double>(StringComparer.Ordinal);
         var producedTags = new HashSet<string>(StringComparer.Ordinal);
@@ -235,6 +243,39 @@ public sealed class MoundMajor : IMoundMajor
             if (!string.IsNullOrEmpty(step.EvidenceTag) && record.EvidenceRefs.Count > 0)
                 producedTags.Add(step.EvidenceTag);
 
+            actions[step.StepId] = record;
+
+            // The verify step: the only place an action's verdict is ever revisited.
+            //
+            // ARCHITECTURE.md — "the second sense is not redundancy… without it the outcome is
+            // `unverified` no matter what the driver returned". Making that true needs the
+            // confirming reading to reach back to the action it confirms, which is what
+            // `confirms` names and what this does with it.
+            //
+            // The Witness gathers and judges; the coordinator records. One writer for the verdict.
+            if (step.Op == MissionStepOps.Verify && !string.IsNullOrWhiteSpace(step.Confirms) &&
+                witness is not null && actions.TryGetValue(step.Confirms, out var confirmed))
+            {
+                var outcome = witness.Confirm(confirmed, Items(record.EvidenceRefs), policy, now, out var why);
+
+                if (!string.Equals(outcome, confirmed.Outcome, StringComparison.Ordinal))
+                {
+                    confirmed.Outcome = outcome;
+                    confirmed.Detail = string.IsNullOrEmpty(confirmed.Detail)
+                        ? why
+                        : $"{confirmed.Detail}; {why}";
+
+                    // The confirmed STEP still ran, and is still `executed`. What changed is what
+                    // the mound may claim about its effect, so the mission is what degrades.
+                    sawUnverified = true;
+                    if (results.TryGetValue(step.Confirms, out var confirmedResult))
+                        confirmedResult.Detail = confirmed.Detail;
+                }
+
+                result.Detail = $"confirms '{step.Confirms}': {outcome}" +
+                                (string.IsNullOrEmpty(why) ? "" : $" ({why})");
+            }
+
             result.State = StateOf(record.Outcome);
             if (record.Outcome == ActionOutcomes.Unverified) sawUnverified = true;
             if (result.State != MissionStepStates.Executed)
@@ -243,6 +284,7 @@ public sealed class MoundMajor : IMoundMajor
                 haltState ??= result.State;
             }
 
+            results[step.StepId] = result;
             report.Steps.Add(result);
         }
 
@@ -346,6 +388,23 @@ public sealed class MoundMajor : IMoundMajor
         return Workers.TryGet(name, out var registered)
             ? (name, registered.Descriptor.Ceiling)
             : (name, null);
+    }
+
+    /// <summary>
+    /// Resolve evidence refs to the items themselves. Empty when this coordinator was given no
+    /// lookup: a mound that cannot read its own evidence cannot confirm anything with it, and the
+    /// fail-closed answer is that the action stays unproven.
+    /// </summary>
+    private IReadOnlyList<EvidenceItem> Items(IReadOnlyList<string> evidenceRefs)
+    {
+        if (_evidence is null) return [];
+
+        var items = new List<EvidenceItem>();
+        foreach (var reference in evidenceRefs)
+            if (_evidence.TryGet(reference, out var item))
+                items.Add(item);
+
+        return items;
     }
 
     private bool Resolve(IReadOnlyList<string> evidenceRefs, out double value)

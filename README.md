@@ -63,14 +63,15 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.4.0
+**Current version:** v0.5.0
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`.** Protocol contracts, Ed25519 signing, frozen wire
 bytes, and the capability kernel with deterministic authorization — and now the Mound Major, which
 walks a mission's ordered steps, evaluates deterministic conditions, submits physical work to the
 kernel, and reports a structured outcome. The v0 canonical bytes will not change again inside v0.
-**M2 is in progress:** Scout, Forager and Guard are runtime services as of `v0.4.0`, and the Guard
-is the software watchdog SAFETY.md has always specified. Nothing physical ships yet — no real
+**M2 is in progress:** Scout, Forager, Guard and Witness are runtime services — the Guard is the
+software watchdog SAFETY.md has always specified, and the Witness is what makes `SENSE → ACT →
+SENSE AGAIN → VERIFY` able to change an outcome rather than merely describing one. Nothing physical ships yet — no real
 drivers, no firmware, and Witness, Cache and Runner are still interfaces. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
 [`CHANGELOG.md`](CHANGELOG.md).
 

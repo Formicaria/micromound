@@ -12,6 +12,82 @@ wire change is never a footnote here.
 
 ---
 
+## v0.5.0 — the second sense finally does something
+
+M2 continued: the Witness Ant, and the half of the default workflow that could not affect anything.
+
+### The gap
+
+`ARCHITECTURE.md` and `MICROMOUND.md` have both carried this since the first commit, about
+`SENSE → ACT → SENSE AGAIN → VERIFY`:
+
+> The second sense is not redundancy. It is the entire reason the mound can claim anything
+> happened: the first reading justifies the action, the second is independent evidence of its
+> effect, and without it the outcome is `unverified` no matter what the driver returned.
+
+`EvidenceGate.Gate` was called in exactly one place in the repository — inside
+`CapabilityKernel.Execute`, at the moment of execution — and nothing ever revisited an action
+record afterwards. The confirming reading arrived after the verdict was final and could not change
+it. `MissionStepOps.Verify` appeared in exactly two places in the entire codebase: one validator
+case shared with `sense`, and one test fixture. **A `verify` step did nothing a `sense` step did
+not.**
+
+### Added
+
+- **`MissionStep.confirms`** — the earlier step whose action a `verify` step confirms. This is the
+  link the doc's sentence needs and never had. Naming the step explicitly, rather than inferring
+  the pairing from capability names, keeps missions the deterministic packets §9 says they are:
+  one source, named, no matching rules to learn.
+
+  Legal only on a `verify` step; must name a step that runs first; that step's op must be `act` or
+  `routine`, because confirming an observation is not confirmation of anything.
+
+- **`WitnessAnt`** — correlates an action with the observation offered as proof and returns the
+  outcome the action is entitled to. Distinct from any upstream Verifier on purpose: a controller's
+  Verifier judges whether a mission succeeded, and this judges whether a valve actually opened.
+
+- **`InMemoryEvidenceStore` and `EvidenceCorrelator`** (`Micromound.Evidence`) — retention with the
+  one rule that overrides capacity, and ref resolution.
+
+### The rules, and why each is that way
+
+- **Confirmation can only lower a verdict.** That is a property of the evidence gate rather than a
+  rule the Witness applies: the gate returns the record's own outcome unless that outcome asserts
+  physical work, so nothing can talk an `unverified` action back into having succeeded. A reading
+  taken afterwards proves the state of the world afterwards; it does not prove the command caused
+  it.
+- **A refused or stopped action needs no confirmation.** It is a definite result, not a claim about
+  the physical world, and demanding proof of an action that never happened would invent a failure
+  out of a correctly reported no.
+- **The confirmed step stays `executed`; the action and the mission degrade.** The step ran and ran
+  correctly. What changed is what the mound may *claim* about its effect, and marking the step
+  failed would misattribute the problem to the actuation.
+- **The mound does not nominate its own corroboration.** The correlator resolves only the refs a
+  record actually carries. Evidence becomes an action's evidence in exactly two ways — an executor
+  produced it during the work, or a mission linked it with `confirms` — and both are somebody
+  else's decision, made before the outcome was known. A correlator that swept up nearby readings
+  would make "commands are not evidence" mean very little.
+- **Confirming refs are added to the action's own `evidence_refs`**, so a controller re-running the
+  gate over the synced record reaches the same verdict the mound did. A private judgement that did
+  not survive the wire would be worth nothing upstream.
+- **Unacknowledged proof is never evicted.** Under pressure the oldest *acknowledged* items go, and
+  how many is reported as `evicted_acked_items`. When nothing is acknowledged the store exceeds its
+  bound rather than dropping proof the controller has never seen.
+
+### Wire
+
+`confirms` is an additive field on `MissionStep`. The golden fixtures pin `charter`,
+`action_record` and `evidence_bundle` — no mission body is pinned — so the v0 canonical bytes
+frozen at `v0.2.1` are untouched. That absence is itself now recorded as a known gap in
+`ROADMAP.md`: a constrained controller never decodes a mission, but a Pi-class mound and a
+controller both encode them and nothing checks that they agree.
+
+### Not yet
+
+Cache and Runner remain interfaces — operational persistence and transport, both about what
+happens to a record after the mission. No simulated drivers, so a mission still runs against
+registered executors rather than `IDriver` implementations.
+
 ## v0.4.0 — the watchdog SAFETY.md always promised
 
 M2, first half: the three ants a mission passes *through* while it runs.
