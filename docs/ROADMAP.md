@@ -11,8 +11,8 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 | Milestone | Status | What it is |
 |---|---|---|
 | **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
-| **M1** — Runtime interfaces and the Mound Major | **Next** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
-| **M2** — The six default ants | Planned | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
+| **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
+| **M2** — The six default ants | **Next** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
 | **M3** — Evidence, offline state, and sync | Planned | Evidence correlation, durable offline state, reconnect and backlog synchronization |
 | **M4** — The Linux/Pi host and first real drivers | Planned | The headless daemon, configuration loading, service lifecycle, watchdog, and a small initial set of real hardware drivers |
 | **M5** — Constrained controller firmware | Planned | ESP32 reduced controller implementing the same protocol and capability concepts, verified byte-for-byte against the golden fixtures |
@@ -59,12 +59,39 @@ Done:
 - [x] Manifest validator tests
 - [x] A `CHANGELOG.md`, since design rule 9 requires a changelog entry per stateful feature
 
-Deliberately **not** in M0, and recorded so nobody mistakes an absence for an oversight — the v0
-validators accept a `sense` step naming an `act.` capability, accept `mission.safe_state` and
-`mission.worker` without checking them, and do not validate `WorkerDefinition.exposes`,
-`runtime_type`, or `required_evidence`. Each is a contract question that the runtime consuming
-these fields has to answer, so each belongs to M1. None is an authority hole: the kernel still
-refuses at execution on class, grant, and limits regardless of what a packet claims.
+Deliberately **not** in M0, and recorded at the time so nobody would mistake an absence for an
+oversight: the v0 validators accepted a `sense` step naming an `act.` capability, accepted
+`mission.safe_state` and `mission.worker` unchecked, and did not validate
+`WorkerDefinition.exposes`, `runtime_type`, or `required_evidence`. Each was a contract question
+only the runtime consuming those fields could answer, so each was deferred to M1.
+
+**All of them are closed as of `v0.3.0`**, except two that turned out to have no question in them:
+`mission.worker` is a runtime concern — an unrecognised name resolves to no worker ceiling rather
+than an invented one, which is the answer — and `required_evidence` holds free-form tags whose only
+meaningful check is whether a step actually produced them, which is execution's job and now
+`MoundMajor`'s. None was ever an authority hole; the kernel refused at execution on class, grant
+and limits throughout.
+
+## What M1 actually covers
+
+M1 is the loop between things that already existed. The kernel decided; the contracts described;
+nothing walked a mission from one end to the other. It does now.
+
+Done:
+
+- [x] Driver, worker, routine, evidence, persistence and transport interfaces (`v0.2.0`)
+- [x] `EvidenceReading` — the documented numeric shape inside `payload_json`, without which a
+      mission's conditions and step values were contracts with no number to compare
+- [x] `MoundMajor`: charter acceptance with advisory widening notes, manifest application that
+      fails closed, and the mission state machine — ordered steps, deterministic conditions,
+      dispatch to the kernel, evidence resolution, structured `mission_report`
+- [x] Halting behaviour: refuse whole, then stop acting and keep looking
+- [x] Verdict attribution to the first failure rather than the worst label
+
+**What M1 is not.** The six ants are interfaces here and services in M2; nothing implements
+`IScoutAnt`, `ICacheAnt` or `IRunnerAnt` yet, so a mission runs against registered executors
+rather than against workers with lifecycles. There is no persistence backend, no transport, and
+no real driver. A mound cannot yet be left alone with a plant.
 
 ## Ordering rationale
 

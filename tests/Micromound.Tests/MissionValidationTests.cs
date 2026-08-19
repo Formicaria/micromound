@@ -216,6 +216,65 @@ public class MissionValidationTests
         Assert.Contains(result.Errors, e => e.Contains("act.plasma_cutter") && e.Contains("not granted"));
     }
 
+    /// <remarks>
+    /// Not a permission question. A `sense` step naming an actuator is a mission that means
+    /// something other than what it says, and left to the kernel it would be refused later for
+    /// the wrong reason — a Scout Ant's ceiling — with the actual mistake never named.
+    /// </remarks>
+    [Fact]
+    public void A_sense_step_naming_an_actuator_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps[0].Capability = "act.water_valve";
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("must be in the 'sense.' namespace"));
+    }
+
+    [Fact]
+    public void An_act_step_naming_a_sensor_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps[1] = new MissionStep
+        {
+            StepId = "water", Op = MissionStepOps.Act,
+            Capability = "sense.soil_moisture", EvidenceTag = "watering_action"
+        };
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("must be in the 'act.' namespace"));
+    }
+
+    /// <remarks>
+    /// Two documents naming different de-energized states is a contradiction nobody can resolve
+    /// at the moment it matters, which is when the watchdog trips.
+    /// </remarks>
+    [Fact]
+    public void A_safe_state_that_contradicts_the_charter_is_refused()
+    {
+        var mission = ValidMission();
+        mission.SafeState = "hold_last_position";
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("contradicts the charter"));
+    }
+
+    /// <summary>Empty means "inherit the charter's", which is the common case and not an error.</summary>
+    [Fact]
+    public void An_absent_safe_state_inherits_rather_than_conflicts()
+    {
+        var mission = ValidMission();
+        mission.SafeState = "";
+
+        Assert.True(Validate(mission).IsValid);
+    }
+
     [Fact]
     public void A_routine_the_charter_never_enabled_is_refused()
     {

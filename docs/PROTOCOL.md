@@ -181,6 +181,39 @@ Every actuation produces an `action_record`:
   evidence policies pattern-match on `capability`.
 - `evidence_bundle`: batched sensor windows, images (content-addressed, fetched lazily), telemetry
   summaries. Bundles are hash-chained via envelope `prev_digest`.
+
+### Numeric readings (normative)
+
+`payload_json` is a string, and for most evidence kinds its contents are opaque to the protocol.
+One shape is not opaque, because decisions are made from it. An evidence item of type `reading`
+carries:
+
+```json
+{"value":17.0,"unit":"percent","capability":"sense.soil_moisture"}
+```
+
+- `value` — the number. Required, and the only required member.
+- `unit` — as the driver reports it (`percent`, `celsius`, `litres_per_minute`). Advisory: no
+  runtime path converts units, and a mission comparing a threshold is comparing raw values.
+- `capability` — so a bare item is self-describing once separated from its action record.
+
+A mission step's `condition` (§9) compares an earlier step's reading against a constant, and a
+`mission_report` step result carries one in `value`. Both are defined in terms of this number, so
+without it a mission can be validated and never executed.
+
+Reading is deliberately tolerant: **any** payload carrying a numeric `value` member is accepted,
+whatever else it contains and whatever `type` says. Writing is strict — one shape, serialized with
+the §2 encoding rules, because these bytes end up inside a signed envelope.
+
+An item whose payload is absent, unparseable, or carries no numeric `value` does not prove a
+number. Every consumer treats those three cases identically, and none of them is an error to
+handle: the reading simply does not exist, and nothing may be decided from it. A condition whose
+source produced no readable value is **refused**, never quietly treated as false — "I could not
+see" and "the threshold was not met" are different facts, and collapsing them is how a mound skips
+watering a dying plant and reports success.
+
+This is a convention on the contents of an existing string field, not a new field. The v0 canonical
+bytes frozen at `v0.2.1` are unchanged.
 - Retention on-device: a ring buffer sized by the hardware profile. Evidence pending sync is never
   evicted before acknowledgement unless storage exhaustion forces oldest-acked-first eviction,
   which is itself reported as `evicted_acked_items`.
@@ -246,9 +279,28 @@ execution representation stays executable with no language model in the loop.
 - A mission carries no authority of its own. Everything it references must already be granted by
   the charter it cites, and a mission that references anything outside it is refused **whole** —
   a half-executed mission leaves physical state nobody planned.
+- **Ops and namespaces agree.** A `sense` or `verify` step's capability must be in the `sense.`
+  namespace; an `act` step's must be in `act.`; a `routine` step names a `routine_id` instead. A
+  step that reads an actuator is not a permission question — it is a mission that means something
+  other than what it says, and it is refused at validation so the mistake is named rather than
+  surfacing later as an unrelated ceiling refusal.
+- **`safe_state` may only restate the charter's.** A mission naming a different de-energized state
+  is refused: two documents disagreeing about where the hardware goes when the watchdog trips is a
+  contradiction nobody can resolve at the moment it matters. Omitting it inherits the charter's.
+- `worker` is advisory. An unrecognised name resolves to no worker ceiling rather than an invented
+  one, so the charter's ceiling alone applies — which is why it is not validated on the wire.
 - The mound replies with a `mission_report`: per-step state (`executed`, `skipped`, `refused`,
   `failed`, `stopped`), sensed values, action ids, evidence refs, and an overall state
   (`completed`, `failed`, `refused`, `stopped`, `quiesced`, `unverified`).
+- **Execution stops acting but keeps looking.** After a step is refused, fails, or is stopped, no
+  later step actuates; later `sense`, `verify` and `report` steps still run, because a reading of
+  where the physical world was actually left is the most valuable thing a partial mission can
+  return. Steps suppressed this way report `refused`.
+- **The overall state names the first thing that went wrong**, not the worst label present — a
+  hardware fault followed by suppressed steps is `failed`, not `refused`. A `stop` outranks
+  everything wherever it appears.
+- A step whose condition did not hold is `skipped` and its `evidence_tag` was never due. A mission
+  that correctly declines to act is `completed`, not `unverified`.
 
 ## 10. Configuration
 

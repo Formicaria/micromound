@@ -39,6 +39,26 @@ public static class OfflineBehaviours
 /// the manifest decoder stays one fixed shape, and each driver parses and validates its own
 /// settings (a pin number, a bus address, a channel) where the knowledge of what is legal lives.
 /// </summary>
+/// <summary>
+/// What kind of thing a declared worker is — CONFIGURATION.md. Closed, because "ant does not mean
+/// language model" (MICROMOUND.md design rule 9) is only enforceable if a manifest cannot invent a
+/// kind whose meaning nothing agrees on. <c>reasoning</c> is the only value that implies a model,
+/// and even that one only proposes.
+/// </summary>
+public static class RuntimeTypes
+{
+    public const string Deterministic = "deterministic";
+    public const string Algorithmic = "algorithmic";
+    public const string Sensor = "sensor";
+    public const string Actuator = "actuator";
+    public const string Reasoning = "reasoning";
+
+    public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Deterministic, Algorithmic, Sensor, Actuator, Reasoning
+    };
+}
+
 public sealed class HardwareBinding
 {
     [JsonPropertyName("driver")] public string Driver { get; set; } = "";
@@ -54,8 +74,8 @@ public sealed class WorkerDefinition
 {
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("purpose")] public string Purpose { get; set; } = "";
-    /// <summary>deterministic | algorithmic | sensor | actuator | reasoning.</summary>
-    [JsonPropertyName("runtime_type")] public string RuntimeType { get; set; } = "deterministic";
+    /// <summary>deterministic | algorithmic | sensor | actuator | reasoning — see <see cref="RuntimeTypes"/>.</summary>
+    [JsonPropertyName("runtime_type")] public string RuntimeType { get; set; } = RuntimeTypes.Deterministic;
     /// <summary>Capabilities this worker reads or requests.</summary>
     [JsonPropertyName("consumes")] public List<string> Consumes { get; set; } = [];
     /// <summary>Capabilities this worker offers to other workers.</summary>

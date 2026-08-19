@@ -33,6 +33,35 @@ execution, worker lifecycle, cancellation, task dispatch, and the optional reaso
 This gives MicroMound its colony behaviour without a heavyweight agent framework. The Mound Major
 is a workflow and state-machine coordinator, not an always-running agent.
 
+**It decides nothing about authority.** Every actuation goes through the capability kernel, and the
+coordinator holds no executor, no driver, and no route to one. If the two ever disagreed about
+whether something may happen, the kernel would be the one that decided, because it is the only one
+asked. That is why the interesting logic at this layer is about *order* and *evidence* rather than
+permission.
+
+Three ordering rules carry the weight, and each exists because of what a mound is attached to:
+
+**Refused whole, never partially run.** A mission is validated against the active charter before
+any step executes. A mission that fails halfway leaves physical state nobody planned, and there is
+no compensating action for a valve that opened.
+
+**After a halting step the mission stops acting but keeps looking.** When a step is refused, fails,
+or is stopped, no later step may actuate — its premise is gone. Later `sense`, `verify` and
+`report` steps still run, because the most valuable thing after a partial actuation is a reading of
+where the physical world was actually left. Halting outright would discard exactly the observation
+an operator most needs.
+
+**The verdict names the first thing that went wrong**, not the worst label in the report. Steps
+suppressed after a halt are marked refused because they were never attempted; counting those would
+let a suppression label outrank the real cause, and a hardware fault would get reported as an
+authority refusal — sending someone to read the charter instead of the relay. A stop is the one
+exception and outranks everything wherever it appears, because a stop is an instruction that
+arrived rather than an outcome that emerged.
+
+A step whose condition did not hold is `skipped`, and its promised evidence was never due. A
+mission that correctly declines to water wet soil is `completed`, not `unverified` — grading it
+otherwise would teach an operator to ignore the one outcome that has to keep meaning something.
+
 ### Layer 3 — Capability kernel
 
 The most important boundary in the system. See [`Micromound.Capabilities`](../src/Micromound.Capabilities/README.md)

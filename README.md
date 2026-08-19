@@ -63,12 +63,14 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.2.4
+**Current version:** v0.3.0
 
-**M0 frozen at `v0.2.1`** — protocol contracts, Ed25519 signing, frozen wire bytes, and the
-capability kernel with deterministic authorization, all under test. The v0 canonical bytes will
-not change again inside v0. Nothing physical ships yet; no real drivers, no firmware. **M1** —
-runtime interfaces and the Mound Major — is next. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
+**M0 frozen at `v0.2.1`; M1 done at `v0.3.0`.** Protocol contracts, Ed25519 signing, frozen wire
+bytes, and the capability kernel with deterministic authorization — and now the Mound Major, which
+walks a mission's ordered steps, evaluates deterministic conditions, submits physical work to the
+kernel, and reports a structured outcome. The v0 canonical bytes will not change again inside v0.
+Nothing physical ships yet; no real drivers, no firmware, and the six ants are still interfaces.
+**M2** — the ants as runtime services, over simulated drivers — is next. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
 [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
