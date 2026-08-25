@@ -13,4 +13,5 @@ is acknowledged, unless storage exhaustion forces oldest-acked-first eviction â€
 is itself reported on the wire as `evicted_acked_items`. Silently dropping proof is
 indistinguishable from never having captured it.
 
-Status: M3.
+Status: store and correlator shipped at `v0.5.0`; acknowledgement-driven eviction wired at
+`v0.6.0`, when acks started to actually flow.

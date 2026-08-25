@@ -20,6 +20,7 @@ public sealed class MoundMajor : IMoundMajor
 {
     private readonly CapabilityKernel _kernel;
     private readonly IEvidenceLookup? _evidence;
+    private readonly Action<ActionRecord>? _recorded;
     private readonly List<ActionRecord> _actions = [];
 
     /// <param name="kernel">The authority boundary. Not optional, and not replaceable at runtime.</param>
@@ -29,10 +30,18 @@ public sealed class MoundMajor : IMoundMajor
     /// conditional step refuses — which is the correct failure, loudly, rather than a mission
     /// that quietly treats "I cannot see" as "the condition did not hold".
     /// </param>
-    public MoundMajor(CapabilityKernel kernel, IEvidenceLookup? evidence = null)
+    /// <param name="recorded">
+    /// Called for every action record a mission produces, refusals included — the hook the
+    /// composition root uses to hand records to the Runner Ant's queue. A callback rather than a
+    /// queue reference on purpose: the coordinator must not know transport exists, or it would be
+    /// one refactor away from consulting connectivity in an authority decision.
+    /// </param>
+    public MoundMajor(CapabilityKernel kernel, IEvidenceLookup? evidence = null,
+        Action<ActionRecord>? recorded = null)
     {
         _kernel = kernel;
         _evidence = evidence;
+        _recorded = recorded;
     }
 
     public string MoundId => _kernel.Authority.MoundId;
@@ -71,6 +80,8 @@ public sealed class MoundMajor : IMoundMajor
         _kernel.Authority.ApplyManifest(manifest);
         return result;
     }
+
+    public void RenewLease(DateTimeOffset now) => _kernel.Authority.RenewLease(now);
 
     public void Stop() => _kernel.Authority.Stop();
 
@@ -138,6 +149,7 @@ public sealed class MoundMajor : IMoundMajor
 
         var values = new Dictionary<string, double>(StringComparer.Ordinal);
         var producedTags = new HashSet<string>(StringComparer.Ordinal);
+        var dispatched = new List<ActionRecord>();
 
         // Tags belonging to steps whose condition did not hold. Their evidence is not missing —
         // it was never due. A mission that correctly declines to water dry-checking soil must not
@@ -229,6 +241,7 @@ public sealed class MoundMajor : IMoundMajor
 
             var record = Dispatch(mission, step, now);
             _actions.Add(record);
+            dispatched.Add(record);
 
             result.ActionId = record.ActionId;
             result.Detail = record.Detail;
@@ -287,6 +300,13 @@ public sealed class MoundMajor : IMoundMajor
             results[step.StepId] = result;
             report.Steps.Add(result);
         }
+
+        // Records leave the coordinator only after the walk is over, because a `verify` step can
+        // demote an earlier record's outcome — a record published at dispatch time would go up
+        // claiming a success its own mission later withdrew.
+        if (_recorded is not null)
+            foreach (var record in dispatched)
+                _recorded(record);
 
         // Evidence the mission promised. Validation proved a step was TAGGED to produce each one;
         // only execution can prove it actually did, and the difference between those two is the

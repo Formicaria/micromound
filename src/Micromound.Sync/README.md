@@ -15,4 +15,6 @@ indistinguishable from one that had been tampered with.
 controller coming back up is not met by an entire fleet retrying in lockstep, and so its tests do
 not depend on a random source.
 
-Status: M3.
+Status: shipped in M2 (`v0.6.0`) — `DurableUplinkQueue` over `IStateStore`, with the chain
+enforced at enqueue and retention governed by acknowledgement. The Runner Ant that drives it lives
+in `Micromound.Runtime`; a disk-backed store arrives with the M4 host.

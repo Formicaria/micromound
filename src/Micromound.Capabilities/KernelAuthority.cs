@@ -134,6 +134,72 @@ public sealed class KernelAuthority(string moundId)
     public void ClearStop() => IsStopped = false;
 
     /// <summary>
+    /// Rehydrate persisted authority after a process or device restart — the Cache Ant's restore
+    /// path, and the one place authority enters this class without a controller signing it just
+    /// now. Every rule here therefore resolves downward:
+    ///
+    /// **A restart never clears a stop.** A stopped snapshot restores to stopped, whatever else it
+    /// carried — power-cycling a mound must not be a way around an operator's stop order.
+    ///
+    /// **A restart never extends a lease.** The lease expiry restored is the one that was saved.
+    /// There is no path through here that touches the TTL, because a mound that could reset its
+    /// own lease clock by rebooting would have found a way to widen authority while disconnected.
+    /// If the saved expiry has already passed, the mound comes back quiesced, exactly as it would
+    /// have been had it stayed up.
+    ///
+    /// **A charter that no longer validates restores nothing.** The snapshot's charter is
+    /// re-validated against what the device has NOW — the hardware may have changed while the
+    /// process was down. Failure leaves the mound observe-only with the reasons reported;
+    /// observe-only is never wrong, merely conservative.
+    ///
+    /// Refused outright when authority is already live: restore is for process start, and
+    /// replaying an old snapshot over a newer charter would be a downgrade nobody ordered.
+    /// </summary>
+    public ValidationResult Restore(Charter? charter, DateTimeOffset leaseExpiresAt, bool stopped,
+        bool quiesced, DateTimeOffset now,
+        IReadOnlySet<string>? deviceCapabilities = null, IReadOnlySet<string>? deviceRoutines = null,
+        IReadOnlyDictionary<string, CapabilityLimits>? deviceLimits = null, string? safeState = null)
+    {
+        if (ActiveCharter is not null || IsStopped)
+            return new ValidationResult(["restore refused: authority is already live on this mound"]);
+
+        // The manifest tier restores FIRST, before any branch — including the stop branch. The
+        // operator's configured narrowings are not authority the controller granted; they are
+        // bounds the operator imposed, and a restart that dropped them would come back enforcing
+        // hardware ∩ charter instead of hardware ∩ device ∩ charter. That is the one way a
+        // reboot could quietly widen what this mound may do, and this line is what closes it.
+        if (deviceLimits is not null)
+        {
+            _deviceLimits.Clear();
+            foreach (var (key, limits) in deviceLimits) _deviceLimits[key] = limits;
+        }
+
+        if (!string.IsNullOrWhiteSpace(safeState)) SafeState = safeState;
+
+        if (stopped)
+        {
+            Stop();
+            return new ValidationResult([]);
+        }
+
+        if (charter is null) return new ValidationResult([]);   // observe-only, as saved
+
+        // Validated at `now`, not at the snapshot's time. An expired charter document is refused
+        // here like anywhere else; the mound comes back observe-only and the reasons say why.
+        var result = CharterValidator.Validate(charter, MoundId, now, deviceCapabilities, deviceRoutines);
+        if (!result.IsValid) return result;
+
+        ActiveCharter = charter;
+        LeaseExpiresAt = leaseExpiresAt;       // saved value, never now + ttl
+        IsQuiesced = quiesced;
+        SafeState = charter.SafeState;
+
+        // The clock kept running while the process did not.
+        QuiesceIfExpired(now);
+        return result;
+    }
+
+    /// <summary>
     /// The ceiling actually in force. Every path that loses authority resolves to
     /// <see cref="ActionClass.Observe"/> rather than to an error — ambiguity resolves downward.
     /// </summary>

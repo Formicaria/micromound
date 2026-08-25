@@ -63,17 +63,16 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.5.0
+**Current version:** v0.6.0
 
-**M0 frozen at `v0.2.1`; M1 done at `v0.3.0`.** Protocol contracts, Ed25519 signing, frozen wire
-bytes, and the capability kernel with deterministic authorization — and now the Mound Major, which
-walks a mission's ordered steps, evaluates deterministic conditions, submits physical work to the
-kernel, and reports a structured outcome. The v0 canonical bytes will not change again inside v0.
-**M2 is in progress:** Scout, Forager, Guard and Witness are runtime services — the Guard is the
-software watchdog SAFETY.md has always specified, and the Witness is what makes `SENSE → ACT →
-SENSE AGAIN → VERIFY` able to change an outcome rather than merely describing one. Nothing physical ships yet — no real
-drivers, no firmware, and Witness, Cache and Runner are still interfaces. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and
-[`CHANGELOG.md`](CHANGELOG.md).
+**M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`.** Protocol contracts, Ed25519
+signing, frozen wire bytes, the capability kernel with deterministic authorization, the Mound
+Major that walks missions — and now all six default ants as runtime services, a durable uplink
+queue whose chain is enforced at enqueue, restart recovery that never clears a stop and never
+extends a lease, simulated drivers behind the real `IDriver` seam, and end-to-end simulator
+missions against an in-process controller that verifies every byte. The v0 canonical bytes will
+not change again inside v0. Nothing physical ships yet — no real drivers, no firmware, no disk;
+those are M4 and M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 bash scripts/validate.sh                    # guards + restore + build + test

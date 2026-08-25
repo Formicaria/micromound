@@ -1,21 +1,25 @@
-using System.Globalization;
-using System.Text.Json;
 using Micromound.Capabilities;
 using Micromound.Crypto;
+using Micromound.Drivers;
+using Micromound.Evidence;
 using Micromound.Protocol;
+using Micromound.Runtime;
+using Micromound.Sync;
 
 namespace Micromound.Sim;
 
 /// <summary>
-/// An in-memory Micromound: a real <see cref="CapabilityKernel"/> over fake hardware.
+/// An in-memory Micromound, composed the way a Pi will be composed:
 ///
-/// The point of the simulator is that it does NOT reimplement the authority rules. It builds a
-/// capability registry from a fake hardware profile, hands it to the same kernel a Pi-class mound
-/// runs, and lets that kernel answer every question about charters, leases, limits, duty cycles,
-/// and evidence. If the simulator and the runtime could disagree, the simulator would be proving
-/// nothing.
+///     drivers → capability registry → kernel → ants → Mound Major → Runner → controller
 ///
-/// Network-free: the harness moves envelopes by method call.
+/// Nothing here reimplements a rule. The drivers are real <see cref="IDriver"/> implementations
+/// over fake hardware, the kernel is the real kernel, the ants are the runtime's own six, and the
+/// uplink queue is the durable queue persisted through the same <see cref="IStateStore"/> a Pi
+/// will back with files. If the simulator and the runtime could disagree, the simulator would be
+/// proving nothing.
+///
+/// Network-free: the "wire" is <see cref="SimLink"/>, an in-process call with an Online switch.
 /// </summary>
 public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMajor)
 {
@@ -25,16 +29,20 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     /// <summary>ESP32-class: compiled routines, reduced envelope set, no open-ended planning.</summary>
     public const string TierController = "deterministic_controller";
 
-    private readonly List<Envelope> _uplink = [];
-    private readonly Dictionary<string, EvidenceItem> _evidence = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, EvidenceItem> _evidenceMirror = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SimDriverBase> _drivers = new(StringComparer.Ordinal);
+    private readonly SwitchableTransport _transport = new();
+    private readonly InMemoryPublicKeyDirectory _downlinkKeys = new();
 
-    private long _seq;
-    private string _lastDigest = "";
-    private Ed25519EnvelopeSigner? _signer;
-
-    // Built lazily so that every `init` property below is already set. A constructor-built kernel
-    // would capture the default hardware profile and silently ignore a caller's own.
+    private bool _built;
+    private bool _sensorHealthy = true;
     private CapabilityKernel? _kernel;
+    private InMemoryEvidenceStore? _evidenceStore;
+    private MoundMajor? _major;
+    private RunnerAnt? _runner;
+    private CacheAnt? _cache;
+    private GuardAnt? _guard;
+    private DurableUplinkQueue? _queue;
 
     public string MoundId { get; } = moundId;
 
@@ -50,13 +58,20 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
 
     public byte[] PublicKey => Keys.PublicKey;
 
+    /// <summary>
+    /// Operational persistence — what survives a restart. Share one store between two SimMound
+    /// instances to simulate a power cycle: build the second with the same store and the same
+    /// keys, then call <see cref="Restore"/>.
+    /// </summary>
+    public IStateStore Store { get; init; } = new InMemoryStateStore();
+
     /// <summary>Fixed hardware truth for the simulated device.</summary>
     public IReadOnlySet<string> DeviceCapabilities { get; init; } =
         new HashSet<string>(StringComparer.Ordinal) { "sense.temp", "act.relay_1" };
 
     /// <summary>
     /// Firmware-compiled limits — the innermost tier a charter can only narrow (SAFETY.md Layer 1).
-    /// These stand in for what an ESP32 build would enumerate at compile time.
+    /// These become the relay drivers' compiled hardware limits.
     /// </summary>
     public Dictionary<string, CapabilityLimits> FirmwareLimits { get; init; } = new(StringComparer.Ordinal)
     {
@@ -64,77 +79,260 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     };
 
     /// <summary>
-    /// Flip to false to simulate a dead sensor: the actuation still happens, but nothing observes
-    /// it, so the record must come back `unverified`. Commands are not evidence.
+    /// Flip to false to simulate dead instrumentation: actuation still happens, nothing observes
+    /// it, so records come back `unverified`. Commands are not evidence.
     /// </summary>
-    public bool SensorHealthy { get; set; } = true;
+    public bool SensorHealthy
+    {
+        get => _sensorHealthy;
+        set
+        {
+            _sensorHealthy = value;
+            foreach (var driver in _drivers.Values) driver.ProduceEvidence = value;
+        }
+    }
 
-    private Ed25519EnvelopeSigner Signer => _signer ??= new Ed25519EnvelopeSigner(MoundId, Keys);
-
-    /// <summary>The authority state the kernel consults — charter, lease, stop, device limits.</summary>
-    public KernelAuthority Authority => Kernel.Authority;
+    // ---------------------------------------------------------------------------------------
+    // Composition
+    // ---------------------------------------------------------------------------------------
 
     /// <summary>The one physical authority boundary. The simulator holds no other path to hardware.</summary>
     public CapabilityKernel Kernel
     {
-        get
-        {
-            if (_kernel is not null) return _kernel;
-
-            var capabilities = new CapabilityRegistry();
-
-            foreach (var id in DeviceCapabilities)
-            {
-                var isSensor = CapabilityId.IsSense(id);
-
-                capabilities.Register(new CapabilityDescriptor
-                {
-                    Id = id,
-                    Class = isSensor ? ActionClass.Observe : ActionClass.Benign,
-                    Description = "simulated " + id,
-                    HardwareLimits = FirmwareLimits.TryGetValue(id, out var limits) ? limits : new CapabilityLimits(),
-                    Parameters = isSensor
-                        ? new HashSet<string>(StringComparer.Ordinal)
-                        : new HashSet<string>(StringComparer.Ordinal) { "on_s" },
-                    DurationParameter = isSensor ? null : "on_s"
-                });
-            }
-
-            var routines = new RoutineRegistry(capabilities);
-            var kernel = new CapabilityKernel(capabilities, routines, new KernelAuthority(MoundId));
-
-            foreach (var id in capabilities.Ids)
-                kernel.RegisterExecutor(new SimExecutor(id, this));
-
-            _kernel = kernel;
-            return kernel;
-        }
+        get { EnsureBuilt(); return _kernel!; }
     }
+
+    /// <summary>The authority state the kernel consults — charter, lease, stop, device limits.</summary>
+    public KernelAuthority Authority => Kernel.Authority;
+
+    /// <summary>The coordinator, with all six default ants registered.</summary>
+    public MoundMajor Major
+    {
+        get { EnsureBuilt(); return _major!; }
+    }
+
+    public RunnerAnt Runner
+    {
+        get { EnsureBuilt(); return _runner!; }
+    }
+
+    public CacheAnt Cache
+    {
+        get { EnsureBuilt(); return _cache!; }
+    }
+
+    public GuardAnt Guard
+    {
+        get { EnsureBuilt(); return _guard!; }
+    }
+
+    /// <summary>The simulated device behind a capability — for tests that move the fake world.</summary>
+    public SimSensorDriver Sensor(string capability)
+    {
+        EnsureBuilt();
+        return (SimSensorDriver)_drivers[capability];
+    }
+
+    public SimRelayDriver Relay(string capability)
+    {
+        EnsureBuilt();
+        return (SimRelayDriver)_drivers[capability];
+    }
+
+    /// <summary>Evidence the mound has produced, by id — what a harness resolves refs against.</summary>
+    public IReadOnlyDictionary<string, EvidenceItem> Evidence => _evidenceMirror;
+
+    /// <summary>The retention-governed store behind the Witness — for asserting on ack-driven eviction.</summary>
+    public InMemoryEvidenceStore EvidenceStore
+    {
+        get { EnsureBuilt(); return _evidenceStore!; }
+    }
+
+    private void EnsureBuilt()
+    {
+        if (_built) return;
+        _built = true;
+
+        // Drivers first: hardware truth comes from them, not from any document.
+        var registry = new DriverRegistry();
+        foreach (var id in DeviceCapabilities)
+        {
+            SimDriverBase driver = CapabilityId.IsSense(id)
+                ? new SimSensorDriver(id)
+                : new SimRelayDriver(id, FirmwareLimits.TryGetValue(id, out var limits) ? limits : null);
+
+            driver.ProduceEvidence = _sensorHealthy;
+            driver.Publish = PublishEvidence;
+            _drivers[id] = driver;
+            registry.Register(driver);
+        }
+
+        // Registries and kernel from what the drivers actually expose.
+        var capabilities = new CapabilityRegistry();
+        foreach (var driver in registry.All)
+            foreach (var descriptor in driver.Capabilities)
+                capabilities.Register(descriptor);
+
+        var routines = new RoutineRegistry(capabilities);
+        _kernel = new CapabilityKernel(capabilities, routines, new KernelAuthority(MoundId));
+
+        foreach (var driver in registry.All)
+            foreach (var executor in driver.Executors)
+                _kernel.RegisterExecutor(executor);
+
+        // Evidence, then the ants, then the coordinator, then transport — the host's own order.
+        _evidenceStore = new InMemoryEvidenceStore();
+        _queue = new DurableUplinkQueue(Store);
+        _cache = new CacheAnt(Store);
+        _guard = new GuardAnt(heartbeatTimeoutSeconds: 0);   // liveness is the harness's, explicitly
+
+        _major = new MoundMajor(_kernel, _evidenceStore,
+            recorded: record => _runner!.Publish(EnvelopeKinds.ActionRecord, record, ParseOrNow(record.EndedAt)));
+
+        _runner = new RunnerAnt(_major, _queue, _transport,
+            new Ed25519EnvelopeSigner(MoundId, Keys),
+            new Ed25519EnvelopeVerifier(_downlinkKeys),
+            _evidenceStore);
+
+        _major.Workers.Register(new ScoutAnt(_kernel, _evidenceStore));
+        _major.Workers.Register(new ForagerAnt(_kernel, _evidenceStore));
+        _major.Workers.Register(_guard);
+        _major.Workers.Register(new WitnessAnt(new EvidenceCorrelator(_evidenceStore)));
+        _major.Workers.Register(_cache);
+        _major.Workers.Register(_runner);
+    }
+
+    private void PublishEvidence(EvidenceItem item)
+    {
+        _evidenceMirror[item.EvidenceId] = item;
+        _evidenceStore!.Add(item);
+
+        _runner!.Publish(EnvelopeKinds.EvidenceBundle,
+            new EvidenceBundle { BundleId = Guid.NewGuid().ToString(), Items = [item] },
+            ParseOrNow(item.CapturedAt));
+    }
+
+    private static DateTimeOffset ParseOrNow(string wire) =>
+        ProtocolTime.TryParse(wire, out var parsed) ? parsed : DateTimeOffset.UtcNow;
+
+    // ---------------------------------------------------------------------------------------
+    // The controller link
+    // ---------------------------------------------------------------------------------------
+
+    /// <summary>The wire to the controller. Null until <see cref="ConnectTo"/>.</summary>
+    public SimLink? Link { get; private set; }
+
+    /// <summary>
+    /// Enroll with a controller and hold its link — PROTOCOL.md §3 compressed to its effect:
+    /// the controller learns this device's public key, this device learns the controller's, and
+    /// from here on only signed traffic crosses in either direction.
+    /// </summary>
+    public SimLink ConnectTo(SimController controller)
+    {
+        EnsureBuilt();
+
+        var controllerKey = controller.Enroll(MoundId, PublicKey);
+        _downlinkKeys.Register(KeyIds.Controller, controllerKey);
+
+        Link = new SimLink(controller);
+        _transport.Inner = Link;
+        return Link;
+    }
+
+    /// <summary>
+    /// Swap the wire under the Runner — the test seam a man-in-the-middle scenario needs. Null
+    /// disconnects. Everything above the transport is untouched, which is the point: tampering
+    /// tests prove the endpoints, not the harness.
+    /// </summary>
+    public void UseTransport(ISyncTransport? transport)
+    {
+        EnsureBuilt();
+        _transport.Inner = transport;
+    }
+
+    /// <summary>One sync beat: drain the backlog, handle the downlink, persist what changed.</summary>
+    public SyncOutcome Sync(DateTimeOffset now)
+    {
+        var outcome = WatchingForSafeState(() => Runner.Sync(now));
+        Cache.SaveAuthority(Authority);   // a beat can renew, charter, stop, or quiesce this mound
+        return outcome;
+    }
+
+    /// <summary>Execute a mission locally and queue its report — what a downlinked mission also does.</summary>
+    public MissionReport ExecuteMission(Mission mission, DateTimeOffset now)
+    {
+        var report = WatchingForSafeState(() => Major.Execute(mission, now));
+        Runner.Publish(EnvelopeKinds.MissionReport, report, now);
+        Cache.SaveAuthority(Authority);
+        return report;
+    }
+
+    /// <summary>
+    /// A stop or a quiesce can happen INSIDE the wrapped call — a stop order in the downlink, a
+    /// guard trip mid-mission, a lease found expired — and PROTOCOL.md §7's "enter safe_state"
+    /// means the drivers, not just the authority flag. The composition root owns the drivers, so
+    /// the composition root watches for the transition; the M4 host will do exactly this around
+    /// its own loop.
+    /// </summary>
+    private T WatchingForSafeState<T>(Func<T> action)
+    {
+        var wasSafe = Authority.IsStopped || Authority.IsQuiesced;
+        var result = action();
+
+        if (!wasSafe && (Authority.IsStopped || Authority.IsQuiesced))
+            foreach (var driver in _drivers.Values)
+                driver.EnterSafeState();
+
+        return result;
+    }
+
+    /// <summary>
+    /// Rehydrate persisted authority after a restart. All downward-resolving rules live in
+    /// <see cref="KernelAuthority.Restore"/>: a restart never clears a stop, never extends a
+    /// lease, and restores observe-only when in doubt.
+    /// </summary>
+    public ValidationResult Restore(DateTimeOffset now)
+    {
+        EnsureBuilt();
+        Cache.TryRestoreAuthority(Authority, now, out var result,
+            Kernel.Capabilities.DeclaredCapabilities(), Kernel.Routines.DeclaredRoutines());
+        return result;
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Authority — thin passthroughs, each persisting the state it changed
+    // ---------------------------------------------------------------------------------------
 
     public string State => Authority.State;
 
     public bool LeaseAlive(DateTimeOffset now) => Authority.LeaseAlive(now);
 
     /// <summary>Downlink: the controller offers a charter. Invalid charters are refused, state untouched.</summary>
-    public ValidationResult OfferCharter(Charter charter, DateTimeOffset now) =>
-        Authority.AcceptCharter(charter, now, Kernel.Capabilities.DeclaredCapabilities(),
-            Kernel.Routines.DeclaredRoutines());
+    public ValidationResult OfferCharter(Charter charter, DateTimeOffset now)
+    {
+        var result = Major.AcceptCharter(charter, now);
+        if (result.IsValid) Cache.SaveAuthority(Authority);
+        return result;
+    }
 
     /// <summary>Apply a declarative configuration manifest — the middle limit tier and the safe state.</summary>
     public ValidationResult ApplyManifest(MoundManifest manifest)
     {
-        var result = ManifestValidator.Validate(manifest, MoundId);
-        if (result.IsValid) Authority.ApplyManifest(manifest);
+        var result = Major.ApplyManifest(manifest, DateTimeOffset.MinValue);
+        if (result.IsValid) Cache.SaveAuthority(Authority);
         return result;
     }
 
     /// <summary>Sync beat acknowledged: the lease renews. Nothing else about authority changes.</summary>
-    public void RenewLease(DateTimeOffset now) => Authority.RenewLease(now);
+    public void RenewLease(DateTimeOffset now)
+    {
+        Authority.RenewLease(now);
+        Cache.SaveAuthority(Authority);
+    }
 
     /// <summary>
-    /// Lease expiry check — call on the device's own clock tick. Expired ⇒ safe state. The
-    /// charter is retained for reporting but authorizes nothing further, and the mound queues a
-    /// `quiesced` report for the controller to read on reconnect (PROTOCOL.md §5).
+    /// Lease expiry check — call on the device's own clock tick. Expired ⇒ safe state, drivers
+    /// told to de-energize, and a `quiesced` report queued for the controller (PROTOCOL.md §5).
     /// </summary>
     public bool QuiesceIfExpired(DateTimeOffset now)
     {
@@ -143,7 +341,9 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
 
         if (!Authority.QuiesceIfExpired(now)) return false;
 
-        EnqueueUplink(EnvelopeKinds.MoundSync, new
+        foreach (var driver in _drivers.Values) driver.EnterSafeState();
+
+        Runner.Publish(EnvelopeKinds.MoundSync, new
         {
             state = "quiesced",
             charter_id = charterId,
@@ -151,18 +351,33 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
             lease_expired_at = expiredAt.ToWire()
         }, now);
 
+        Cache.SaveAuthority(Authority);
         return true;
     }
 
-    /// <summary>Stop wins over everything and needs no charter.</summary>
-    public void Stop() => Authority.Stop();
+    /// <summary>Stop wins over everything and needs no charter. Drivers enter their passive state.</summary>
+    public void Stop()
+    {
+        Major.Stop();
+        foreach (var driver in _drivers.Values) driver.EnterSafeState();
+        Cache.SaveAuthority(Authority);
+    }
 
     /// <summary>Clear a stop. Restores nothing: the mound waits observe-only for a fresh charter.</summary>
-    public void ClearStop() => Authority.ClearStop();
+    public void ClearStop()
+    {
+        Authority.ClearStop();
+        Cache.SaveAuthority(Authority);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Direct actuation and sensing — the ants, not a shortcut around them
+    // ---------------------------------------------------------------------------------------
 
     /// <summary>
-    /// Attempt an actuation. Every path produces an ActionRecord carrying its reason — refusals
-    /// and clamps are loud, never silent — and every record is queued for the controller.
+    /// Attempt an actuation through the Forager Ant. Every path produces an ActionRecord carrying
+    /// its reason — refusals and clamps are loud, never silent — and every record is queued for
+    /// the controller.
     ///
     /// <paramref name="requestedOnSeconds"/> is a simulator convenience: when omitted, the sim
     /// fills in the widest duration its own limits allow. The kernel itself never invents a
@@ -172,28 +387,24 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     public ActionRecord Actuate(string capability, DateTimeOffset now, double? requestedOnSeconds = null,
         string missionId = "")
     {
-        var request = new CapabilityRequest
-        {
-            Capability = capability,
-            MissionId = missionId,
-            Worker = "Forager Ant"
-        };
+        EnsureBuilt();
 
+        var request = new CapabilityRequest { Capability = capability, MissionId = missionId };
         if (!CapabilityId.IsSense(capability))
             request.Parameters["on_s"] = requestedOnSeconds ?? EffectiveLimits(capability).MaxOnSeconds ?? 1.0;
 
-        return Queue(Kernel.Execute(request, now, new SimEvidenceLookup(_evidence)), now);
+        var forager = _major!.Workers.All.OfType<ForagerAnt>().First();
+        return Queue(forager.Request(request, now), now);
     }
 
-    /// <summary>Read a sensor. The reading is the evidence, and is queued as such.</summary>
-    public ActionRecord Sense(string capability, DateTimeOffset now, string missionId = "") =>
-        Queue(Kernel.Execute(new CapabilityRequest
-        {
-            Capability = capability,
-            MissionId = missionId,
-            Worker = "Scout Ant",
-            WorkerCeiling = ActionClass.Observe
-        }, now, new SimEvidenceLookup(_evidence)), now);
+    /// <summary>Read a sensor through the Scout Ant. The reading is the evidence, and is queued as such.</summary>
+    public ActionRecord Sense(string capability, DateTimeOffset now, string missionId = "")
+    {
+        EnsureBuilt();
+
+        var scout = _major!.Workers.All.OfType<ScoutAnt>().First();
+        return Queue(scout.Sense(new CapabilityRequest { Capability = capability, MissionId = missionId }, now), now);
+    }
 
     /// <summary>The bound actually enforced for a capability: hardware ∩ device ∩ charter.</summary>
     public CapabilityLimits EffectiveLimits(string capability)
@@ -206,37 +417,29 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
             Authority.CharterLimitsFor(capability));
     }
 
-    /// <summary>Queue an uplink envelope, signed and chained (works offline).</summary>
-    public Envelope EnqueueUplink<T>(string kind, T body, DateTimeOffset now)
-    {
-        var envelope = new Envelope
-        {
-            MoundId = MoundId,
-            Seq = _seq++,
-            SentAt = now.ToWire(),
-            Kind = kind,
-            Body = JsonSerializer.SerializeToElement(body, ProtocolJson.Options),
-            PrevDigest = _lastDigest
-        };
+    // ---------------------------------------------------------------------------------------
+    // Uplink
+    // ---------------------------------------------------------------------------------------
 
-        EnvelopeSigning.Sign(envelope, Signer);
+    /// <summary>
+    /// Queue an uplink envelope, signed and chained (works offline). The Runner Ant is the only
+    /// envelope factory on this mound; this is a named door to it.
+    /// </summary>
+    public Envelope EnqueueUplink<T>(string kind, T body, DateTimeOffset now) =>
+        Runner.Publish(kind, body, now);
 
-        // The digest covers everything except `sig`, so signing does not disturb the chain.
-        _lastDigest = envelope.Digest();
-        _uplink.Add(envelope);
-        return envelope;
-    }
-
-    /// <summary>Drain queued uplink (reconnect): oldest first, chain intact.</summary>
+    /// <summary>
+    /// Drain queued uplink as a harness playing controller: oldest first, chain intact, and
+    /// acknowledged on the way out — which is exactly what a real controller's ack does.
+    /// </summary>
     public IReadOnlyList<Envelope> DrainUplink()
     {
-        var drained = _uplink.ToList();
-        _uplink.Clear();
+        EnsureBuilt();
+
+        var drained = _queue!.Peek(int.MaxValue);
+        if (drained.Count > 0) _queue.AcknowledgeThrough(drained[^1].Seq);
         return drained;
     }
-
-    /// <summary>Evidence the mound has produced, by id — what the controller resolves refs against.</summary>
-    public IReadOnlyDictionary<string, EvidenceItem> Evidence => _evidence;
 
     /// <summary>
     /// SAFETY.md: "every refusal, clamp, trip, and validation failure is reported and audited" —
@@ -244,60 +447,21 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     /// </summary>
     private ActionRecord Queue(ActionRecord record, DateTimeOffset now)
     {
-        EnqueueUplink(EnvelopeKinds.ActionRecord, record, now);
+        Runner.Publish(EnvelopeKinds.ActionRecord, record, now);
         return record;
     }
 
-    /// <summary>Called by the fake driver so produced evidence stays resolvable afterwards.</summary>
-    private void Publish(EvidenceItem item, DateTimeOffset now)
+    /// <summary>A transport that can be connected after composition. Unconnected means offline.</summary>
+    private sealed class SwitchableTransport : ISyncTransport
     {
-        _evidence[item.EvidenceId] = item;
-        EnqueueUplink(EnvelopeKinds.EvidenceBundle,
-            new EvidenceBundle { BundleId = Guid.NewGuid().ToString(), Items = [item] }, now);
-    }
+        public ISyncTransport? Inner { get; set; }
 
-    /// <summary>
-    /// Fake hardware. Observes the actuation it just performed — unless
-    /// <see cref="SensorHealthy"/> is false, in which case the work happens and nothing sees it.
-    /// </summary>
-    private sealed class SimExecutor(string capabilityId, SimMound mound) : ICapabilityExecutor
-    {
-        public string CapabilityId { get; } = capabilityId;
-
-        public bool IsAvailable => true;
-
-        public ExecutionOutcome Execute(CapabilityExecution execution)
+        public bool TryExchange(Envelope uplink, out IReadOnlyList<Envelope> downlink, out string detail)
         {
-            if (!mound.SensorHealthy) return ExecutionOutcome.Ok();
+            if (Inner is not null) return Inner.TryExchange(uplink, out downlink, out detail);
 
-            var onSeconds = execution.Parameters.TryGetValue("on_s", out var value) ? value : 0;
-
-            var item = new EvidenceItem
-            {
-                EvidenceId = Guid.NewGuid().ToString(),
-                Type = "sensor_window",
-                CapturedAt = execution.StartedAt.ToWire(),
-                Source = "sim." + CapabilityId,
-                PayloadJson =
-                    $$"""{"before":0,"after":1,"on_s":{{onSeconds.ToString(CultureInfo.InvariantCulture)}}}"""
-            };
-
-            mound.Publish(item, execution.StartedAt);
-            return ExecutionOutcome.Ok([item]);
-        }
-    }
-
-    private sealed class SimEvidenceLookup(IReadOnlyDictionary<string, EvidenceItem> items) : IEvidenceLookup
-    {
-        public bool TryGet(string evidenceId, out EvidenceItem item)
-        {
-            if (items.TryGetValue(evidenceId, out var found))
-            {
-                item = found;
-                return true;
-            }
-
-            item = new EvidenceItem();
+            downlink = [];
+            detail = "no controller connected";
             return false;
         }
     }

@@ -59,6 +59,13 @@ public interface IMoundMajor
     /// </summary>
     MissionReport Execute(Mission mission, DateTimeOffset now);
 
+    /// <summary>
+    /// The controller acknowledged a sync beat — the ONE renewal path PROTOCOL.md §5 allows, and
+    /// on this interface precisely so the Runner Ant, which is the component that hears the
+    /// acknowledgement, can report it. Renewal never revives a quiesced or stopped mound.
+    /// </summary>
+    void RenewLease(DateTimeOffset now);
+
     /// <summary>Cease actuation, enter the declared safe state, keep sensing and syncing.</summary>
     void Stop();
 }
