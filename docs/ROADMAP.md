@@ -122,10 +122,13 @@ M2 is being taken in two halves, split where the seam actually is.
 
 ## Known gaps, recorded
 
-- **Missions and mission reports are pinned by no golden fixture.** The frozen bodies are
-  `charter`, `action_record` and `evidence_bundle`. A constrained controller never decodes a
-  mission (§8 excludes it from the reduced profile), which is why the omission was reasonable —
-  but a Pi-class mound and a controller both encode them, and nothing checks that they agree.
+- ~~**Missions and mission reports are pinned by no golden fixture.**~~ **Closed at `v0.7.0`.**
+  `mission` and `mission_report` now sit in both golden fixtures — the bare-body freeze and the
+  canonical-envelope chain — alongside `charter`, `action_record` and `evidence_bundle`, and a
+  round-trip test asserts each survives a decode-and-re-encode byte-for-byte. A constrained
+  controller still never decodes a mission (§8 keeps it out of the reduced profile); the pin is
+  for the Pi-class mound and the full controller, which both encode them, so the M5 C mirror has
+  a fixture to match instead of an agreement nobody checked.
 - **Evidence storage is unbounded when nothing is acknowledged.** `InMemoryEvidenceStore` exceeds
   its capacity rather than dropping unacknowledged proof, which is the right trade between those
   two and not a complete answer. The Cache Ant now exists and acknowledgements now flow, so the
