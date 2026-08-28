@@ -1,19 +1,17 @@
+using Micromound.Crypto;
 using Micromound.Protocol;
 using Micromound.Sim;
 
-// Demo run: the whole loop, both ends.
+// Demo run for a greenhouse mound: configure hardware, charter it, watch the three limit tiers
+// intersect, watch a dead sensor turn a completed actuation into `unverified`, go offline, expire
+// the lease, then reconnect and drain the signed, chained backlog exactly as a controller would
+// verify it.
 //
-// A controller enrolls a greenhouse mound, pushes configuration and a charter over the wire,
-// assigns the documented watering mission, and the mound executes it through the six ants and
-// reports back — evidence, records, mission report, all signed and chained. Then the wire goes
-// down, the lease runs out, the mound quiesces, the process "restarts", and reconnection drains
-// the backlog into a controller that verifies every byte before believing any of it.
-//
-// This is a smoke script, not the test suite — the rules are proven in tests/Micromound.Tests.
+// This is a smoke script, not the test suite — the authority rules are proven in
+// tests/Micromound.Tests, against the same kernel this runs.
 
 var now = DateTimeOffset.UtcNow;
 
-var controller = new SimController();
 var mound = new SimMound("mm-greenhouse-01")
 {
     DeviceCapabilities = new HashSet<string>(StringComparer.Ordinal)
@@ -22,104 +20,94 @@ var mound = new SimMound("mm-greenhouse-01")
     },
     FirmwareLimits = new Dictionary<string, CapabilityLimits>(StringComparer.Ordinal)
     {
+        // What the valve physically tolerates. Nothing above this can widen it.
         ["act.water_valve"] = new CapabilityLimits { MaxOnSeconds = 30, MinOffSeconds = 300, MaxRatePerHour = 6 }
     }
 };
 
-var link = mound.ConnectTo(controller);
-Console.WriteLine($"[{mound.MoundId}] enrolled; state={mound.State}");
+Console.WriteLine($"[{mound.MoundId}] tier={mound.Tier} state={mound.State}");
 
-// The fake world: dry soil that watering moistens.
-mound.Sensor("sense.soil_moisture").Reading = 17;
-mound.Sensor("sense.temperature").Reading = 24;
-mound.Relay("act.water_valve").OnActuated = onSeconds =>
-    mound.Sensor("sense.soil_moisture").Reading += onSeconds * 1.5;
+// Enrollment (PROTOCOL.md §3), compressed: the controller binds the device's public key.
+var directory = new InMemoryPublicKeyDirectory();
+directory.Register(mound.MoundId, mound.PublicKey);
+var verifier = new Ed25519EnvelopeVerifier(directory);
 
-// The controller configures and charters the mound — over the wire, not by method call.
-controller.PushConfig(new MoundManifest
+// Sensing needs no charter — "no charter means observe only" is a grant, not only a prohibition.
+Console.WriteLine($"sense with no charter   -> {mound.Sense("sense.soil_moisture", now).Outcome}");
+Console.WriteLine($"actuate with no charter -> {mound.Actuate("act.water_valve", now, 10).Detail}");
+
+// Tier 2: operator configuration, narrower than the hardware and independent of any mission.
+var manifest = new MoundManifest
 {
     ManifestId = Guid.NewGuid().ToString(),
     MoundId = mound.MoundId,
     IssuedAt = now.ToWire(),
     Capabilities = ["sense.soil_moisture", "sense.temperature", "act.water_valve"],
     DeviceLimits = { ["act.water_valve"] = new CapabilityLimits { MaxOnSeconds = 20 } },
+    Reasoning = new ReasoningConfig { Mode = ReasoningModes.None },
     SafeState = "all_actuators_off"
-}, now);
+};
 
-controller.IssueCharter(new Charter
+Console.WriteLine($"manifest applied={mound.ApplyManifest(manifest).IsValid} (device max_on_s=20)");
+
+// Tier 3: the delegated grant. It narrows on-time to 10 s, and *tries* to relax the duty cycle
+// to 5 s — watch the effective limits keep the firmware's 300 s instead.
+var charter = new Charter
 {
     CharterId = Guid.NewGuid().ToString(),
     MoundId = mound.MoundId,
-    MissionRef = "greenhouse-watering",
+    MissionRef = "demo-mission",
     IssuedAt = now.ToWire(),
     ExpiresAt = now.AddHours(1).ToWire(),
     LeaseTtlSeconds = 900,
     ActionCeiling = "benign",
     Capabilities = ["sense.soil_moisture", "sense.temperature", "act.water_valve"],
-    Limits = { ["act.water_valve"] = new CapabilityLimits { MaxOnSeconds = 10 } },
-    Evidence = new EvidencePolicy { RequiredFor = ["act.*"], MinIntervalSeconds = 60 },
+    Limits = { ["act.water_valve"] = new CapabilityLimits { MaxOnSeconds = 10, MinOffSeconds = 5 } },
+    Evidence = new EvidencePolicy { RequiredFor = ["act.*", "routine.*"], MinIntervalSeconds = 60 },
     SafeState = "all_actuators_off"
-}, now);
+};
 
-var sync = mound.Sync(now);
-Console.WriteLine($"sync: sent={sync.EnvelopesSent} downlink={sync.DownlinkHandled} state={mound.State}");
+var offer = mound.OfferCharter(charter, now);
+Console.WriteLine($"charter accepted={offer.IsValid} state={mound.State}");
 
-// The documented mission, assigned over the wire: inspect, water only if necessary, prove it.
-controller.AssignMission(new Mission
-{
-    MissionId = "ms-demo-001",
-    MoundId = mound.MoundId,
-    CharterId = mound.Authority.ActiveCharter!.CharterId,
-    RequiredCapabilities = ["sense.soil_moisture", "sense.temperature"],
-    RequiredEvidence = ["soil_before", "watering_action", "soil_after"],
-    SafeState = "all_actuators_off",
-    ExpiresAt = now.AddMinutes(30).ToWire(),
-    Steps =
-    [
-        new MissionStep { StepId = "soil_before", Op = MissionStepOps.Sense,
-            Capability = "sense.soil_moisture", EvidenceTag = "soil_before" },
-        new MissionStep { StepId = "temp", Op = MissionStepOps.Sense, Capability = "sense.temperature" },
-        new MissionStep { StepId = "water", Op = MissionStepOps.Act, Capability = "act.water_valve",
-            Parameters = { ["on_s"] = 10 },
-            Condition = new StepCondition { SourceStep = "soil_before", Op = ConditionOps.LessThan, Value = 20 },
-            EvidenceTag = "watering_action" },
-        new MissionStep { StepId = "soil_after", Op = MissionStepOps.Verify,
-            Capability = "sense.soil_moisture", Confirms = "water", EvidenceTag = "soil_after" }
-    ]
-}, now.AddSeconds(15));
+foreach (var note in mound.Kernel.ReviewCharter(charter).Errors)
+    Console.WriteLine($"  charter review: {note}");
 
-sync = mound.Sync(now.AddSeconds(15));
-var account = controller.Account(mound.MoundId);
-Console.WriteLine($"mission over the wire -> reports={account.Reports.Count} " +
-                  $"verdict={account.Reports.LastOrDefault()?.State} " +
-                  $"soil now {mound.Sensor("sense.soil_moisture").Reading}");
+var effective = mound.EffectiveLimits("act.water_valve");
+Console.WriteLine($"effective act.water_valve: max_on_s={effective.MaxOnSeconds} " +
+                  $"min_off_s={effective.MinOffSeconds} max_rate_per_h={effective.MaxRatePerHour}");
 
-sync = mound.Sync(now.AddSeconds(20));
-Console.WriteLine($"records at controller: {controller.Account(mound.MoundId).Records.Count}, " +
-                  $"evidence items: {account.Evidence.Count}, chain refusals: {account.Refusals}");
+// Ask for 60 s. Hardware says 30, the manifest says 20, the charter says 10 — narrowest wins.
+var clamped = mound.Actuate("act.water_valve", now, requestedOnSeconds: 60);
+Console.WriteLine($"actuate 60s -> {clamped.Outcome} ({clamped.Detail}), evidence={clamped.EvidenceRefs.Count}");
 
-// The wire goes down. Work continues under the lease it already had — and no further.
-link.Online = false;
-var offlineActuation = mound.Actuate("act.water_valve", now.AddSeconds(400), 5);
-Console.WriteLine($"offline actuation -> {offlineActuation.Outcome}");
+// Too soon: the firmware's 300 s duty cycle refuses this, whatever the charter asked for.
+var tooSoon = mound.Actuate("act.water_valve", now.AddSeconds(30), requestedOnSeconds: 5);
+Console.WriteLine($"actuate 30s later -> {tooSoon.Outcome} ({tooSoon.Detail})");
 
-var later = now.AddSeconds(915 + 15);
+// The same action with a dead sensor: the valve may well have opened, but nothing observed it.
+mound.SensorHealthy = false;
+var blind = mound.Actuate("act.water_valve", now.AddSeconds(400), requestedOnSeconds: 5);
+Console.WriteLine($"actuate with dead sensor -> {blind.Outcome} ({blind.Detail})");
+mound.SensorHealthy = true;
+
+// Offline: the lease runs down; no renewal is possible from the device side.
+var later = now.AddSeconds(charter.LeaseTtlSeconds + 1);
 Console.WriteLine($"lease expired -> quiesced={mound.QuiesceIfExpired(later)} state={mound.State}");
-Console.WriteLine($"actuate after expiry -> {mound.Actuate("act.water_valve", later, 5).Detail}");
 
-// "Restart" the device: same store, same keys, new process.
-var reborn = new SimMound(mound.MoundId) { Keys = mound.Keys, Store = mound.Store,
-    DeviceCapabilities = mound.DeviceCapabilities, FirmwareLimits = mound.FirmwareLimits };
-reborn.Restore(later);
-Console.WriteLine($"after restart -> state={reborn.State} (a restart revives nothing)");
+var refused = mound.Actuate("act.water_valve", later, 5);
+Console.WriteLine($"actuate after expiry -> {refused.Outcome} ({refused.Detail})");
+Console.WriteLine($"sense after expiry   -> {mound.Sense("sense.temperature", later).Outcome}");
 
-// Reconnect: the backlog drains into a controller that verifies chain and signatures.
-var rebornLink = reborn.ConnectTo(controller);
-_ = rebornLink;
-sync = reborn.Sync(later.AddSeconds(5));
-account = controller.Account(mound.MoundId);
-Console.WriteLine($"reconnect: delivered={sync.Delivered} sent={sync.EnvelopesSent}, " +
-                  $"controller refusals={account.Refusals} (0 means the chain held)");
+// Reconnect: drain the backlog, verify chain and signatures end to end like a controller would.
+var backlog = mound.DrainUplink();
+var chain = EnvelopeValidator.ValidateChain(backlog, "", verifier, mound.MoundId);
+Console.WriteLine($"reconnect: {backlog.Count} envelopes, chain+signatures valid={chain.IsValid}");
 
-Console.WriteLine("resumption is never implicit: state=" + reborn.State +
-                  " until the controller issues a fresh charter");
+// And what an impostor gets: the same bytes, under a key the controller never enrolled.
+var impostorDirectory = new InMemoryPublicKeyDirectory();
+impostorDirectory.Register(mound.MoundId, Ed25519KeyPair.Generate().PublicKey);
+var impostor = EnvelopeValidator.ValidateChain(
+    backlog, "", new Ed25519EnvelopeVerifier(impostorDirectory), mound.MoundId);
+Console.WriteLine($"same backlog under a wrong key -> valid={impostor.IsValid} " +
+                  $"({impostor.Errors.Count} refusals)");
