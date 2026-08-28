@@ -74,6 +74,53 @@ public class CanonicalBytesTests
         ]
     };
 
+    // The two bodies a Pi-class mound and a full controller both encode, and which no golden
+    // pinned before M3. A constrained controller never decodes a mission (§8 keeps it out of the
+    // reduced profile), which is why the omission was reasonable — but a Pi and a controller do,
+    // and nothing checked that they agree. These freeze the field order, naming, and default
+    // emission of both, exactly as the charter/record/bundle bodies above are frozen.
+    private static Mission GoldenMission() => new()
+    {
+        MissionId = "d0000000-0000-4000-8000-000000000001",
+        MoundId = "mm-7f3a0000-0000-4000-8000-000000000001",
+        CharterId = "c0000000-0000-4000-8000-000000000001",
+        RequiredCapabilities = ["sense.temp"],
+        Steps =
+        [
+            new MissionStep { StepId = "read_before", Op = MissionStepOps.Sense,
+                Capability = "sense.temp", EvidenceTag = "temp_before" },
+            new MissionStep { StepId = "cool", Op = MissionStepOps.Act, Capability = "act.relay_1",
+                Parameters = { ["on_s"] = 30 },
+                Condition = new StepCondition { SourceStep = "read_before", Op = ConditionOps.GreaterThan, Value = 28 },
+                EvidenceTag = "cooling_action" },
+            new MissionStep { StepId = "read_after", Op = MissionStepOps.Verify,
+                Capability = "sense.temp", Confirms = "cool", EvidenceTag = "temp_after" }
+        ],
+        RequiredEvidence = ["temp_before", "cooling_action", "temp_after"],
+        SafeState = "all_actuators_off",
+        ExpiresAt = Fixed.AddMinutes(30).ToWire(),
+        Context = "hold the enclosure under 28C"
+    };
+
+    private static MissionReport GoldenMissionReport() => new()
+    {
+        MissionId = "d0000000-0000-4000-8000-000000000001",
+        CharterId = "c0000000-0000-4000-8000-000000000001",
+        State = MissionStates.Completed,
+        StartedAt = Fixed.ToWire(),
+        EndedAt = Fixed.AddSeconds(30).ToWire(),
+        Steps =
+        [
+            new MissionStepResult { StepId = "read_before", State = MissionStepStates.Executed,
+                Value = 31, EvidenceRefs = ["e0000000-0000-4000-8000-000000000001"] },
+            new MissionStepResult { StepId = "cool", State = MissionStepStates.Executed,
+                ActionId = "a0000000-0000-4000-8000-000000000001",
+                EvidenceRefs = ["e0000000-0000-4000-8000-000000000002"] },
+            new MissionStepResult { StepId = "read_after", State = MissionStepStates.Executed,
+                Value = 26, EvidenceRefs = ["e0000000-0000-4000-8000-000000000003"] }
+        ]
+    };
+
     [Fact]
     public void Canonical_bytes_and_digests_are_frozen()
     {
@@ -95,8 +142,14 @@ public class CanonicalBytesTests
         previous = Append(report, Envelope("33333333-3333-4333-8333-333333333333", 2,
             EnvelopeKinds.EvidenceBundle, GoldenEvidenceBundle(), previous));
 
-        Append(report, Envelope("44444444-4444-4444-8444-444444444444", 3,
+        previous = Append(report, Envelope("44444444-4444-4444-8444-444444444444", 3,
             EnvelopeKinds.Charter, GoldenCharter(), previous));
+
+        previous = Append(report, Envelope("55555555-5555-4555-8555-555555555555", 4,
+            EnvelopeKinds.MissionReport, GoldenMissionReport(), previous));
+
+        Append(report, Envelope("66666666-6666-4666-8666-666666666666", 5,
+            EnvelopeKinds.Mission, GoldenMission(), previous));
 
         GoldenFile.Verify("canonical-envelopes.txt", report.ToString());
     }
@@ -113,6 +166,8 @@ public class CanonicalBytesTests
         AppendBody(report, "charter", GoldenCharter());
         AppendBody(report, "action_record", GoldenActionRecord());
         AppendBody(report, "evidence_bundle", GoldenEvidenceBundle());
+        AppendBody(report, "mission", GoldenMission());
+        AppendBody(report, "mission_report", GoldenMissionReport());
 
         GoldenFile.Verify("canonical-bodies.txt", report.ToString());
         return;
@@ -136,6 +191,40 @@ public class CanonicalBytesTests
 
         Assert.NotNull(restored);
         Assert.Equal(envelope.Digest(), restored.Digest());
+    }
+
+    [Fact]
+    public void A_mission_report_round_trips_through_json_preserving_the_digest()
+    {
+        // mission_report is uplink, so it chains: its digest is what the controller verifies. A
+        // decode-and-re-encode that shifted a byte would break the chain at exactly this envelope.
+        var envelope = Envelope("55555555-5555-4555-8555-555555555555", 4, EnvelopeKinds.MissionReport,
+            GoldenMissionReport(), "sha256:00");
+
+        var json = JsonSerializer.Serialize(envelope, ProtocolJson.Options);
+        var restored = JsonSerializer.Deserialize<Envelope>(json, ProtocolJson.Options);
+
+        Assert.NotNull(restored);
+        Assert.Equal(envelope.Digest(), restored.Digest());
+    }
+
+    [Fact]
+    public void The_mission_and_report_survive_a_decode_and_re_encode_unchanged()
+    {
+        // The cross-implementation contract stated directly: a body decoded and re-encoded is
+        // byte-for-byte what it was. This is the property the M5 C mirror must hold for the two
+        // bodies §8 keeps out of the reduced profile — the ones no other test exercised on the
+        // wire until now.
+        static void RoundTrips<T>(T body)
+        {
+            var first = JsonSerializer.Serialize(body, ProtocolJson.Options);
+            var again = JsonSerializer.Serialize(
+                JsonSerializer.Deserialize<T>(first, ProtocolJson.Options), ProtocolJson.Options);
+            Assert.Equal(first, again);
+        }
+
+        RoundTrips(GoldenMission());
+        RoundTrips(GoldenMissionReport());
     }
 
     [Fact]

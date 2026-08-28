@@ -12,6 +12,49 @@ wire change is never a footnote here.
 
 ---
 
+## v0.7.0 — both ends agree on the mission
+
+The first slice of M3, and a pure wire-hardening one: no authority changes, no new refusal
+reasons, no behavior on the device changes at all. It closes a gap the roadmap had recorded since
+M2 — the two bodies nothing checked.
+
+### The gap
+
+The golden fixtures froze `charter`, `action_record`, and `evidence_bundle`, and the M5 C mirror
+will be verified byte-for-byte against them. `mission` and `mission_report` were not among them. A
+constrained controller never decodes a mission — §8 keeps it out of the reduced profile — which is
+why the omission was reasonable at the time. But a Pi-class mound and a full controller both encode
+*and* decode them, and nothing anywhere checked that the two implementations agree on a single
+byte. A field order or a default-emission difference between them would surface as a broken chain
+on the first real mission, in the field, with a device on the other end.
+
+### Added
+
+- **`mission` and `mission_report` in both golden fixtures.** They join the bare-body freeze
+  (field order, naming, default emission) and the canonical-envelope chain, where a `mission_report`
+  (uplink) and a `mission` (downlink) now extend the pinned chain and so pin their `prev_digest`
+  linkage as well as their bytes. The frozen v0 bodies were untouched — the change is purely
+  additive, exactly as a §11 additive-field change must be.
+- **A decode-and-re-encode round trip for both bodies.** `The_mission_and_report_survive_a_decode_
+  and_re_encode_unchanged` states the cross-implementation contract directly: serialize, parse,
+  re-serialize, and the bytes are identical. Paired with a digest-preservation round trip for
+  `mission_report`, since it is uplink and therefore chains — a shifted byte there would break the
+  chain at exactly that envelope.
+
+### Wire
+
+No change to any existing canonical bytes. The v0 bytes frozen at `v0.2.1` are untouched; `mission`
+and `mission_report` were already on the wire and already serialized this way — this release only
+*pins* what they were, so a future change to them becomes a version bump caught by a red fixture
+rather than a silent divergence. PROTOCOL.md §11 records the expanded fixture set.
+
+### Not yet
+
+The rest of M3 is still ahead: deeper evidence correlation across a mission's window, durable
+in-flight mission state so a restart mid-mission resumes coherently, and the sync hardening that
+goes with them. This release deliberately does none of it — it makes the record the controller
+already receives one the two implementations can be proven to agree on, and stops there.
+
 ## v0.6.0 — the record leaves the mound
 
 M2 complete: the two ants that act on the record rather than on the mission, the durable queue

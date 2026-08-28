@@ -10,3 +10,9 @@
 
 ## evidence_bundle
 {"bundle_id":"b0000000-0000-4000-8000-000000000001","items":[{"evidence_id":"e0000000-0000-4000-8000-000000000001","type":"sensor_window","captured_at":"2026-08-14T21:04:41Z","source":"sim.act.relay_1","payload_json":"{\"before\":0,\"after\":1}","content_digest":""}],"evicted_acked_items":0}
+
+## mission
+{"mission_id":"d0000000-0000-4000-8000-000000000001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","charter_id":"c0000000-0000-4000-8000-000000000001","worker":"","required_capabilities":["sense.temp"],"allowed_routines":[],"steps":[{"step_id":"read_before","op":"sense","capability":"sense.temp","routine_id":"","parameters":{},"condition":null,"evidence_tag":"temp_before","confirms":""},{"step_id":"cool","op":"act","capability":"act.relay_1","routine_id":"","parameters":{"on_s":30},"condition":{"source_step":"read_before","op":"gt","value":28},"evidence_tag":"cooling_action","confirms":""},{"step_id":"read_after","op":"verify","capability":"sense.temp","routine_id":"","parameters":{},"condition":null,"evidence_tag":"temp_after","confirms":"cool"}],"required_evidence":["temp_before","cooling_action","temp_after"],"safe_state":"all_actuators_off","expires_at":"2026-08-14T21:34:11Z","context":"hold the enclosure under 28C"}
+
+## mission_report
+{"mission_id":"d0000000-0000-4000-8000-000000000001","charter_id":"c0000000-0000-4000-8000-000000000001","state":"completed","started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:41Z","steps":[{"step_id":"read_before","state":"executed","value":31,"action_id":"","evidence_refs":["e0000000-0000-4000-8000-000000000001"],"detail":""},{"step_id":"cool","state":"executed","value":null,"action_id":"a0000000-0000-4000-8000-000000000001","evidence_refs":["e0000000-0000-4000-8000-000000000002"],"detail":""},{"step_id":"read_after","state":"executed","value":26,"action_id":"","evidence_refs":["e0000000-0000-4000-8000-000000000003"],"detail":""}],"detail":""}

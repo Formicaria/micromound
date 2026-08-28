@@ -357,3 +357,8 @@ exists yet, so v0 has been amended in place rather than superseded — most rece
 and the `config` and `mission_report` kinds. Once a firmware build is in the field this stops:
 from that point a change to these bytes is a version bump, and the golden fixtures are the record
 of what each version was.
+
+As of `v0.7.0` the golden fixtures pin `charter`, `action_record`, `evidence_bundle`, **`mission`,
+and `mission_report`** — the last two added because a Pi-class mound and a full controller both
+encode them even though a reduced controller (§8) never decodes a mission, so the M5 C mirror is
+verified against a fixture rather than against an agreement nobody checked.
