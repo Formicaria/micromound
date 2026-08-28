@@ -93,7 +93,7 @@ public sealed class SimSensorDriver : SimDriverBase
         };
     }
 
-    public override string DriverId => "sim_sensor";
+    public override string DriverId => "sim_sensor:" + Capability;
 
     public override string Bus => BusKinds.I2c;
 
@@ -131,7 +131,7 @@ public sealed class SimSensorDriver : SimDriverBase
 
             var item = EvidenceReadings.Create(
                 Guid.NewGuid().ToString(), driver.Capability, driver.Reading, execution.StartedAt,
-                unit: driver.Unit, source: driver.DriverId + "." + driver.Capability);
+                unit: driver.Unit, source: driver.DriverId);
 
             driver.Publish?.Invoke(item);
             return ExecutionOutcome.Ok([item]);
@@ -169,7 +169,7 @@ public sealed class SimRelayDriver : SimDriverBase
         };
     }
 
-    public override string DriverId => "sim_relay";
+    public override string DriverId => "sim_relay:" + Capability;
 
     public override string Bus => BusKinds.Gpio;
 
