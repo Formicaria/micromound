@@ -3,13 +3,17 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Micromound.Sim</RootNamespace>
-    <Description>Simulated Micromound devices — fake sensors, fake actuators, failure injection, offline simulation. Runs the real capability kernel over fake hardware, so the simulator and the runtime cannot disagree about authority.</Description>
+    <Description>Simulated Micromound devices and an in-process controller: real drivers over fake hardware, the real kernel, the real ants, failure injection, offline simulation. The composition a Pi will run, proven without a Pi.</Description>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
     <ProjectReference Include="..\Micromound.Crypto\Micromound.Crypto.csproj" />
     <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
+    <ProjectReference Include="..\Micromound.Drivers\Micromound.Drivers.csproj" />
+    <ProjectReference Include="..\Micromound.Evidence\Micromound.Evidence.csproj" />
+    <ProjectReference Include="..\Micromound.Runtime\Micromound.Runtime.csproj" />
+    <ProjectReference Include="..\Micromound.Sync\Micromound.Sync.csproj" />
   </ItemGroup>
 
 </Project>

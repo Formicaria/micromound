@@ -46,6 +46,13 @@ Every message in either direction is one signed envelope:
   `unknown_key`, `bad_signature`. "Dropped and audited" is only auditable if the reason survives.
 - Unknown `kind`: refuse with an `ack` carrying `status: "refused_unknown_kind"`. Unknown fields
   within a known kind are ignored. Refusal is loud, never silent.
+- The `ack` body is typed: `status` (`ok` | `refused` | `refused_unknown_kind`), `refers_to`
+  (envelope id), `through_seq` (cumulative, inclusive; negative acknowledges nothing), and
+  `evidence_ids` (received and stored, so the device may evict them under pressure). `through_seq`
+  is what lets a mound let go of its records — until an ack covers a sequence number, the uplink
+  queue retains the envelope and re-sends it, and the receiver deduplicates by sequence. A refusal
+  ack never advances `through_seq`: acknowledging an envelope nobody processed would tell the
+  sender to discard it.
 
 ### Canonical bytes (normative — these are what gets signed)
 

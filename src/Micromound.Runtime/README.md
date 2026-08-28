@@ -21,5 +21,6 @@ Actuation. `IForagerAnt` submits a `CapabilityRequest` and receives an `ActionRe
 executor and no driver handle. The runtime references `Micromound.Capabilities` to *call* the
 kernel, never to bypass it.
 
-Status: M2. The interfaces are settled because the mission contract, the kernel, and the ants they
-coordinate already exist; what is missing is the loop between them.
+Status: M2 complete at `v0.6.0`. All six default ants are runtime services — Scout, Forager and
+Guard on the mission path (v0.4.0), Witness on the verdict (v0.5.0), Cache and Runner on the
+record (v0.6.0).

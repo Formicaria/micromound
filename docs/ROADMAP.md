@@ -12,7 +12,7 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 |---|---|---|
 | **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
 | **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
-| **M2** — The six default ants | **In progress** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
+| **M2** — The six default ants | **Done at `v0.6.0`** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
 | **M3** — Evidence, offline state, and sync | Planned | Evidence correlation, durable offline state, reconnect and backlog synchronization |
 | **M4** — The Linux/Pi host and first real drivers | Planned | The headless daemon, configuration loading, service lifecycle, watchdog, and a small initial set of real hardware drivers |
 | **M5** — Constrained controller firmware | Planned | ESP32 reduced controller implementing the same protocol and capability concepts, verified byte-for-byte against the golden fixtures |
@@ -109,13 +109,16 @@ M2 is being taken in two halves, split where the seam actually is.
 - [x] `MissionStep.confirms` — the link that makes `verify` differ from `sense` at all
 - [x] The evidence gate applied a second time, so the confirming reading can change an outcome
 
-**The ants that act on the record — next:**
+**The ants that act on the record — done at `v0.6.0`:**
 
-- [ ] Cache Ant and operational persistence
-- [ ] Runner Ant over the durable uplink queue
-- [ ] Simulated drivers implementing `IDriver`, and `Micromound.Sim` rebuilt to compose
-      driver → kernel → ants → Mound Major
-- [ ] End-to-end simulator missions
+- [x] Cache Ant and operational persistence — `IStateStore`, restart snapshots, and the three
+      restore rules: a restart never clears a stop, never extends a lease, and restores
+      observe-only when in doubt
+- [x] Runner Ant over the durable uplink queue — the chain enforced at enqueue, retention governed
+      by acknowledgement, stops processed ahead of everything else in the batch
+- [x] Simulated drivers implementing `IDriver`, and `Micromound.Sim` rebuilt to compose
+      driver → kernel → ants → Mound Major → Runner
+- [x] End-to-end simulator missions, against an in-process controller that verifies every byte
 
 ## Known gaps, recorded
 
@@ -125,8 +128,18 @@ M2 is being taken in two halves, split where the seam actually is.
   but a Pi-class mound and a controller both encode them, and nothing checks that they agree.
 - **Evidence storage is unbounded when nothing is acknowledged.** `InMemoryEvidenceStore` exceeds
   its capacity rather than dropping unacknowledged proof, which is the right trade between those
-  two and not a complete answer. Bounding a device that has been offline for a week is the Cache
-  Ant's problem, and the Cache Ant is durable storage rather than a dictionary.
+  two and not a complete answer. The Cache Ant now exists and acknowledgements now flow, so the
+  window is bounded by connectivity — but a mound offline for a week still grows. A disk-backed
+  `IStateStore` and a spill policy are M4, where storage is finally real.
+- **Downlink is signature-verified but not hash-chained.** The uplink stream is chained per
+  PROTOCOL.md §6; downlink relies on signatures alone, and each side deduplicates by envelope id.
+  Deliberate — a controller fans out to many mounds and a per-mound downlink chain buys little —
+  but recorded here rather than assumed.
+- **Driver de-energizing on stop and quiesce is the composition root's job**, and only the
+  simulator's composition root does it yet: SimMound watches for the stopped/quiesced transition
+  around every sync and mission and tells its drivers to enter safe state, wherever the stop came
+  from. The M4 host must do the same around its own loop — recorded here so it is a requirement,
+  not a rediscovery.
 
 ## Ordering rationale
 

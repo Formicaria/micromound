@@ -12,6 +12,140 @@ wire change is never a footnote here.
 
 ---
 
+## v0.6.0 — the record leaves the mound
+
+M2 complete: the two ants that act on the record rather than on the mission, the durable queue
+between them, and the simulator rebuilt into the full composition — proven end to end against a
+controller that verifies every byte.
+
+### The gap
+
+A mound could act, prove, and judge — and then everything it knew lived in one process's memory
+and went nowhere. `ICacheAnt` and `IRunnerAnt` were declared and implemented by nothing;
+`IUplinkQueue` and `IStateStore` had no implementations; the simulator held its own private
+envelope chain instead of the runtime's; and no test anywhere ran both ends of the wire. The
+protocol described a conversation, and the repository could only speak half of it.
+
+### Added
+
+- **`DurableUplinkQueue`** (`Micromound.Sync`) — the queue owns the chain. `Enqueue` refuses, by
+  throwing, an envelope that skips a sequence number, anchors to the wrong digest, or is unsigned:
+  a forked uplink chain is a programming error on the device, not wire input to tolerate.
+  PROTOCOL.md §6 makes gaps *detectable*; this is why they never need to be detected. Two
+  watermarks move independently — the chain head advances on every enqueue and never retreats;
+  the ack watermark governs retention, and until it covers a sequence number the envelope is
+  retained and re-sent. Every mutation persists through `IStateStore`, so a power cut between
+  enqueue and drain loses nothing.
+
+- **`IStateStore` / `InMemoryStateStore`** (`Micromound.Sync`) — the persistence seam: a
+  string-keyed document store the M4 host will back with files and the M5 firmware with flash.
+  Defined next to its first consumer, wrapped by the Cache Ant above.
+
+- **`CacheAnt`** — operational persistence and the restart path. `SaveAuthority` snapshots the
+  charter, lease expiry, stop and quiesce flags after anything that changes them;
+  `TryRestoreAuthority` rehydrates through the new `KernelAuthority.Restore`.
+
+- **`KernelAuthority.Restore`** — the one place authority enters the kernel without a controller
+  signing it just now, so every rule resolves downward (see Authority below).
+
+- **`RunnerAnt`** — the only envelope factory on the mound: sequence and anchor come from the
+  queue, the signature from the device key, and no path produces an envelope outside the chain.
+  `Sync` queues the beat, drains the backlog oldest-first, handles acks inline (the drain's
+  progress depends on them), and defers everything else until the drain settles so that ordering
+  is by kind, not by arrival. Downlink is verified against the controller key before anything is
+  processed; what fails is dropped and audited and — deliberately — never acknowledged. Unknown
+  kinds, and known kinds that are not downlink, get an `ack` with `refused_unknown_kind`.
+
+- **`AckBody`** (`Micromound.Protocol`) — the typed acknowledgement: cumulative `through_seq`
+  (a controller acking a week-long backlog must not enumerate it), received `evidence_ids`
+  (what unlocks eviction on the device), and a closed status set.
+
+- **`SimSensorDriver` / `SimRelayDriver`** — fake hardware behind the real `IDriver` seam, with
+  hardware limits compiled into the driver where a real GPIO relay driver declares them. The
+  relay's `OnActuated` hook is the fake physics: a harness makes watering raise soil moisture.
+
+- **`SimController` / `SimLink`** — the other end of the wire as a test double. Binds keys at
+  enrollment, signs all downlink, verifies uplink signatures AND the chain, deduplicates by
+  sequence, acknowledges cumulatively, never dials the mound. Enrollment is idempotent because
+  reconnection is not re-enrollment — resetting the chain anchor on reconnect would turn a
+  faithfully preserved backlog into a wall of refusals.
+
+- **`SimMound` rebuilt** as the composition a Pi will run: drivers → registries → kernel → the
+  six ants → Mound Major → Runner, over one `IStateStore`. Same public surface; every envelope
+  now flows through the runtime's own queue instead of a simulator-private chain.
+
+- **24 new tests**, including end-to-end: the documented watering mission assigned over the wire
+  and verified at the controller; offline continuation and reconnect with the chain intact across
+  a restart; a stop and a mission in the same batch; tampered uplink refused per-envelope and
+  tampered downlink refused at the mound; ack-driven evidence eviction; lease renewal by beat and
+  decay by silence.
+
+### Authority
+
+- **A restart never clears a stop.** A stopped snapshot restores to stopped, whatever else it
+  carried. Power-cycling a mound is not a way around an operator's stop order.
+- **A restart never extends a lease.** The restored expiry is the saved value — there is no path
+  through `Restore` that touches the TTL. A saved expiry already in the past comes back quiesced,
+  exactly as if the process had stayed up.
+- **A charter that no longer validates restores nothing.** Re-validated against what the device
+  has *now*; failure means observe-only, with the reasons reported. Restore over live authority is
+  refused outright.
+- **Renewal is the acknowledged beat, not the successful send.** `RenewLease` moved onto
+  `IMoundMajor` so the Runner — the component that hears the acknowledgement — can report it, and
+  it fires only when the controller's ack covers the beat's own sequence number. A transport that
+  returns true is not a controller that said yes.
+- **Stops are processed ahead of all other downlink in the same exchange** — PROTOCOL.md §7, now
+  enforced by ordering rather than described: a batch carrying both a mission and a stop executes
+  the stop and the mission runs into it, wherever each sat in the batch.
+
+### Changed
+
+- Mission-produced action records now leave the coordinator only after the walk completes, because
+  a `verify` step can demote an earlier record — a record published at dispatch time would go up
+  claiming a success its own mission later withdrew.
+- The controller side of every exchange is idempotent by sequence number: re-delivery of an
+  acknowledged envelope re-acks and processes nothing, because the ack, not the delivery, may be
+  the thing that was lost.
+
+### Wire
+
+`AckBody` gives the existing `ack` kind a typed body — additive; no golden fixture pins an ack.
+The v0 canonical bytes frozen at `v0.2.1` are untouched. Downlink remains signature-verified but
+not hash-chained (only the uplink stream chains, §6); each side deduplicates by envelope id or
+sequence. Recorded in `ROADMAP.md` as a decision rather than an assumption.
+
+### Fixed in review, before release
+
+Three findings from this release's adversarial review, each fixed with a pinning test or guard:
+
+- **A restart dropped the manifest tier.** The authority snapshot carried charter and lease but
+  not the operator's `device_limits`, so a power cycle restored hardware ∩ charter instead of
+  hardware ∩ device ∩ charter — the one way a reboot could quietly widen what a mound may do.
+  The snapshot now carries the device limits and the manifest safe state, and `Restore` applies
+  them before any branch, the stop branch included.
+- **A stop received over the wire flipped the flag without de-energizing the drivers.** The
+  Runner reaches only the coordinator, and the drivers belong to the composition root — so the
+  composition root now watches for the stopped/quiesced transition around every sync and mission
+  and enters driver safe state on it, wherever the stop came from. The M4 host must do the same
+  around its own loop; `ROADMAP.md` records it as a requirement.
+- **Two copies of one downlink envelope inside a single exchange would both execute.** The
+  receive-time dedupe only caught re-delivery across syncs. `HandleDeferred` now claims each
+  envelope id exactly once, so a controller whose ack was lost mid-exchange cannot make one
+  mission run twice.
+
+Also from review: downlink is now checked against this mound's id (a misrouted stop must surface
+as an audit line, not as obedience); refused charters and configs ack with status `refused`
+rather than a success ack whose refusal lived only in free text; `Peek` returns copies so a
+tampering transport corrupts its own view, never the device's durable record; and the sim
+controller no longer lets a later caller silently re-key an enrolled mound.
+
+### Not yet
+
+`IStateStore` has no disk backing — that is the M4 host's first job, and until then "durable"
+means "survives a process swap sharing the store", which is what the tests exercise. Evidence
+storage still exceeds its bound rather than dropping unacknowledged proof; with acks now flowing
+the window is bounded by connectivity, and the spill policy lands with real storage.
+
 ## v0.5.0 — the second sense finally does something
 
 M2 continued: the Witness Ant, and the half of the default workflow that could not affect anything.
