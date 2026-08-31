@@ -99,6 +99,12 @@ Gathers evidence independent of the actuation path, correlates it with action re
 freshness and validity, determines whether required evidence exists, marks unsupported claimed
 successes as `unverified`, and produces structured evidence bundles.
 
+Correlation is temporal, not merely by reference: a confirming reading counts only if it was
+captured **at or after the action began**. A reading from before the act — one carrying the right
+tag but taken earlier, or one reordered by clock skew — is the temporal mirror of "commands are
+not evidence" and cannot confirm an effect that had not yet happened, so it is left out of the
+proof and, if nothing else confirms, the action degrades to `unverified` (since `v0.8.0`).
+
 Examples: relay command followed by contact-sensor state; valve command followed by flow
 detection; motor command followed by encoder movement; movement command followed by localization
 change; watering command followed by soil-moisture change; inspection request followed by a

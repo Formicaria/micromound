@@ -246,10 +246,40 @@ public sealed class WitnessAnt(IEvidenceCorrelator correlator, WorkerDescriptor?
             return ActionOutcomes.Unverified;
         }
 
+        // The confirming observation must come from AFTER the action began. "Commands are not
+        // evidence" (core principle 6) has a mirror the gate never enforced: a reading taken
+        // BEFORE the act cannot be evidence of the act's effect. Without this, a stale reading
+        // carrying the right tag, or one reordered by clock skew, could confirm an effect that had
+        // not yet happened — the same self-nomination the correlator refuses when it resolves only
+        // the refs a record actually cites. The reference is when the action *began* (a reading
+        // during the action already reflects a world the action is changing); ended_at is the
+        // fallback, and an action with no parseable time imposes no ordering it cannot justify.
+        var actionBegan = ProtocolTime.TryParse(record.StartedAt, out var started) ? started
+            : ProtocolTime.TryParse(record.EndedAt, out var ended) ? ended
+            : (DateTimeOffset?)null;
+
+        // A reading with an unparseable captured_at is left in rather than filtered here, so the
+        // gate below reports it as unparseable instead of this rule mislabelling it "before".
+        IReadOnlyList<EvidenceItem> afterTheAct = actionBegan is null
+            ? confirming
+            : confirming.Where(i => !ProtocolTime.TryParse(i.CapturedAt, out var captured)
+                                    || captured >= actionBegan.Value).ToList();
+
+        if (afterTheAct.Count == 0)
+        {
+            // actionBegan is non-null here: a null reference leaves every reading in afterTheAct,
+            // so this branch is only reached when the action had a parseable time to compare against.
+            reason = $"the confirming observation predates the action (it began {actionBegan!.Value.ToWire()}); " +
+                     "a reading from before the act cannot confirm its effect";
+            return ActionOutcomes.Unverified;
+        }
+
         // The confirming items join the record's own refs, which is what makes them part of the
         // audit trail rather than a private judgement: a controller re-running the gate over the
-        // synced record reaches the same verdict this did.
-        foreach (var item in confirming)
+        // synced record reaches the same verdict this did. Only the readings that could actually
+        // confirm — the ones not from before the act — are added; a pre-act reading is no more
+        // part of the proof than a command is.
+        foreach (var item in afterTheAct)
             if (!record.EvidenceRefs.Contains(item.EvidenceId))
                 record.EvidenceRefs.Add(item.EvidenceId);
 
@@ -258,7 +288,7 @@ public sealed class WitnessAnt(IEvidenceCorrelator correlator, WorkerDescriptor?
 
         // Merged in directly as well: a confirming reading taken moments ago may not have reached
         // the store yet, and an action must not be demoted for a race in our own plumbing.
-        foreach (var item in confirming) view[item.EvidenceId] = item;
+        foreach (var item in afterTheAct) view[item.EvidenceId] = item;
 
         return EvidenceGate.Gate(record, policy, view, now, out reason);
     }

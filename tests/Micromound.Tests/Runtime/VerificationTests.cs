@@ -274,3 +274,98 @@ public class VerificationTests
         Assert.Contains("confirms 'water'", report.Steps.Single(s => s.StepId == "confirm").Detail);
     }
 }
+
+/// <summary>
+/// The temporal half of "commands are not evidence": a confirming reading from BEFORE the action
+/// began cannot be evidence of the action's effect. Until now the gate checked that a confirming
+/// reading was fresh and not from the future, but not that it followed the act — so a stale reading
+/// with the right tag, or one reordered by clock skew, could confirm an effect that had not yet
+/// happened.
+/// </summary>
+public class WitnessOrderingTests
+{
+    private static DateTimeOffset Now => KernelHarness.Now;
+
+    private static WitnessAnt Witness() => new(new EvidenceCorrelator(new InMemoryEvidenceStore()));
+
+    private static ActionRecord Watered(DateTimeOffset began) => new()
+    {
+        ActionId = "a1",
+        Capability = "act.relay_1",
+        Outcome = ActionOutcomes.Succeeded,
+        StartedAt = began.ToWire(),
+        EndedAt = began.AddSeconds(5).ToWire()
+    };
+
+    private static EvidenceItem Reading(string id, DateTimeOffset capturedAt) =>
+        EvidenceReadings.Create(id, "sense.temp", 26, capturedAt, source: "fake.sense.temp");
+
+    [Fact]
+    public void A_reading_from_before_the_act_cannot_confirm_it()
+    {
+        var record = Watered(Now);
+
+        var outcome = Witness().Confirm(record, [Reading("ev-before", Now.AddSeconds(-30))],
+            new EvidencePolicy(), Now.AddSeconds(6), out var reason);
+
+        Assert.Equal(ActionOutcomes.Unverified, outcome);
+        Assert.Contains("predates the action", reason);
+        // A pre-act reading is no more part of the proof than the command is.
+        Assert.DoesNotContain("ev-before", record.EvidenceRefs);
+    }
+
+    [Fact]
+    public void A_reading_taken_after_the_act_confirms_it()
+    {
+        var record = Watered(Now);
+
+        var outcome = Witness().Confirm(record, [Reading("ev-after", Now.AddSeconds(2))],
+            new EvidencePolicy(), Now.AddSeconds(6), out _);
+
+        Assert.Equal(ActionOutcomes.Succeeded, outcome);
+        Assert.Contains("ev-after", record.EvidenceRefs);
+    }
+
+    [Fact]
+    public void A_reading_at_the_instant_the_act_began_still_confirms()
+    {
+        // The boundary the synchronous runtime actually produces: the mission walks at one clock,
+        // so the confirming reading is stamped the same second the action started. That must count.
+        var record = Watered(Now);
+
+        var outcome = Witness().Confirm(record, [Reading("ev-at", Now)],
+            new EvidencePolicy(), Now.AddSeconds(6), out _);
+
+        Assert.Equal(ActionOutcomes.Succeeded, outcome);
+    }
+
+    [Fact]
+    public void Among_mixed_readings_only_the_ones_after_the_act_become_proof()
+    {
+        var record = Watered(Now);
+
+        var outcome = Witness().Confirm(record,
+            [Reading("ev-before", Now.AddSeconds(-30)), Reading("ev-after", Now.AddSeconds(2))],
+            new EvidencePolicy(), Now.AddSeconds(6), out _);
+
+        Assert.Equal(ActionOutcomes.Succeeded, outcome);
+        Assert.Contains("ev-after", record.EvidenceRefs);
+        Assert.DoesNotContain("ev-before", record.EvidenceRefs);
+    }
+
+    [Fact]
+    public void An_action_with_no_parseable_time_imposes_no_ordering()
+    {
+        // Ordering it cannot justify would be worse than none: with no action clock, fall back to
+        // the gate's own freshness rules rather than inventing a "before".
+        var record = new ActionRecord
+        {
+            ActionId = "a1", Capability = "act.relay_1", Outcome = ActionOutcomes.Succeeded
+        };
+
+        var outcome = Witness().Confirm(record, [Reading("ev-x", Now.AddSeconds(-30))],
+            new EvidencePolicy(), Now, out _);
+
+        Assert.Equal(ActionOutcomes.Succeeded, outcome);
+    }
+}
