@@ -86,6 +86,61 @@ public class EvidenceStoreTests
     }
 
     /// <remarks>
+    /// Unacknowledged proof is retained past the soft capacity — never silently dropped — but not
+    /// without bound. Past the hard ceiling the oldest unacknowledged item spills, and the spill is
+    /// counted, not silent: the deliberate answer to "a mound offline for a week".
+    /// </remarks>
+    [Fact]
+    public void Unacknowledged_proof_spills_oldest_first_past_the_hard_ceiling()
+    {
+        var store = new InMemoryEvidenceStore(capacity: 2, hardCeiling: 3);
+        store.Add(Item("e1"));
+        store.Add(Item("e2"));
+        store.Add(Item("e3"));
+
+        Assert.Equal(3, store.Count);           // at the ceiling, nothing spilled yet
+        Assert.Equal(0, store.TakeSpilledCount());
+
+        store.Add(Item("e4"));                  // past the ceiling: the oldest unacked spills
+
+        Assert.Equal(3, store.Count);
+        Assert.False(store.TryGet("e1", out _));   // the oldest went
+        Assert.True(store.TryGet("e4", out _));    // the newest stayed
+        Assert.Equal(1, store.TakeSpilledCount()); // and it was a spill, not an eviction
+        Assert.Equal(0, store.TakeEvictedCount());
+    }
+
+    /// <remarks>Acknowledged proof — already delivered — is always reclaimed before any unacknowledged spill.</remarks>
+    [Fact]
+    public void Acknowledged_proof_is_reclaimed_before_unacknowledged_spills()
+    {
+        var store = new InMemoryEvidenceStore(capacity: 2, hardCeiling: 3);
+        store.Add(Item("e1"));
+        store.Add(Item("e2"));
+        store.Add(Item("e3"));
+        store.Acknowledge(["e1"]);   // the oldest is now delivered
+
+        store.Add(Item("e4"));       // pressure: reclaim the acked e1, do not spill anything
+
+        Assert.False(store.TryGet("e1", out _));
+        Assert.Equal(1, store.TakeEvictedCount());
+        Assert.Equal(0, store.TakeSpilledCount());
+        Assert.True(store.TryGet("e2", out _) && store.TryGet("e4", out _));
+    }
+
+    /// <summary>Like the evicted count, a spill rides the next bundle exactly once.</summary>
+    [Fact]
+    public void The_spill_count_is_reported_once()
+    {
+        var store = new InMemoryEvidenceStore(capacity: 1, hardCeiling: 1);
+        store.Add(Item("e1"));
+        store.Add(Item("e2"));   // e1 spills
+
+        Assert.Equal(1, store.TakeSpilledCount());
+        Assert.Equal(0, store.TakeSpilledCount());
+    }
+
+    /// <remarks>
     /// A correlator that swept up every reading captured near an action would let the mound
     /// nominate its own corroboration, and "commands are not evidence" means very little if a
     /// device may decide after the fact which observations happen to support it.

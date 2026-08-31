@@ -205,10 +205,19 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     private void PublishEvidence(EvidenceItem item)
     {
         _evidenceMirror[item.EvidenceId] = item;
-        _evidenceStore!.Add(item);
+        _evidenceStore!.Add(item);   // may evict acked or spill unacked under storage pressure
 
+        // The pressure accounting rides out with the bundle it caused — the composition root is
+        // where the store meets the wire, so it is where the counts are attached. Both reset on
+        // read, so each loss is reported exactly once.
         _runner!.Publish(EnvelopeKinds.EvidenceBundle,
-            new EvidenceBundle { BundleId = Guid.NewGuid().ToString(), Items = [item] },
+            new EvidenceBundle
+            {
+                BundleId = Guid.NewGuid().ToString(),
+                Items = [item],
+                EvictedAckedItems = _evidenceStore.TakeEvictedCount(),
+                SpilledUnackedItems = _evidenceStore.TakeSpilledCount()
+            },
             ParseOrNow(item.CapturedAt));
     }
 

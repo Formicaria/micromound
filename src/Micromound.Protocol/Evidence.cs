@@ -102,4 +102,11 @@ public sealed class EvidenceBundle
     [JsonPropertyName("items")] public List<EvidenceItem> Items { get; set; } = [];
     /// <summary>Set when storage exhaustion forced eviction of acked items — itself reported.</summary>
     [JsonPropertyName("evicted_acked_items")] public int EvictedAckedItems { get; set; }
+    /// <summary>
+    /// Unacknowledged proof the store had to drop under pressure — the spill the controller never
+    /// saw. Distinct from <see cref="EvictedAckedItems"/>: an evicted item was already delivered
+    /// and acknowledged, a spilled one was not. Silently dropping either is indistinguishable from
+    /// never capturing it, so both are counted and ride the wire (added in `v0.9.0`).
+    /// </summary>
+    [JsonPropertyName("spilled_unacked_items")] public int SpilledUnackedItems { get; set; }
 }

@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.8.0
+**Current version:** v0.9.0
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`.** Protocol contracts, Ed25519
 signing, frozen wire bytes, the capability kernel with deterministic authorization, the Mound

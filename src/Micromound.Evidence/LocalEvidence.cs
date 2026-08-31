@@ -17,14 +17,30 @@ namespace Micromound.Evidence;
 /// Ant's problem, and the Cache Ant is durable storage rather than a dictionary. Recorded here so
 /// the limitation is a decision rather than an oversight.
 /// </summary>
-public sealed class InMemoryEvidenceStore(int capacity = 2000) : IEvidenceStore
+public sealed class InMemoryEvidenceStore : IEvidenceStore
 {
     private readonly Dictionary<string, EvidenceItem> _items = new(StringComparer.Ordinal);
     private readonly List<string> _order = [];
     private readonly HashSet<string> _acknowledged = new(StringComparer.Ordinal);
     private int _evicted;
+    private int _spilled;
 
-    public int Capacity { get; } = Math.Max(1, capacity);
+    /// <param name="capacity">Soft bound: acknowledged proof is reclaimed past this.</param>
+    /// <param name="hardCeiling">
+    /// Hard bound on total items, acknowledged or not. Unacknowledged proof accumulates past
+    /// <paramref name="capacity"/> but never past this — beyond it the oldest unacknowledged item
+    /// spills. Defaults to twice the soft capacity, and is never below it.
+    /// </param>
+    public InMemoryEvidenceStore(int capacity = 2000, int? hardCeiling = null)
+    {
+        Capacity = Math.Max(1, capacity);
+        HardCeiling = Math.Max(Capacity, hardCeiling ?? Capacity * 2);
+    }
+
+    public int Capacity { get; }
+
+    /// <summary>The absolute cap on stored items; past it, unacknowledged proof spills oldest-first.</summary>
+    public int HardCeiling { get; }
 
     public int Count => _items.Count;
 
@@ -71,18 +87,43 @@ public sealed class InMemoryEvidenceStore(int capacity = 2000) : IEvidenceStore
         return count;
     }
 
+    /// <summary>Reads and resets the spill count. Rides the next bundle once, like the evicted count.</summary>
+    public int TakeSpilledCount()
+    {
+        var count = _spilled;
+        _spilled = 0;
+        return count;
+    }
+
     private void Evict()
     {
+        // First reclaim from acknowledged proof — the controller already has it, so dropping it
+        // costs the audit trail nothing (the count still rides the wire).
         while (_items.Count > Capacity)
         {
             var victim = _order.FirstOrDefault(_acknowledged.Contains);
-            if (victim is null) return;   // nothing acknowledged: keep the proof, exceed the bound
+            if (victim is null) break;   // nothing acknowledged left to reclaim
 
-            _order.Remove(victim);
-            _acknowledged.Remove(victim);
-            _items.Remove(victim);
+            Remove(victim);
             _evicted++;
         }
+
+        // Unacknowledged proof is allowed past the soft capacity — silently dropping it would be
+        // indistinguishable from never capturing it — but not past the hard ceiling. Beyond it the
+        // oldest unacknowledged item spills, and every spill is counted so the loss is loud. This
+        // is the deliberate answer to "a mound offline for a week": bounded storage, reported cost.
+        while (_items.Count > HardCeiling)
+        {
+            Remove(_order[0]);   // the oldest, and by construction now unacknowledged
+            _spilled++;
+        }
+    }
+
+    private void Remove(string id)
+    {
+        _order.Remove(id);
+        _acknowledged.Remove(id);
+        _items.Remove(id);
     }
 }
 

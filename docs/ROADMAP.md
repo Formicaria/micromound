@@ -13,7 +13,7 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 | **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
 | **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
 | **M2** — The six default ants | **Done at `v0.6.0`** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
-| **M3** — Evidence, offline state, and sync | **In progress** | Evidence correlation, durable offline state, reconnect and backlog synchronization. Shipped: `mission`/`mission_report` golden pins (`v0.7.0`); confirming-reading temporal correlation (`v0.8.0`). Remaining: durable in-flight/mission state and an explicit evidence spill/backpressure policy. |
+| **M3** — Evidence, offline state, and sync | **In progress** | Evidence correlation, durable offline state, reconnect and backlog synchronization. Shipped: `mission`/`mission_report` golden pins (`v0.7.0`); confirming-reading temporal correlation (`v0.8.0`); evidence spill/backpressure policy (`v0.9.0`). Remaining: durable in-flight/mission state (its disk backing arrives with M4). |
 | **M4** — The Linux/Pi host and first real drivers | Planned (next) | The headless `Micromound.Host` daemon made runnable, SQLite-backed durable state, a strong declarative hardware manifest, generic driver *primitives* (digital I/O, analog, binary/proportional/position/velocity actuators), device/capability composition from the manifest, service lifecycle, watchdog, and host-owned safe-state de-energizing on stop/quiesce/expiry/fault/shutdown |
 | **M5** — Constrained controller firmware | Planned | ESP32 reduced controller (`firmware/esp32`, currently a placeholder) implementing the same protocol and capability kernel in C, verified byte-for-byte against the golden fixtures, over a compact versioned Pi↔ESP32 packet protocol |
 | **Acceptance** — Generic Physical Mound | Criteria, not a code milestone | The end-to-end proof on a minimal real bench that a fresh mound boots its default colony, is configured and chartered from upstream, moves generic hardware through the kernel, verifies with independent evidence, survives disconnect/reboot/lease-expiry safely, and synchronizes an auditable history back. See [The target](#the-target-a-generic-physical-mound). |
@@ -34,8 +34,9 @@ Six questions this document should answer at a glance:
    hardware, end to end — `v0.6.0`). All proven against `Micromound.Sim`, which runs the real
    kernel over fake hardware.
 2. **What is being built now?** M3 — the record survives and travels correctly: it is pinned on
-   the wire (`v0.7.0`), verified only by evidence that actually follows the act (`v0.8.0`), and
-   what remains is durable in-flight state and an explicit evidence spill policy.
+   the wire (`v0.7.0`), verified only by evidence that follows the act (`v0.8.0`), and bounded in
+   storage by a loud spill policy (`v0.9.0`); what remains is durable in-flight mission state (its
+   disk backing arrives with M4).
 3. **What must exist before real hardware can move?** M4 — a runnable `Micromound.Host`, durable
    state on disk, a declarative hardware manifest, and generic driver *primitives*. Nothing turns
    a physical output on until this lands, because the host is what de-energizes it on stop.
@@ -87,11 +88,13 @@ M3 is being taken in slices, each a coherent release that preserves all prior be
   stale tag, clock skew) can no longer confirm an effect that had not happened. The Witness stays
   generic — it knows expected outcome, evidence requirement, observation, correlation, result, and
   nothing about what the hardware is.
+- **`v0.9.0` — the store bounds itself and says what it cost.** An explicit evidence
+  spill/backpressure policy: a hard ceiling above the soft capacity, acknowledged proof reclaimed
+  first, then oldest unacknowledged proof spilled and counted on the wire as `spilled_unacked_items`.
+  A long-disconnected mound bounds its storage without ever silently dropping proof.
 - **Remaining before M3 closes:** durable in-flight/mission state so a restart mid-mission resumes
-  or fails coherently rather than losing the mission, and an explicit evidence spill/backpressure
-  policy so a long-disconnected mound bounds its storage without ever silently dropping
-  unacknowledged proof (the store deliberately exceeds its bound today rather than drop proof —
-  see Known gaps).
+  or fails coherently rather than losing the mission. (The disk backing for durable state, and the
+  disk-backed evidence store, land with M4's real host.)
 
 ## What M0 actually covers
 
@@ -198,11 +201,14 @@ M2 is being taken in two halves, split where the seam actually is.
   controller still never decodes a mission (§8 keeps it out of the reduced profile); the pin is
   for the Pi-class mound and the full controller, which both encode them, so the M5 C mirror has
   a fixture to match instead of an agreement nobody checked.
-- **Evidence storage is unbounded when nothing is acknowledged.** `InMemoryEvidenceStore` exceeds
-  its capacity rather than dropping unacknowledged proof, which is the right trade between those
-  two and not a complete answer. The Cache Ant now exists and acknowledgements now flow, so the
-  window is bounded by connectivity — but a mound offline for a week still grows. A disk-backed
-  `IStateStore` and a spill policy are M4, where storage is finally real.
+- ~~**Evidence storage is unbounded when nothing is acknowledged.**~~ **Spill policy closed at
+  `v0.9.0`.** `InMemoryEvidenceStore` now has a hard ceiling above its soft capacity: acknowledged
+  proof is reclaimed first, then unacknowledged proof is retained past the soft capacity but spills
+  oldest-first past the hard ceiling, and every spill is counted and rides the wire as
+  `spilled_unacked_items` (a sibling of `evicted_acked_items`) so the loss is never silent. A mound
+  offline for a week now bounds its storage and reports exactly what the gap cost. What remains for
+  M4 is the *disk* backing — the policy is proven on the in-memory store; SQLite-backed durability
+  lands with the real host.
 - **Downlink is signature-verified but not hash-chained.** The uplink stream is chained per
   PROTOCOL.md §6; downlink relies on signatures alone, and each side deduplicates by envelope id.
   Deliberate — a controller fans out to many mounds and a per-mound downlink chain buys little —
