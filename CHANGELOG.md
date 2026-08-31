@@ -12,6 +12,61 @@ wire change is never a footnote here.
 
 ---
 
+## v0.8.0 — a reading from before the act is not evidence of it
+
+An M3 evidence-correlation slice, and a real verification change: a confirming reading is now
+required to come from *after* the action it confirms, not merely to be fresh.
+
+### The gap
+
+"Commands are not evidence" has a mirror the code never enforced. The evidence gate checked that a
+confirming reading resolved, parsed, was not stale, and was not from the future — but not that it
+was captured *after* the action it was meant to confirm. So a reading carrying the right tag but
+taken before the act, or one reordered by a few seconds of clock skew, could confirm an effect
+that had not yet happened. The Witness was already careful never to let a mound nominate its own
+corroboration — the correlator resolves only the refs a record cites — but a *cited* reading from
+before the act still counted, and a reading from before the command is no more evidence of its
+effect than the command itself.
+
+### Authority
+
+- **A confirming reading must come from at or after the moment the action began.** The Witness now
+  filters confirming observations by time: only those captured at or after the confirmed action's
+  `started_at` can be part of the proof. If none qualifies, the action degrades to `unverified`
+  with a reason that says the confirmation predates the act. A pre-act reading is dropped from the
+  action's evidence refs entirely, so a controller re-running the gate over the synced record
+  reaches the same verdict — the demotion travels with the record, it is not a private judgement.
+- The reference is when the action *began*, not when it ended: the synchronous runtime walks a
+  mission on one clock, so the confirming reading is stamped the same second the action started,
+  and that boundary must count as valid. An action with no parseable timestamp imposes no ordering
+  it cannot justify and falls back to the gate's existing freshness rules.
+
+### Not the wire
+
+No canonical bytes change and no golden fixture moves — this is a rule about which evidence the
+Witness will *accept* as confirmation, evaluated on the mound. The frozen v0 bodies, including the
+`mission`/`mission_report` pins from v0.7.0, are untouched. What changes is the verdict a mound may
+reach, and therefore what a `mission_report` truthfully says: an action confirmed only by a stale
+or reordered reading now reads `unverified` rather than `succeeded`.
+
+### Tests
+
+Five new cases on the Witness: a reading from before the act cannot confirm it; a reading after
+the act does; a reading at the exact instant the act began still does (the boundary the runtime
+actually produces); among mixed readings only the ones after the act become proof; and an action
+with no parseable time imposes no ordering. The end-to-end watering mission still verifies, since
+its confirming reading is taken the same second the valve opened.
+
+### Roadmap
+
+`docs/ROADMAP.md` reconciled against the generic-physical-mound target: the status table now marks
+M3 in progress (with the `v0.7.0`/`v0.8.0` slices) and M4 as next; a "Reading this roadmap" section
+answers what is complete, in progress, needed before hardware moves, next, when the mound is
+physically usable, and what stays out of scope; and a "Generic Physical Mound" acceptance target
+records the minimal real-hardware bench and the end-to-end sequence that marks the line between a
+software architecture and a functional physical edge colony. No milestone was renumbered and no
+completed work was dropped.
+
 ## v0.7.0 — both ends agree on the mission
 
 The first slice of M3, and a pure wire-hardening one: no authority changes, no new refusal

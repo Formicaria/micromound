@@ -13,16 +13,85 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 | **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
 | **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
 | **M2** — The six default ants | **Done at `v0.6.0`** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
-| **M3** — Evidence, offline state, and sync | Planned | Evidence correlation, durable offline state, reconnect and backlog synchronization |
-| **M4** — The Linux/Pi host and first real drivers | Planned | The headless daemon, configuration loading, service lifecycle, watchdog, and a small initial set of real hardware drivers |
-| **M5** — Constrained controller firmware | Planned | ESP32 reduced controller implementing the same protocol and capability concepts, verified byte-for-byte against the golden fixtures |
-| **M6** — Optional reasoning | Planned | The reasoning provider interface wired in — only after deterministic execution is mature |
+| **M3** — Evidence, offline state, and sync | **In progress** | Evidence correlation, durable offline state, reconnect and backlog synchronization. Shipped: `mission`/`mission_report` golden pins (`v0.7.0`); confirming-reading temporal correlation (`v0.8.0`). Remaining: durable in-flight/mission state and an explicit evidence spill/backpressure policy. |
+| **M4** — The Linux/Pi host and first real drivers | Planned (next) | The headless `Micromound.Host` daemon made runnable, SQLite-backed durable state, a strong declarative hardware manifest, generic driver *primitives* (digital I/O, analog, binary/proportional/position/velocity actuators), device/capability composition from the manifest, service lifecycle, watchdog, and host-owned safe-state de-energizing on stop/quiesce/expiry/fault/shutdown |
+| **M5** — Constrained controller firmware | Planned | ESP32 reduced controller (`firmware/esp32`, currently a placeholder) implementing the same protocol and capability kernel in C, verified byte-for-byte against the golden fixtures, over a compact versioned Pi↔ESP32 packet protocol |
+| **Acceptance** — Generic Physical Mound | Criteria, not a code milestone | The end-to-end proof on a minimal real bench that a fresh mound boots its default colony, is configured and chartered from upstream, moves generic hardware through the kernel, verifies with independent evidence, survives disconnect/reboot/lease-expiry safely, and synchronizes an auditable history back. See [The target](#the-target-a-generic-physical-mound). |
+| **M6** — Optional reasoning | Planned (last) | The reasoning provider interface wired in — only after deterministic execution is mature. Never on the physical authority path. |
 
 Upstream integration is not a milestone here. It is a separate deliverable in a separate
 repository, and it can begin as soon as M0 is frozen — see [`UPSTREAM.md`](UPSTREAM.md).
 
 Hazardous-class work has no milestone yet, deliberately. Until a per-action authorization pipeline
 exists with tests, hazardous actions are refused unconditionally and cannot even be registered.
+
+## Reading this roadmap
+
+Six questions this document should answer at a glance:
+
+1. **What is already complete?** M0 (protocol, identity, kernel — frozen at `v0.2.1`), M1 (runtime
+   interfaces and the Mound Major — `v0.3.0`), and M2 (the six default ants over simulated
+   hardware, end to end — `v0.6.0`). All proven against `Micromound.Sim`, which runs the real
+   kernel over fake hardware.
+2. **What is being built now?** M3 — the record survives and travels correctly: it is pinned on
+   the wire (`v0.7.0`), verified only by evidence that actually follows the act (`v0.8.0`), and
+   what remains is durable in-flight state and an explicit evidence spill policy.
+3. **What must exist before real hardware can move?** M4 — a runnable `Micromound.Host`, durable
+   state on disk, a declarative hardware manifest, and generic driver *primitives*. Nothing turns
+   a physical output on until this lands, because the host is what de-energizes it on stop.
+4. **What comes immediately after that?** M5 — the ESP32 as a subordinate deterministic controller
+   speaking a compact Pi↔ESP32 protocol, running the same kernel in C, byte-verified against the
+   golden fixtures. Not a second colony.
+5. **When is Micromound physically usable?** At the **Generic Physical Mound** acceptance below —
+   the first time the whole path runs on real hardware. That is the line between a software
+   architecture and a functional physical edge colony.
+6. **What deliberately remains outside Micromound?** The upstream UI, mission authoring, and colony
+   management (Anthill owns these — Micromound only exposes the contract); hazardous-class
+   per-action authorization (a separate, explicit future design); and any device-specific runtime,
+   named appliance driver, or default ant. Reasoning (M6) is optional and never load-bearing.
+
+## The target: a Generic Physical Mound
+
+The whole build points at one acceptance target, expressed as criteria rather than a renumbered
+historical milestone. It does not need an elaborate robot — a minimal bench suffices: a Raspberry
+Pi, an ESP32, one stepper/servo axis, one position encoder, one home/limit switch, one
+controllable output, one digital input.
+
+Against that bench the acceptance sequence proves, in order: a fresh mound boots its **unchanged**
+default mini-colony (Mound Major + Scout, Forager, Guard, Witness, Cache, Runner); the ESP32 is
+discovered; hardware is enumerated or loaded from the manifest; capabilities register; the mound
+enrolls upstream; signed configuration and a signed charter are accepted and persisted;
+configuration binds generic hardware to the generic ants **without changing their code**; a mission
+is coordinated by the Mound Major; the Forager requests actuation; the kernel validates authority
+and limits; a generic driver sends a bounded request to the ESP32; the ESP32 acts deterministically;
+the Witness confirms with **independent** evidence; the result reflects verified/unverified/failed
+reality; the network drops and the mound continues only inside its existing lease, inventing no new
+authority and queuing evidence; the Pi reboots and stop/lease/config/evidence restore correctly; the
+lease expires while disconnected and the mound enters its declared safe state with outputs
+de-energized; the network returns, expired authority does **not** resume, and the evidence backlog
+synchronizes into a complete auditable history.
+
+The load-bearing property throughout: **the same unchanged Micromound binary becomes a specialized
+physical mound through configuration, never through a fork.** A device-specific class in the core
+(`GreenhouseRuntime`, `RoverAnt`, a named appliance driver) is the signal an abstraction is wrong.
+
+## Where M3 stands
+
+M3 is being taken in slices, each a coherent release that preserves all prior behavior.
+
+- **`v0.7.0` — the record is pinned.** `mission` and `mission_report` joined the golden fixtures
+  (bare bodies and the canonical-envelope chain) with round-trip agreement tests, closing the gap
+  where the two bodies a Pi and a full controller both encode were checked by nothing.
+- **`v0.8.0` — the record is verified by evidence that followed the act.** A confirming reading is
+  accepted only if it was captured at or after the action began; a reading from before the act (a
+  stale tag, clock skew) can no longer confirm an effect that had not happened. The Witness stays
+  generic — it knows expected outcome, evidence requirement, observation, correlation, result, and
+  nothing about what the hardware is.
+- **Remaining before M3 closes:** durable in-flight/mission state so a restart mid-mission resumes
+  or fails coherently rather than losing the mission, and an explicit evidence spill/backpressure
+  policy so a long-disconnected mound bounds its storage without ever silently dropping
+  unacknowledged proof (the store deliberately exceeds its bound today rather than drop proof —
+  see Known gaps).
 
 ## What M0 actually covers
 
