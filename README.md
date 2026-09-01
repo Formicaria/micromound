@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.7
+**Current version:** v0.9.8
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.7`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.8`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -74,12 +74,17 @@ work it cannot prove finished, a bounded evidence store that says what a gap cos
 file-backed state store** (`v0.9.2`), a **driver-resolution seam** turning a manifest's hardware into
 generic driver primitives (`v0.9.3`), a **`MoundHost`** that composes and runs a mound from a manifest
 (`v0.9.4`), a **runnable daemon** with a safe service lifecycle (`v0.9.5`), a **real HTTP sync
-transport** over HTTPS (`v0.9.6`), and — new in `v0.9.7` — **device enrollment** (PROTOCOL.md §3): the
-mound presents a one-time token, receives and persists the controller's key, and can then verify
-downlink. What's still ahead: the real **Linux driver ports**. End-to-end simulator missions run
-against an in-process controller that verifies every byte. The v0 canonical bytes will not change
-again inside v0. The host runs against generic driver primitives, not real hardware — that finishes
-M4; real firmware is M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+transport** over HTTPS (`v0.9.6`), **device enrollment** (PROTOCOL.md §3): the mound presents a
+one-time token, receives and persists the controller's key, and can then verify downlink (`v0.9.7`),
+and — new in `v0.9.8` — the **first real driver port**: a Linux GPIO output over `/sys/class/gpio`
+(`SysfsDigitalOutput`) that the generic digital actuator drives instead of an in-memory line, opened
+fail-closed from the manifest's `pin`, with a momentary pulse that stays fail-safe even when a real
+port write throws. What's still ahead: the analog/ADC real port, a libgpiod backing, and a
+timed-hold actuator — and the GPIO writes themselves verified on a physical board. End-to-end
+simulator missions run against an in-process controller that verifies every byte. The v0 canonical
+bytes will not change again inside v0. The host still runs against generic driver primitives, now
+with a real GPIO line available for digital actuation, not yet a device against real hardware — that
+boundary finishes M4; real firmware is M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real

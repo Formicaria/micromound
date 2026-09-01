@@ -128,13 +128,25 @@ public abstract class GenericDriverBase : IDriver, IEvidenceSource
 /// <see cref="EnterSafeState"/> could clear. Holding for a real duration is the timed-driver work of
 /// the hardware slice; the effective <c>on_s</c> is required and recorded, never defaulted.</para>
 /// </summary>
-public sealed class DigitalActuatorDriver(IDigitalOutput output) : GenericDriverBase
+public sealed class DigitalActuatorDriver : GenericDriverBase
 {
-    private readonly IDigitalOutput _output = output;
+    private readonly Func<IReadOnlyDictionary<string, string>, IDigitalOutput> _portBuilder;
+    private IDigitalOutput? _output;
     private string _capability = "";
     private bool _activeHigh = true;
     private CapabilityDescriptor? _descriptor;
     private Executor? _executor;
+
+    /// <summary>
+    /// The port is built from the manifest's settings at <see cref="OnConfigure"/> time, not at
+    /// construction: a real GPIO line needs the <c>pin</c> setting, which is not known until the
+    /// manifest slice is applied. The builder MUST return a fresh line per call.
+    /// </summary>
+    public DigitalActuatorDriver(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder) =>
+        _portBuilder = portBuilder;
+
+    /// <summary>Convenience for a port that needs no settings (the in-memory simulator line, tests).</summary>
+    public DigitalActuatorDriver(IDigitalOutput output) : this(_ => output) { }
 
     public override string DriverId => "digital_actuator:" + _capability;
     public override string Bus => BusKinds.Gpio;
@@ -157,6 +169,7 @@ public sealed class DigitalActuatorDriver(IDigitalOutput output) : GenericDriver
         _activeHigh = true;
         _descriptor = null;
         _executor = null;
+        _output = null;   // drop any port a prior configuration opened, so a failed reconfigure holds no line
     }
 
     protected override void OnConfigure(IReadOnlyDictionary<string, string> settings, List<string> errors)
@@ -189,6 +202,19 @@ public sealed class DigitalActuatorDriver(IDigitalOutput output) : GenericDriver
         if (errors.Count > 0 || !wellFormed)
             return;
 
+        // Open the hardware port from the manifest settings LAST, once the slice has otherwise
+        // validated. A port that cannot be opened (a bad pin, a busy line, no GPIO on this host) is a
+        // fail-closed refusal — the driver stays Absent and the kernel never acts on an unbacked line.
+        try
+        {
+            _output = _portBuilder(settings);
+        }
+        catch (Exception ex)
+        {
+            errors.Add("could not open the actuator's hardware port: " + ex.Message);
+            return;
+        }
+
         _capability = capability!;
         _descriptor = new CapabilityDescriptor
         {
@@ -204,7 +230,18 @@ public sealed class DigitalActuatorDriver(IDigitalOutput output) : GenericDriver
         _output.Write(!_activeHigh);   // start in the safe (inactive) level
     }
 
-    public override void EnterSafeState() => _output.Write(!_activeHigh);
+    // Null-guarded: an unconfigured or failed driver has no line to make safe, and being asked to
+    // enter safe state must never itself throw.
+    public override void EnterSafeState() => _output?.Write(!_activeHigh);
+
+    /// <summary>Drive to the safe level, swallowing any port error — a last-resort de-energize that
+    /// must never itself throw. A real port write can fail (a yanked line, a transient sysfs error);
+    /// this is the most we can do in-band, and the outcome is reported as a fault regardless.</summary>
+    private void DriveSafeBestEffort()
+    {
+        try { _output?.Write(!_activeHigh); }
+        catch { /* the line is not controllable; the fault outcome carries that upward */ }
+    }
 
     private sealed class Executor(DigitalActuatorDriver driver) : ICapabilityExecutor
     {
@@ -223,8 +260,32 @@ public sealed class DigitalActuatorDriver(IDigitalOutput output) : GenericDriver
 
             // Drive active, then back to safe within the one execution: never leave the line hot
             // relying on a later EnterSafeState. A real timed driver holds for on_s; this does not.
-            driver._output.Write(driver._activeHigh);
-            driver._output.Write(!driver._activeHigh);
+            // The executor exists only while Health is Healthy, which is exactly when _output is set.
+            //
+            // A real GPIO write can THROW (an in-memory line never did). Both writes are guarded so a
+            // failure never leaves a physical line latched hot with an exception sailing past: if the
+            // energize fails nothing was actuated; if the RELEASE fails — the dangerous case — we make
+            // one more best-effort attempt to drive safe and return a fault, never propagate with the
+            // line possibly still active.
+            try
+            {
+                driver._output!.Write(driver._activeHigh);
+            }
+            catch (Exception ex)
+            {
+                driver.DriveSafeBestEffort();
+                return ExecutionOutcome.Fault("actuator could not drive its line active: " + ex.Message);
+            }
+
+            try
+            {
+                driver._output!.Write(!driver._activeHigh);
+            }
+            catch (Exception ex)
+            {
+                driver.DriveSafeBestEffort();
+                return ExecutionOutcome.Fault("actuator could not release its line after actuating: " + ex.Message);
+            }
 
             // No evidence: a command is not evidence. A separate sensor device confirms the effect,
             // or the outcome stays unverified. That is the gate doing its job, not a gap here.
@@ -304,19 +365,52 @@ public sealed class AnalogSensorDriver(IAnalogInput input) : GenericDriverBase
 }
 
 /// <summary>
-/// Builds <see cref="DigitalActuatorDriver"/> instances. Each gets a fresh output line from the
-/// injected port factory — an in-memory line in the simulator and tests, a real GPIO line in the
-/// hardware slice — so this one factory serves every digital actuator a manifest declares.
-/// The port factory MUST return a new port per call (as the parameterless default does); a factory
-/// that captures a single shared instance would wire every actuator to one line.
+/// Builds <see cref="DigitalActuatorDriver"/> instances. Each driver opens its output line from the
+/// manifest settings at configure time via the injected <em>port builder</em> — an in-memory line in
+/// the simulator and tests, a real GPIO line (<see cref="SysfsDigitalOutput"/>) on a device — so this
+/// one factory serves every digital actuator a manifest declares.
+///
+/// <para>The port builder MUST return a NEW port per call: the driver calls it once each time its
+/// slice is (re)configured, and a builder that captured a single shared instance would wire every
+/// actuator to one line. The settings-taking overload is what lets a real port read its <c>pin</c>
+/// (or bus address) from the manifest; the settings-free overloads ignore the settings.</para>
 /// </summary>
-public sealed class DigitalActuatorFactory(Func<IDigitalOutput> portFactory) : IDriverFactory
+public sealed class DigitalActuatorFactory(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder) : IDriverFactory
 {
     /// <summary>Defaults to a fresh in-memory line per driver, for the simulator and tests.</summary>
-    public DigitalActuatorFactory() : this(() => new InMemoryDigitalOutput()) { }
+    public DigitalActuatorFactory() : this(_ => new InMemoryDigitalOutput()) { }
+
+    /// <summary>A settings-free port factory (e.g. a fixed fake line), adapted to the builder shape.</summary>
+    public DigitalActuatorFactory(Func<IDigitalOutput> portFactory) : this(_ => portFactory()) { }
 
     public string DriverType => "digital_actuator";
-    public IDriver Create() => new DigitalActuatorDriver(portFactory());
+    public IDriver Create() => new DigitalActuatorDriver(portBuilder);
+}
+
+/// <summary>
+/// The hardware-backed digital-actuator factory: it builds each actuator over a real Linux GPIO line
+/// (<see cref="SysfsDigitalOutput"/>), reading the line's <c>pin</c> from the manifest settings. This
+/// is the factory a device's driver registry uses in place of <see cref="DigitalActuatorFactory"/>'s
+/// in-memory default; the driver kind (<c>digital_actuator</c>) and every capability, limit, and
+/// polarity setting are identical — only the port backing changes.
+///
+/// <para>The sysfs root is injectable so the pin-parsing and file protocol can be exercised against a
+/// fake tree; on a device it defaults to <c>/sys/class/gpio</c>. A missing or non-integer <c>pin</c>
+/// throws at open time, which the driver turns into a fail-closed configuration refusal.</para>
+/// </summary>
+public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/gpio") : IDriverFactory
+{
+    private readonly DigitalActuatorFactory _inner = new(settings =>
+    {
+        if (!settings.TryGetValue("pin", out var raw) || string.IsNullOrWhiteSpace(raw))
+            throw new ArgumentException("a sysfs digital actuator requires a 'pin' setting");
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pin))
+            throw new ArgumentException($"'pin' is not an integer: '{raw}'");
+        return new SysfsDigitalOutput(pin, sysfsRoot);
+    });
+
+    public string DriverType => _inner.DriverType;
+    public IDriver Create() => _inner.Create();
 }
 
 /// <summary>

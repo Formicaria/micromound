@@ -12,6 +12,62 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.8 — the first real driver port (Linux GPIO over sysfs)
+
+The M4 slice that gives the generic digital actuator a *real* line to drive: `SysfsDigitalOutput`,
+a Linux GPIO output over `/sys/class/gpio`, and a hardware factory that opens it from the manifest's
+`pin`. Until now every actuator ran on an in-memory line — the simulator's world. This is the first
+port that toggles a real pin. It is **substrate, not the milestone**: the value writes themselves
+must still be verified on a physical board, so this is a `v0.9.x` slice, not `v0.10.0`.
+
+### Added
+
+- **`SysfsDigitalOutput`** (`Micromound.Drivers`, implementing `IDigitalOutput`): a GPIO output line
+  over the sysfs file protocol — write the pin to `export` to claim it, `out` to its `direction`,
+  `1`/`0` to its `value`; `Dispose` writes it to `unexport`. The sysfs root is injectable, so the
+  file protocol is exercised against a fake tree with no hardware. An already-exported pin (a prior
+  run that did not release it) is reused, not treated as an error. It is polarity-agnostic — it
+  writes the logical level it is handed; the driver above owns active-high/low.
+- **`SysfsDigitalActuatorFactory`** (`Micromound.Drivers`): builds the generic digital actuator over
+  a real GPIO line, reading the line's `pin` from the manifest settings. Same driver kind
+  (`digital_actuator`), same capabilities, limits, class, and polarity — **only the port backing
+  changes** from the in-memory default. This is the factory a device's registry substitutes for
+  `DigitalActuatorFactory` on real hardware.
+- **The digital actuator now opens its port at configure time from the manifest**, not at
+  construction — a real line needs the `pin` setting, which is only known when the manifest slice is
+  applied. `DigitalActuatorFactory` gains a settings-keyed port-builder constructor; the settings-free
+  constructors (in-memory default, fixed test line) are unchanged.
+
+### Authority / safety
+
+- **Opening the port is fail-closed and is done last.** A missing or non-integer `pin`, a busy line,
+  or no GPIO on the host makes the driver refuse configuration and stay `Absent` — the kernel never
+  acts on an unbacked line, and a half-validated slice never opens hardware.
+- **The momentary pulse is now fail-safe against a *throwing* port.** An in-memory line never failed
+  a write; a real sysfs write can. Both writes of the drive-active-then-release pulse are guarded: if
+  the energize fails, nothing was actuated; if the **release** fails — the dangerous case — the driver
+  re-attempts a best-effort drive to safe and returns a **fault**, so a physical line is never left
+  latched hot with an exception sailing past. (The kernel already turns a thrown executor exception
+  into a fault, but catching the exception does not de-energize the line; this does.)
+- **Still momentary, by design.** Without a hardware scheduler the pulse drives active then back to
+  safe within one execution rather than latching a line hot that only a later `EnterSafeState` could
+  clear. On a real board this is a near-instantaneous pulse: **a valve or heater needs the timed-hold
+  driver (a later slice) to actually actuate for a duration.** The effective `on_s` is required and
+  recorded, never defaulted.
+- **No wire change, no new refusal reason, no authority widened.** This is a new hardware backing
+  behind an existing seam; canonical bytes, envelopes, and the refusal enum are untouched.
+
+### Notes
+
+- sysfs GPIO is deprecated in favour of the libgpiod character device, and the kernel creates a pin's
+  directory *asynchronously* after `export`. This slice keeps the file protocol simple and testable;
+  a **libgpiod (chardev) backing, export-settle retries, and the timed-hold driver** are follow-ups,
+  and the value writes here **must be verified on real hardware**.
+- The analog/ADC input's real port (I2C, chip-specific) is the remaining driver-port work and is a
+  separate follow-up. `v0.10.0` stays reserved for the host running on a device against real hardware.
+
+---
+
 ## v0.9.7 — device enrollment
 
 The M4 slice that completes the live controller link: a mound presents its one-time, operator-minted
