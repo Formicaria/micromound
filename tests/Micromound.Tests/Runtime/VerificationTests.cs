@@ -355,8 +355,15 @@ public class VerificationTests
         var missionWrites = store.Writes
             .Where(w => w.Key == "cache:" + MissionCheckpoint.Key).Select(w => w.Value).ToList();
 
-        Assert.Contains(missionWrites, v => v.Contains("\"actuation_in_flight\":\"water\""));  // intent
-        Assert.False(store.TryGet("cache:" + MissionCheckpoint.Key, out _));                    // cleared by Finish
+        Assert.Contains(missionWrites, v => v.Contains("\"actuation_in_flight\":\"water\""));   // intent persisted
+        Assert.DoesNotContain("\"actuation_in_flight\":\"water\"", missionWrites[^1]);           // result persisted: in-flight cleared after the record
+
+        // Execute no longer deletes the checkpoint — the checkpoint (intent) is cleared only after
+        // the terminal report (result) is durably queued, by whoever publishes it. So after a raw
+        // Execute the checkpoint still stands; ClearMissionCheckpoint is the explicit clear.
+        Assert.True(store.TryGet("cache:" + MissionCheckpoint.Key, out _));
+        major.ClearMissionCheckpoint();
+        Assert.False(store.TryGet("cache:" + MissionCheckpoint.Key, out _));
     }
 
     /// <summary>An <see cref="IStateStore"/> that remembers every write, so a write a later delete hides is still provable.</summary>

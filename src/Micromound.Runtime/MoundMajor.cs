@@ -68,6 +68,14 @@ public interface IMoundMajor
 
     /// <summary>Cease actuation, enter the declared safe state, keep sensing and syncing.</summary>
     void Stop();
+
+    /// <summary>
+    /// Clear the durable in-flight mission checkpoint. Called by whoever publishes a mission's
+    /// terminal report, immediately AFTER that report is durably queued — so on a durable store a
+    /// crash between the two re-reports the mission on the next restart rather than losing the
+    /// record. A no-op when no checkpoint is present. Never called mid-mission.
+    /// </summary>
+    void ClearMissionCheckpoint();
 }
 
 /// <summary>

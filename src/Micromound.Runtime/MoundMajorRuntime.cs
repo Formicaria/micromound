@@ -108,8 +108,10 @@ public sealed class MoundMajor : IMoundMajor
     {
         var startedAt = now;
 
-        // Checkpoint the mission before it runs; every exit funnels through Finish, which clears
-        // it. A process death mid-mission — the one path that does NOT reach Finish — leaves the
+        // Checkpoint the mission before it runs. It is cleared only once this mission's terminal
+        // report is durably queued — by whoever publishes it, via ClearMissionCheckpoint, never by
+        // Finish — so the result is persisted before the intent is dropped. A process death
+        // mid-mission (before any report) or in the narrow window before that clear leaves the
         // checkpoint behind, and RecoverMission turns it into a reported outcome rather than a
         // mission the controller simply never hears about again.
         var cache = Workers.All.OfType<ICacheAnt>().FirstOrDefault();
@@ -499,11 +501,11 @@ public sealed class MoundMajor : IMoundMajor
     private MissionReport Finish(MissionReport report, string state, string detail,
         DateTimeOffset now)
     {
-        // The single exit funnel, so the single place the in-flight checkpoint is cleared: a
-        // mission that reached here finished — completed, refused, stopped, quiesced, recovered,
-        // whatever — and is no longer in flight. Only a death that never reaches Finish leaves it.
-        Workers.All.OfType<ICacheAnt>().FirstOrDefault()?.Delete(MissionCheckpoint.Key);
-
+        // The single exit funnel that finalizes the report. It does NOT clear the durable
+        // checkpoint: the checkpoint is the intent, the report is the result, and on a durable
+        // store the result must be persisted before the intent is cleared. So clearing waits until
+        // whoever publishes this report has durably queued it, and then calls ClearMissionCheckpoint
+        // — a crash in between re-reports the mission rather than losing it. See that method.
         report.State = state;
         report.EndedAt = now.ToWire();
         if (!string.IsNullOrEmpty(detail))
@@ -512,12 +514,36 @@ public sealed class MoundMajor : IMoundMajor
     }
 
     /// <summary>
+    /// Clear the durable in-flight checkpoint, once its mission's terminal report is durably queued.
+    /// Deliberately separate from <see cref="Finish"/>: report-then-clear is the intent→execute→
+    /// result discipline applied to the mission as a whole, so a crash between the durable report
+    /// and this clear re-reports on the next restart instead of dropping the record. A no-op when no
+    /// checkpoint is present, so every non-mission and refused-before-checkpoint path is safe to call.
+    ///
+    /// <para>Two properties the caller owns. (1) <b>The queue and the checkpoint must share one
+    /// durable store.</b> "Report durable before checkpoint cleared" only holds if the uplink queue
+    /// the report is published to and the cache this checkpoint lives in are backed by the same
+    /// durable store — wire both on the same <c>FileStateStore</c>, or the clear races a
+    /// not-yet-durable report. (2) <b>Terminal reports are at-least-once, idempotent by
+    /// mission_id.</b> A crash in the narrow window after a report is queued but before this clear
+    /// makes the next restart re-report the mission; for a mission that had completed, that recovery
+    /// report is a <c>failed</c>/interrupted one, so the controller can hold both a completed and a
+    /// failed terminal report for one mission_id. The upstream contract resolves it: a terminal
+    /// report is idempotent by mission_id and a completed one is authoritative over a later recovery
+    /// report — never the other way round.</para>
+    /// </summary>
+    public void ClearMissionCheckpoint() =>
+        Workers.All.OfType<ICacheAnt>().FirstOrDefault()?.Delete(MissionCheckpoint.Key);
+
+    /// <summary>
     /// The recovery decision, made once, deterministically, when a restart finds a mission the last
     /// run never finished. It never re-dispatches a step — the synchronous runtime cannot replay
     /// half-run physical work — and it never invents authority or evidence. It reads the restored
     /// authority in the same downward-resolving order a fresh mission faces, and produces a report
-    /// the controller can audit. The checkpoint is cleared here (via Finish) so a second restart
-    /// does not report the same interruption twice.
+    /// the controller can audit. It does NOT clear the checkpoint: the caller clears it (via
+    /// <see cref="ClearMissionCheckpoint"/>) only after this report is durably queued, so a second
+    /// restart does not report the same interruption twice — a restore loop that recovers but never
+    /// clears would re-report the same interruption on every restart, so the clear is mandatory.
     ///
     /// The outcomes, in order:
     /// <list type="bullet">

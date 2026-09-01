@@ -346,6 +346,66 @@ public class EndToEndTests
     }
 
     [Fact]
+    public void A_mid_actuation_restart_over_a_real_disk_store_recovers_without_replay_and_de_energizes()
+    {
+        // The whole v0.9.1 recovery contract, but across a genuine on-disk restart: the interrupted
+        // mission is persisted by one FileStateStore instance and recovered by a brand-new instance
+        // over the same directory — two processes sharing a disk, which is exactly what a reboot is.
+        var dir = Path.Combine(Path.GetTempPath(), "mm-e2e-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var controller = new SimController();
+
+            var origin = new SimMound("mm-disk-01")
+            {
+                Store = new FileStateStore(dir),
+                DeviceCapabilities = new HashSet<string>(StringComparer.Ordinal) { Soil, "sense.temperature", Valve },
+                FirmwareLimits = new Dictionary<string, CapabilityLimits>(StringComparer.Ordinal)
+                {
+                    [Valve] = new CapabilityLimits { MaxOnSeconds = 30, MinOffSeconds = 300, MaxRatePerHour = 6 }
+                }
+            };
+            origin.ConnectTo(controller);
+            origin.Sensor(Soil).Reading = 17;
+
+            var charter = Charter(Now);
+            charter.MoundId = "mm-disk-01";
+            controller.IssueCharter(charter, Now);
+            origin.Sync(Now);
+
+            // A mission caught mid-actuation, its checkpoint written to disk, then the process dies.
+            var checkpoint = MissionCheckpoint.Of(Watering(Now), Now);
+            checkpoint.ActuationInFlight = "water";
+            origin.Cache.Save(MissionCheckpoint.Key, checkpoint);
+
+            // Reborn: a new mound, a new FileStateStore, the same directory — a real restart.
+            var reborn = new SimMound("mm-disk-01")
+            {
+                Keys = origin.Keys,
+                Store = new FileStateStore(dir),
+                DeviceCapabilities = origin.DeviceCapabilities,
+                FirmwareLimits = origin.FirmwareLimits
+            };
+            reborn.Restore(Now.AddSeconds(30));
+            reborn.ConnectTo(controller);
+            reborn.Sync(Now.AddSeconds(35));
+
+            var report = controller.Account("mm-disk-01").Reports.Last(r => r.MissionId == "ms-e2e");
+            Assert.Equal(MissionStates.Failed, report.State);
+            Assert.Contains("mid-actuation", report.Detail);        // ambiguous, reported honestly
+            Assert.Equal(0, reborn.Relay(Valve).Actuations);        // never replayed
+            Assert.True(reborn.Relay(Valve).SafeStateEntries > 0);  // cold start de-energized it
+
+            // The checkpoint was cleared on disk — but only after the report was durably queued.
+            Assert.False(new FileStateStore(dir).TryGet("cache:" + MissionCheckpoint.Key, out _));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    [Fact]
     public void Tampered_uplink_is_dropped_audited_and_never_acknowledged()
     {
         _controller.IssueCharter(Charter(Now), Now);

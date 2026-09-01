@@ -449,9 +449,12 @@ public sealed class RunnerAnt : IRunnerAnt
 
                     // The coordinator executes; the Runner only reports what it said. The report
                     // goes up whatever the verdict was — a refused mission is reported exactly
-                    // like a completed one.
+                    // like a completed one. The durable in-flight checkpoint is cleared only AFTER
+                    // the report is queued (Publish enqueues to the durable uplink), so a crash
+                    // between the two re-reports the mission rather than losing it.
                     var report = _mound.Execute(mission, now);
                     Publish(EnvelopeKinds.MissionReport, report, now);
+                    _mound.ClearMissionCheckpoint();
                     break;
                 }
 

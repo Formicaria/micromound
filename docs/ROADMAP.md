@@ -14,7 +14,7 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 | **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
 | **M2** — The six default ants | **Done at `v0.6.0`** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
 | **M3** — Evidence, offline state, and sync | **Done at `v0.9.1`** | Evidence correlation, durable offline state, reconnect and backlog synchronization. Shipped: `mission`/`mission_report` golden pins (`v0.7.0`); confirming-reading temporal correlation (`v0.8.0`); evidence spill/backpressure policy (`v0.9.0`); durable in-flight mission semantics — a restart never repeats, resumes, or fabricates the outcome of physical work it cannot prove finished (`v0.9.1`). The *semantics* are complete and proven on the in-memory/sim store; the *disk* backing for both durable state and the evidence store is deferred to M4, where the real host lands, and is a storage substrate change, not an M3 rule change. |
-| **M4** — The Linux/Pi host and first real drivers | Planned (next) | The headless `Micromound.Host` daemon made runnable, SQLite-backed durable state, a strong declarative hardware manifest, generic driver *primitives* (digital I/O, analog, binary/proportional/position/velocity actuators), device/capability composition from the manifest, service lifecycle, watchdog, host-owned safe-state de-energizing on stop/quiesce/expiry/fault/shutdown, and — because the state store is finally durable — two ordering duties the sim leaves as no-ops: cold-start de-energizing to the mission checkpoint's `safe_state`, and persisting a terminal mission report *before* clearing its checkpoint so a crash between the two re-reports rather than losing the record (the audit-record analogue of the v0.9.1 no-replay rule) |
+| **M4** — The Linux/Pi host and first real drivers | **Begun at `v0.9.2`** | Started with the durable state substrate: a **file-backed `IStateStore`** (atomic per-key writes, restart-survivable, behind the existing seam) so operational state survives on real disk (`v0.9.2`). With the store durable, the two ordering duties `v0.9.1` left as no-ops are now met and tested: a terminal mission report is persisted **before** its checkpoint is cleared (a crash between the two re-reports rather than losing the record), and a cold start de-energizes actuators to the declared safe state. **Remaining:** the headless `Micromound.Host` daemon made runnable, manifest-driven **generic driver *primitives*** (digital I/O, analog, binary/proportional/position/velocity actuators), device/capability composition from the manifest, service lifecycle, watchdog, and host-owned safe-state de-energizing on stop/quiesce/expiry/fault/shutdown. `v0.10.0` is reserved for that boundary — the host running on a real device — not the internal substrate slices that lead to it. (A relational store like SQLite is deliberately *not* used: the `IStateStore` contract is a narrow string-keyed document store, and its own design note calls for a directory of files rather than a database.) |
 | **M5** — Constrained controller firmware | Planned | ESP32 reduced controller (`firmware/esp32`, currently a placeholder) implementing the same protocol and capability kernel in C, verified byte-for-byte against the golden fixtures, over a compact versioned Pi↔ESP32 packet protocol |
 | **Acceptance** — Generic Physical Mound | Criteria, not a code milestone | The end-to-end proof on a minimal real bench that a fresh mound boots its default colony, is configured and chartered from upstream, moves generic hardware through the kernel, verifies with independent evidence, survives disconnect/reboot/lease-expiry safely, and synchronizes an auditable history back. See [The target](#the-target-a-generic-physical-mound). |
 | **M6** — Optional reasoning | Planned (last) | The reasoning provider interface wired in — only after deterministic execution is mature. Never on the physical authority path. |
@@ -38,10 +38,13 @@ Six questions this document should answer at a glance:
    policy (`v0.9.0`), and durable across a restart mid-mission — a reboot never repeats, resumes,
    or fabricates the outcome of physical work it cannot prove finished (`v0.9.1`). What M3 does
    **not** include is the disk substrate under those semantics: durable state and the evidence
-   store are proven in memory and in the simulator, and their SQLite backing lands with M4's host.
-3. **What must exist before real hardware can move?** M4 — a runnable `Micromound.Host`, durable
-   state on disk, a declarative hardware manifest, and generic driver *primitives*. Nothing turns
-   a physical output on until this lands, because the host is what de-energizes it on stop.
+   store were proven in memory and in the simulator, and their disk backing (a directory of files,
+   not a database) belongs to M4.
+3. **What must exist before real hardware can move?** M4, now **begun at `v0.9.2`** with the durable
+   file-backed state store (operational state survives a restart on real disk, and the terminal
+   report is persisted before its checkpoint is cleared). Still remaining: a runnable
+   `Micromound.Host`, a declarative hardware manifest, and generic driver *primitives*. Nothing turns
+   a physical output on until those land, because the host is what de-energizes it on stop.
 4. **What comes immediately after that?** M5 — the ESP32 as a subordinate deterministic controller
    speaking a compact Pi↔ESP32 protocol, running the same kernel in C, byte-verified against the
    golden fixtures. Not a second colony.
@@ -84,9 +87,10 @@ M3 was taken in slices, each a coherent release that preserved all prior behavio
 `v0.9.1`.** Its closure condition was: the record a mound produces survives and travels correctly —
 pinned on the wire, verified only by evidence that followed the act, bounded in storage without
 silent loss, and durable across a restart mid-mission — all proven end to end against
-`Micromound.Sim`, with no v0 canonical-byte change. The one thing deliberately **left to M4** is the
-persistent-disk substrate beneath those semantics (SQLite-backed state and evidence); that is a
-storage-engine change, not a rule change, so it does not hold M3 open.
+`Micromound.Sim`, with no v0 canonical-byte change. The one thing deliberately **left to M4** was the
+persistent-disk substrate beneath those semantics (file-backed durable state, and the evidence
+store's disk backing); that is a storage-engine change, not a rule change, so it did not hold M3
+open. The durable state half of it has since landed at `v0.9.2`, the first M4 slice.
 
 - **`v0.7.0` — the record is pinned.** `mission` and `mission_report` joined the golden fixtures
   (bare bodies and the canonical-envelope chain) with round-trip agreement tests, closing the gap
@@ -224,8 +228,9 @@ M2 is being taken in two halves, split where the seam actually is.
   oldest-first past the hard ceiling, and every spill is counted and rides the wire as
   `spilled_unacked_items` (a sibling of `evicted_acked_items`) so the loss is never silent. A mound
   offline for a week now bounds its storage and reports exactly what the gap cost. What remains for
-  M4 is the *disk* backing — the policy is proven on the in-memory store; SQLite-backed durability
-  lands with the real host.
+  M4 is the evidence store's *disk* backing — the policy is proven on the in-memory store; the
+  durable file-backed state store landed at `v0.9.2`, and the evidence store's disk backing follows
+  on the same file substrate with the real host.
 - **Downlink is signature-verified but not hash-chained.** The uplink stream is chained per
   PROTOCOL.md §6; downlink relies on signatures alone, and each side deduplicates by envelope id.
   Deliberate — a controller fans out to many mounds and a per-mound downlink chain buys little —

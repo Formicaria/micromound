@@ -12,6 +12,66 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.2 — operational state survives on real disk
+
+The first M4 substrate slice: MICROMOUND's durable state finally has a disk backing, so a restart
+recovers from a file on disk rather than only from state a test kept in memory. No new capability,
+no runnable device host yet — this is the foundation the M4 host will stand on, landed and proven
+behind the existing persistence seam.
+
+### Added
+
+- **`FileStateStore` — the durable `IStateStore`.** One file per key under a state directory,
+  exactly the "directory of files on a Pi" the `IStateStore` contract describes — no database, no
+  schema, the same three operations the in-memory store offers, backed by disk. Each `Put` is
+  atomic per key: the value is written to a uniquely named temporary file, flushed, then moved over
+  the destination in a single filesystem rename, so a crash never leaves a torn value; orphaned
+  temporaries from an interrupted write are swept on open and never read. Keys that carry
+  filesystem-reserved characters (`cache:mission`, queue keys) are reversibly percent-encoded to
+  safe filenames. A missing key is "absent" (restores to observe-only); a file that exists but
+  cannot be read is a real fault and propagates rather than masquerading as absent.
+
+### Changed — durability ordering (the two duties `v0.9.1` deferred to M4)
+
+- **The terminal mission report is now persisted before its checkpoint is cleared.** Previously the
+  Mound Major's `Finish` cleared the in-flight checkpoint itself; on a durable store that ordered
+  the clear *before* the report was queued, so a crash in between could lose the report. `Finish` no
+  longer clears — `ClearMissionCheckpoint()` does, called by whoever publishes the report (the
+  Runner on the downlink path, the composition root locally) immediately **after** the report is
+  durably queued. A crash between the two now re-reports the mission on the next restart rather than
+  losing the record — the audit-record analogue of the `v0.9.1` no-replay rule.
+- **A cold start drives actuators to safe state.** When a restart finds an interrupted mission, the
+  drivers are de-energized to the declared safe state before recovery proceeds — not only is the
+  ambiguous actuation never replayed, the hardware is made safe. (In the simulator the drivers
+  de-energize on `EnterSafeState`; the real host will map the checkpoint's `safe_state` to concrete
+  driver positions.)
+
+### Authority / safety
+
+- **Narrows behavior, never widens it.** No path here grants authority; the changes only make an
+  interrupted mission's outcome more durable and its hardware safer on restart.
+- **No wire change. Canonical bytes unchanged. No refusal reason changed.** `FileStateStore` is
+  local infrastructure behind the `IStateStore` seam; nothing here touches an envelope, and the v0
+  golden fixtures are untouched.
+
+### Notes
+
+- **Terminal mission reports are now at-least-once, idempotent by `mission_id`.** The report-then-
+  clear reorder trades a lost-report window for a re-report one: a crash after a report is durably
+  queued but before its checkpoint is cleared makes the next restart re-report the mission. The
+  upstream contract resolves it — a terminal report is idempotent by `mission_id`, and a `completed`
+  report is authoritative over any later recovery (`failed`/interrupted) report for the same mission.
+  This is the correct trade for an audit trail (never silently drop a record), and it changes no
+  wire bytes.
+- The durability of "report before clear" assumes the uplink queue and the checkpoint's cache share
+  one durable store; the M4 host must wire both on the same `FileStateStore`.
+- Still no runnable device host and no real drivers — the file store is the substrate, not the host.
+  Remaining M4: the runnable `Micromound.Host` daemon, manifest-driven real driver primitives,
+  service lifecycle, and the watchdog. `v0.10.0` is reserved for that boundary (the host running on
+  a device), not these internal substrate slices.
+
+---
+
 ## v0.9.1 — a restart never repeats physical work it cannot prove finished
 
 The cleanup-and-hardening slice that closes M3. A mission interrupted by a restart is now durable:

@@ -271,7 +271,8 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     public MissionReport ExecuteMission(Mission mission, DateTimeOffset now)
     {
         var report = WatchingForSafeState(() => Major.Execute(mission, now));
-        Runner.Publish(EnvelopeKinds.MissionReport, report, now);
+        Runner.Publish(EnvelopeKinds.MissionReport, report, now);   // durable result first
+        Major.ClearMissionCheckpoint();                             // then clear the intent
         Cache.SaveAuthority(Authority);
         return report;
     }
@@ -306,24 +307,28 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
         Cache.TryRestoreAuthority(Authority, now, out var result,
             Kernel.Capabilities.DeclaredCapabilities(), Kernel.Routines.DeclaredRoutines());
 
-        // Authority restored first — a stop or an expired lease is now in force if it was — so the
-        // mission recovery reads the same authority a fresh mission would. A mission the last run
-        // never finished left a checkpoint; the Mound Major decides its outcome deterministically
-        // (it never replays physical work) and the report is queued for the controller, so the
-        // audit trail stays whole across the restart. The M4 host runs this around its own loop, and
-        // additionally de-energizes drivers to the checkpoint's safe_state on a cold start.
+        // Authority is restored first — a stop or an expired lease is now in force if it was — so
+        // mission recovery reads the same authority a fresh mission would, and never replays
+        // physical work. A mission the last run never finished left a checkpoint. Two things follow,
+        // in order (the real M4 host runs this same sequence around its own loop).
         //
-        // Durability ordering, for the M4 host with a real (disk) state store: the terminal report
-        // is the mission's RESULT, and by the same intent->execute->result discipline the checkpoint
-        // (the INTENT) must be cleared only AFTER that report is durably persisted. Here the store is
-        // in-memory, so the order of the two is immaterial and RecoverMission clears the checkpoint
-        // itself via Finish. On a durable store the host must instead persist the report first and
-        // clear the checkpoint after, so that a crash between the two re-reports on the next restart
-        // rather than losing the terminal report — the audit-record analogue of the no-replay rule.
+        // First: on a cold start we cannot prove the physical position of any actuator that mission
+        // may have been driving, so — exactly as the checkpoint's own safe_state records the intent
+        // — the drivers are driven to their safe state before anything else. This is the actuation
+        // analogue of "the ambiguous step is never replayed": not only do we not repeat it, we make
+        // the hardware safe. (On the real M4 host this maps the safe_state name to driver positions;
+        // the simulator's drivers de-energize on EnterSafeState.)
+        //
+        // Second: the checkpoint (the INTENT) is cleared only AFTER the recovery report (the RESULT)
+        // is durably queued — Publish enqueues to the durable uplink — so on a durable store a crash
+        // between the two re-reports the mission on the next restart rather than losing the record.
         if (Cache.TryLoad<MissionCheckpoint>(MissionCheckpoint.Key, out var checkpoint))
         {
-            var report = Major.RecoverMission(checkpoint, now);   // clears the checkpoint via Finish
-            Runner.Publish(EnvelopeKinds.MissionReport, report, now);
+            foreach (var driver in _drivers.Values) driver.EnterSafeState();   // cold-start safe: target checkpoint.SafeState
+
+            var report = Major.RecoverMission(checkpoint, now);
+            Runner.Publish(EnvelopeKinds.MissionReport, report, now);   // durable result first
+            Major.ClearMissionCheckpoint();                            // then clear the intent
         }
 
         return result;
