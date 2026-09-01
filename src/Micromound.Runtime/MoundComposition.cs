@@ -102,7 +102,12 @@ public static class MoundComposition
         var evidenceStore = new InMemoryEvidenceStore(evidenceCapacity, evidenceHardCeiling);
         var queue = new DurableUplinkQueue(store);
         var cache = new CacheAnt(store);
-        var guard = new GuardAnt(guardHeartbeatTimeoutSeconds);
+
+        // The guard's health evidence rides the evidence sink defined below, so a watchdog that forced
+        // safe state can prove afterwards why — SAFETY.md forbids a silent stop. The sink needs the
+        // Runner (built after), so the guard publishes through this holder, assigned once it exists.
+        Action<EvidenceItem>? guardSink = null;
+        var guard = new GuardAnt(guardHeartbeatTimeoutSeconds, item => guardSink?.Invoke(item));
 
         // The Runner is built after the Major, but the Major's action-record sink and the evidence
         // sink both publish through the Runner — so both close over this holder, assigned below.
@@ -129,6 +134,8 @@ public static class MoundComposition
                 },
                 ParseOrNow(item.CapturedAt));
         }
+
+        guardSink = PublishEvidence;   // the guard's health readings now reach the store and the wire
 
         major.Workers.Register(new ScoutAnt(kernel, evidenceStore));
         major.Workers.Register(new ForagerAnt(kernel, evidenceStore));

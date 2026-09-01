@@ -1,40 +1,120 @@
 // Micromound host — the headless Raspberry Pi / Linux daemon.
 //
-// M4 deliverable; see docs/ROADMAP.md. The composition order below is the build order, and it is
-// deliberate: nothing that can move hardware is constructed until the thing that authorizes it
-// exists.
+// Composition order (build order = the order in which authority precedes anything physical):
+//   1. Identity      — load or generate the device Ed25519 keypair (MoundHost.LoadOrCreateIdentity)
+//   2. Manifest      — load and validate the mound manifest, fail closed
+//   3. Bring-up      — MoundHost.Create: resolve drivers, compose over the durable file store, apply
+//   4. Recover       — MoundHost.Restore: recover any mission a prior run left in flight, fail-closed
+//   5. Serve         — MoundService tick loop: heartbeat, sync beat, watchdog; safe shutdown on signal
 //
-//   1. Identity      — load or generate the device Ed25519 keypair from /var/lib/micromound/identity
-//   2. Manifest      — load /etc/micromound/mound.json, validate, fail closed
-//   3. Drivers       — resolve and configure from the manifest's hardware bindings
-//   4. Registries    — register capabilities and routines from what the drivers actually expose
-//   5. Kernel        — CapabilityKernel over those registries; bind executors
-//   6. Evidence      — local store and pending-sync queue
-//   7. Sync          — Runner Ant transport, durable uplink queue, enrollment if unenrolled
-//   8. Reasoning     — NoReasoningProvider unless the manifest configures otherwise
-//   9. Runtime       — Mound Major, worker registry, the six default ants
-//  10. Watchdog      — software heartbeat; on loss, drop actuation into the declared safe state
+// Local layout (operator-configured via --state, default /var/lib/micromound):
+//   <state>/identity/seed   device keypair, owner-only, never transmitted
+//   <state>/state/          durable operational state (charter, mission checkpoint, uplink queue)
 //
-// Local layout:
-//   /etc/micromound/mound.json          bootstrap: identity, controller key, endpoint, hardware
-//   /var/lib/micromound/identity/       device keypair, never transmitted, never exported
-//   /var/lib/micromound/state/          active charter, mission, lease, worker state
-//   /var/lib/micromound/evidence/       local evidence store
-//   /var/lib/micromound/queue/          durable outbound queue
-//
-// The daemon requires no browser and no graphical environment. All user-facing configuration and
-// visualization belongs to the upstream controller — see docs/UPSTREAM.md.
+// A real network transport to the controller, and the timing watchdog's own thread, are the next M4
+// slice; until then the daemon runs offline (the durable queue holds the backlog) and the watchdog
+// is driven by the tick loop. All user-facing configuration and visualization belong to the upstream
+// controller — see docs/UPSTREAM.md.
 
-// The runtime is composable and runnable: MoundHost.Create brings a mound up from a manifest over
-// a durable file store, using the same MoundComposition the simulator does, and runs missions,
-// persists state, and recovers across restarts. What this entry point still lacks is the daemon
-// SERVICE LOOP — a real network transport to the controller, the sync-beat loop, signal-driven
-// graceful shutdown, and the timing watchdog — which is the next M4 slice. Until then a mound is
-// brought up in-process (see MoundHost / the tests), not from this argv-less stub.
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using Micromound.Host;
+using Micromound.Protocol;
 
-Console.Error.WriteLine(
-    "micromound host: the runtime composes and runs from a manifest (MoundHost), but the daemon " +
-    "service loop (network transport, sync beat, signal handling, watchdog) is the next M4 slice. " +
-    "Run Micromound.Sim for the simulated mound; see docs/ROADMAP.md for what lands when.");
+var options = HostArgs.Parse(args);
+if (options is null)
+{
+    Console.Error.WriteLine(
+        "usage: micromound --manifest <path> [--state <dir>] [--interval-s <n>] [--heartbeat-s <n>]\n" +
+        "  --manifest    path to the mound manifest (JSON). required.\n" +
+        "  --state       state root (identity + durable state). default: /var/lib/micromound\n" +
+        "  --interval-s  seconds between service ticks. default: 5\n" +
+        "  --heartbeat-s watchdog heartbeat timeout; 0 disables the timing check. default: 30");
+    return 2;
+}
 
-return 2;
+MoundManifest manifest;
+try
+{
+    var json = File.ReadAllText(options.ManifestPath);
+    manifest = JsonSerializer.Deserialize<MoundManifest>(json, ProtocolJson.Options)
+        ?? throw new InvalidOperationException("manifest deserialized to nothing");
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"micromound: cannot read manifest '{options.ManifestPath}': {ex.Message}");
+    return 2;
+}
+
+MoundHost host;
+MoundService service;
+try
+{
+    var keys = MoundHost.LoadOrCreateIdentity(options.StateDirectory);
+    host = MoundHost.Create(new HostOptions
+    {
+        Keys = keys,
+        Manifest = manifest,
+        StateDirectory = options.StateDirectory,
+        GuardHeartbeatTimeoutSeconds = options.HeartbeatTimeoutSeconds
+    });
+    service = new MoundService(host);
+    host.Restore(DateTimeOffset.UtcNow);   // recover any mission a prior run left in flight
+}
+catch (HostStartupException ex)
+{
+    // Fail closed: a mound that cannot come up safely does not come up at all.
+    Console.Error.WriteLine($"micromound: bring-up refused (fail-closed): {ex.Message}");
+    return 1;
+}
+
+Console.WriteLine(
+    $"micromound: {host.MoundId} up, state={host.State}. Running offline until a controller " +
+    "transport is configured; Ctrl-C / SIGTERM to stop safely.");
+
+using var cts = new CancellationTokenSource();
+using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, c => { c.Cancel = true; cts.Cancel(); });
+using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, c => { c.Cancel = true; cts.Cancel(); });
+
+try
+{
+    while (!cts.IsCancellationRequested)
+    {
+        service.Tick(DateTimeOffset.UtcNow);
+        try { await Task.Delay(TimeSpan.FromSeconds(options.IntervalSeconds), cts.Token); }
+        catch (TaskCanceledException) { /* a shutdown signal; fall through to the safe stop */ }
+    }
+}
+finally
+{
+    service.Shutdown(DateTimeOffset.UtcNow);
+    Console.WriteLine("micromound: safe state entered, authority persisted. Stopped.");
+}
+
+return 0;
+
+/// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
+file sealed record HostArgs(string ManifestPath, string StateDirectory, double IntervalSeconds, double HeartbeatTimeoutSeconds)
+{
+    public static HostArgs? Parse(string[] args)
+    {
+        string? manifest = null;
+        var state = Environment.GetEnvironmentVariable("MICROMOUND_STATE") ?? "/var/lib/micromound";
+        var interval = 5.0;
+        var heartbeat = 30.0;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            switch (args[i])
+            {
+                case "--manifest" when i + 1 < args.Length: manifest = args[++i]; break;
+                case "--state" when i + 1 < args.Length: state = args[++i]; break;
+                case "--interval-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var iv) && iv > 0: interval = iv; i++; break;
+                case "--heartbeat-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var hb) && hb >= 0: heartbeat = hb; i++; break;
+                default: return null;   // unknown or malformed argument → usage
+            }
+        }
+
+        return manifest is null ? null : new HostArgs(manifest, state, interval, heartbeat);
+    }
+}

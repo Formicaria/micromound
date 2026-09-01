@@ -63,24 +63,25 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.4
+**Current version:** v0.9.5
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.4`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.5`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
 work it cannot prove finished, a bounded evidence store that says what a gap cost, a **durable
 file-backed state store** so operational state survives a restart on real disk (`v0.9.2`), the
 **driver-resolution seam** turning a manifest's hardware into configured generic driver primitives
-(`v0.9.3`), and — new in `v0.9.4` — a **`MoundHost` that composes and runs a mound from a manifest
-over that store**, using the exact composition the simulator does, so a manifest → generic drivers →
-kernel → ants → mission path runs end to end and recovers across a restart. What's still ahead: the
-host daemon's service loop (a real network transport, the sync-beat loop, signal handling, the
-watchdog) and the real Linux driver ports. End-to-end simulator missions run against an in-process
-controller that verifies every byte. The v0 canonical bytes will not change again inside v0. The
-host does not run on a device yet — that completes M4; real firmware is M5. See
-[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+(`v0.9.3`), a **`MoundHost`** that composes and runs a mound from a manifest over that store
+(`v0.9.4`), and — new in `v0.9.5` — a **runnable daemon**: a service lifecycle (heartbeat, sync beat,
+watchdog, and a graceful safe shutdown) plus a real `micromound` entry point that brings a mound up
+from a manifest and runs it, where a safety trip escalates to a stop that survives a reboot. What's
+still ahead: a real network transport to the controller and the real Linux driver ports. End-to-end
+simulator missions run against an in-process controller that verifies every byte. The v0 canonical
+bytes will not change again inside v0. The host does not talk to a controller over a network yet, and
+runs against generic driver primitives, not real hardware — those complete M4; real firmware is M5.
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real

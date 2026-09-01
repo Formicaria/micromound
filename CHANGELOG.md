@@ -12,6 +12,55 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.5 — a runnable daemon with a safe lifecycle
+
+The M4 slice that turns the composable host into a running service: a heartbeat-and-sync loop, a
+watchdog that responds physically, and a graceful, safe shutdown — plus a real `micromound` entry
+point that brings a mound up from a manifest and runs it. A real network transport and real hardware
+ports are still ahead; this is the lifecycle around them.
+
+### Added
+
+- **`MoundService` — the service lifecycle.** `Tick(now)` marks the runtime alive, runs a sync beat,
+  refreshes the watchdog, and responds to it; `Shutdown(now)` drives every actuator to safe state and
+  persists authority. It is clock-driven (the caller passes the time) so the loop's safety behaviour
+  is deterministic and testable without a real timer.
+- **A real daemon entry point.** `micromound --manifest <path> [--state <dir>] [--interval-s n]
+  [--heartbeat-s n]` loads the device identity, loads and validates the manifest, brings the mound up
+  (`MoundHost`), recovers any interrupted mission, then runs the tick loop until SIGINT/SIGTERM, on
+  which it shuts down safely. Fails closed: bad arguments or an unreadable manifest exit non-zero, and
+  a mound that cannot come up safely does not come up.
+- Watchdog and lifecycle accessors on `MoundHost` (`Guard`, `Beat`, `PollHealth`, `EnterSafeState`,
+  `Stop`, `PersistAuthority`), and `IGuardAnt.HasTrip` to distinguish a sticky trip from a self-healing
+  stale heartbeat.
+
+### Authority / safety
+
+- **A safety trip survives a reboot.** A sticky trip (interlock, thermal cut-out) lived only in memory;
+  a graceful restart would have cleared it and re-enabled actuation. The service now **escalates a trip
+  to a persisted stop** — de-energized and durably halted — and a restart never clears a stop, so the
+  mound comes back up stopped until the controller intervenes. A stale heartbeat is self-healing and is
+  *not* escalated: its protection is the kernel refusing every actuation while the beat is stale.
+- **De-energize failures are not silent.** A driver that throws while being made safe is isolated so
+  the others still de-energize, but the failure is recorded as a sticky safety trip and written to
+  stderr, rather than leaving an output possibly energized with no record (SAFETY.md).
+- **The watchdog's safe-state entry rides the wire.** The guard's health readings are now wired to the
+  evidence sink, so a mound that forced safe state can prove afterwards why.
+- **No wire change. Canonical bytes unchanged. No refusal reason changed. No authority widened.** The
+  slice adds a service loop and a daemon entry point over the existing seams.
+
+### Notes
+
+- Within a running loop the watchdog's *physical* response fires on a sticky trip; the stale-heartbeat
+  guarantee is the kernel's per-actuation refusal. A dedicated watchdog thread that de-energizes a loop
+  that has *hung* mid-tick is deferred to the transport slice, and the code says so rather than
+  over-claiming it.
+- Remaining M4: a real network transport to the controller (the daemon runs offline until then, the
+  durable queue holding the backlog), and the real Linux driver ports (GPIO/ADC) behind the generic
+  primitives. `v0.10.0` is reserved for the host running on a device against real hardware.
+
+---
+
 ## v0.9.4 — the host composes and runs a mound from a manifest
 
 The M4 slice that ties the substrate together: one shared composition, and a `MoundHost` that brings

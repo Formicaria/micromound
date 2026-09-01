@@ -164,6 +164,9 @@ public sealed class GuardAnt : IGuardAnt
     /// <summary>True when the mound must not actuate. Reflects the most recent <see cref="Poll"/>.</summary>
     public bool SafeStateRequired => _heartbeatStale || _trips.Count > 0;
 
+    /// <summary>True when a sticky safety trip is in force — as opposed to a self-healing stale heartbeat.</summary>
+    public bool HasTrip => _trips.Count > 0;
+
     /// <summary>Why, in words, for the record that refuses the work. Empty when nothing is wrong.</summary>
     public string Reason =>
         _trips.Count > 0
