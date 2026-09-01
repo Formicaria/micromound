@@ -15,7 +15,7 @@ namespace Micromound.Sim;
 /// leave that layer's contract (configure fails closed, health is reported not repaired, safe
 /// state is a driver duty) exercised by nothing until real hardware arrives to find the bugs.
 /// </summary>
-public abstract class SimDriverBase : IDriver
+public abstract class SimDriverBase : IDriver, IEvidenceSource
 {
     private readonly List<string> _configurationErrors = [];
 

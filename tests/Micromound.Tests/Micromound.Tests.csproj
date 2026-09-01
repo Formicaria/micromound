@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\Micromound.Runtime\Micromound.Runtime.csproj" />
     <ProjectReference Include="..\..\src\Micromound.Sync\Micromound.Sync.csproj" />
     <ProjectReference Include="..\..\src\Micromound.Sim\Micromound.Sim.csproj" />
+    <ProjectReference Include="..\..\src\Micromound.Host\Micromound.Host.csproj" />
   </ItemGroup>
 
 </Project>

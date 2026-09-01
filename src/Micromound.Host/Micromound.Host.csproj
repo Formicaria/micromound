@@ -10,6 +10,10 @@
   <ItemGroup>
     <ProjectReference Include="..\Micromound.Runtime\Micromound.Runtime.csproj" />
     <ProjectReference Include="..\Micromound.Drivers\Micromound.Drivers.csproj" />
+    <ProjectReference Include="..\Micromound.Crypto\Micromound.Crypto.csproj" />
+    <ProjectReference Include="..\Micromound.Sync\Micromound.Sync.csproj" />
+    <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
   </ItemGroup>
 
 </Project>
