@@ -12,6 +12,52 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.7 — device enrollment
+
+The M4 slice that completes the live controller link: a mound presents its one-time, operator-minted
+token, receives the controller's public key, and persists it — so it can from then on *verify*
+downlink, not just POST uplink (PROTOCOL.md §3). The real Linux driver ports are what remain.
+
+### Added
+
+- **`HttpEnrollmentClient`** (`Micromound.Host`, implementing `IEnrollmentClient`): POSTs the token,
+  the device public key, its hardware profile, and tier to `<controller>/micromound/v0/enroll` and
+  reads back the controller's public key. A **4xx is a definite refusal** (burned or unknown token —
+  no retry); a 5xx or an unreachable controller is transient ("not enrolled yet"); nothing throws.
+- **`MoundHost.ResolveControllerKeys`**: loads the controller key from a prior enrollment
+  (`<state>/controller.pub`), or enrolls now with a supplied token and persists the key so later
+  boots skip enrollment. The daemon gains `--enroll-token`; with `--controller` set it resolves the
+  key before bring-up and hands it to the verifier.
+
+### Authority / safety
+
+- **The controller key is validated before it is ever trusted.** A returned key that is the wrong
+  length or all-zero is rejected — it would verify nothing yet, once persisted, block downlink
+  forever (a permanent brick). Validated both in the client and when loading the stored key.
+- **Fail-closed on trust, fail-open on availability.** With no token and no stored key the mound is
+  un-enrolled: it still boots and uplinks, but the verifier holds no controller key, so *unverifiable
+  downlink is dropped* rather than trusted. An enrollment failure degrades to un-enrolled-but-running,
+  never a crash — the enroll step is inside the daemon's fail-closed bring-up, and even a disk write
+  failure leaves the mound enrolled in memory for the boot rather than throwing.
+- **Recoverable.** A corrupt `controller.pub` with a fresh token clears the bad file and re-enrolls,
+  instead of being wedged un-enrolled. The persisted key is flushed to disk so a power cut cannot
+  leave an empty file that reads back as a zero key. The token is a one-time secret: it is never
+  persisted or logged, a burned token is not re-usable, and — per §3.4 — recovery from a lost enroll
+  response (token burned, key never stored) requires an operator to mint a new token; there is no
+  self-service re-key.
+- **Trust boundary unchanged.** Enrollment only teaches the mound which key to trust; downlink is
+  still verified by the Runner exactly as before. **No wire change to signed envelopes; canonical
+  bytes unchanged; no refusal reason changed; no authority widened.**
+
+### Notes
+
+- The enroll exchange is a bare JSON POST (not a signed envelope) because it is the bootstrap that
+  precedes the controller knowing the device key; the token is what authorizes it.
+- Remaining M4: the real **Linux driver ports** (GPIO/ADC over sysfs/libgpiod/I2C/SPI) behind the
+  generic primitives. `v0.10.0` is reserved for the host running on a device against real hardware.
+
+---
+
 ## v0.9.6 — the daemon dials a controller over HTTPS
 
 The M4 slice that lifts the daemon out of offline-only: a real HTTP sync transport so a mound POSTs

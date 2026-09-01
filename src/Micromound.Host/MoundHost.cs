@@ -1,3 +1,4 @@
+using System.Text;
 using Micromound.Capabilities;
 using Micromound.Crypto;
 using Micromound.Drivers;
@@ -272,6 +273,124 @@ public sealed class MoundHost
         {
             SafeDelete(tmp);
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Resolve the controller's public key for downlink verification (PROTOCOL.md §3). If a prior
+    /// enrollment persisted it under <c>&lt;stateDirectory&gt;/controller.pub</c>, load that. Otherwise,
+    /// given an enrollment client and a one-time token, enroll now — present the token and this
+    /// device's public key, receive the controller's key, and persist it so future boots skip
+    /// enrollment (a burned token cannot be reused). With neither a stored key nor a token, the
+    /// mound is not enrolled: it can still POST uplink, but downlink stays unverifiable (and so
+    /// dropped) until it enrolls — which is the safe direction.
+    /// </summary>
+    public static IPublicKeyDirectory ResolveControllerKeys(
+        string stateDirectory, IEnrollmentClient? enrollment, byte[] devicePublicKey, string? token,
+        out bool enrolled, out string detail)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(stateDirectory);
+        ArgumentNullException.ThrowIfNull(devicePublicKey);
+
+        var directory = new InMemoryPublicKeyDirectory();
+        var keyPath = Path.Combine(stateDirectory, "controller.pub");
+
+        if (File.Exists(keyPath))
+        {
+            if (TryLoadControllerKey(keyPath, out var storedKey))
+            {
+                directory.Register(KeyIds.Controller, storedKey);
+                enrolled = true;
+                detail = "controller key loaded from a prior enrollment";
+                return directory;
+            }
+
+            // The stored key is unreadable or malformed — it would verify nothing and, because the
+            // file exists, would block re-enrollment forever. If a fresh token is available, clear it
+            // and enroll again; otherwise stay un-enrolled (downlink unverifiable — the safe state).
+            if (enrollment is null || string.IsNullOrWhiteSpace(token))
+            {
+                enrolled = false;
+                detail = "stored controller key is invalid and no token is available to recover; not enrolled";
+                return directory;
+            }
+            SafeDelete(keyPath);
+        }
+
+        if (enrollment is null || string.IsNullOrWhiteSpace(token))
+        {
+            enrolled = false;
+            detail = "not enrolled: no stored controller key and no enrollment token — downlink cannot be verified yet";
+            return directory;
+        }
+
+        if (!enrollment.TryEnroll(token, devicePublicKey, out var controllerKey, out var enrollDetail))
+        {
+            enrolled = false;
+            detail = enrollDetail;
+            return directory;
+        }
+
+        if (controllerKey.Length != Ed25519KeyPair.PublicKeyLength || Array.TrueForAll(controllerKey, b => b == 0))
+        {
+            enrolled = false;
+            detail = "enrollment returned an invalid controller key; not enrolled";
+            return directory;
+        }
+
+        // Trust the key in memory for this boot regardless of whether persistence succeeds — a disk
+        // problem must not throw past the daemon's fail-closed bring-up. If the write fails, the mound
+        // is enrolled now and re-enrolls next boot (the token is one-time, so recovery needs a new one).
+        directory.Register(KeyIds.Controller, controllerKey);
+        enrolled = true;
+        detail = TryPersistControllerKey(keyPath, controllerKey)
+            ? "enrolled: " + enrollDetail
+            : "enrolled (in memory; controller key could not be persisted — will re-enroll next boot): " + enrollDetail;
+        return directory;
+    }
+
+    private static bool TryLoadControllerKey(string keyPath, out byte[] key)
+    {
+        key = [];
+        try
+        {
+            var candidate = Convert.FromHexString(File.ReadAllText(keyPath).Trim());
+            if (candidate.Length != Ed25519KeyPair.PublicKeyLength || Array.TrueForAll(candidate, b => b == 0))
+                return false;   // wrong length or all-zero — not a usable controller key
+            key = candidate;
+            return true;
+        }
+        catch (Exception ex) when (ex is FormatException or IOException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryPersistControllerKey(string keyPath, byte[] controllerKey)
+    {
+        var tmp = keyPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(keyPath)!);
+            var hex = Encoding.ASCII.GetBytes(Convert.ToHexString(controllerKey).ToLowerInvariant());
+            using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(hex);
+                stream.Flush();
+                stream.Flush(flushToDisk: true);   // the enrollment must survive a power cut
+            }
+            File.Move(tmp, keyPath, overwrite: false);
+            return true;
+        }
+        catch (IOException) when (File.Exists(keyPath))
+        {
+            SafeDelete(tmp);   // a concurrent boot enrolled first; its key stands
+            return true;
+        }
+        catch (Exception)
+        {
+            SafeDelete(tmp);
+            return false;      // in-memory enrollment stands for this boot; caller reports it
         }
     }
 
