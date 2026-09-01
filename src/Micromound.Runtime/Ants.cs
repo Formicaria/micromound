@@ -95,6 +95,16 @@ public interface IGuardAnt : IMoundWorker
     bool SafeStateRequired { get; }
 
     /// <summary>
+    /// True when a sticky safety trip is in force (an interlock, a thermal cut-out) — distinct from a
+    /// self-healing stale heartbeat. A trip must survive a restart, so the service escalates it to a
+    /// persisted stop rather than only de-energizing in memory. Nothing here clears it.
+    /// </summary>
+    bool HasTrip { get; }
+
+    /// <summary>Record an observed safety trip. Sticky by construction; nothing clears it.</summary>
+    void ReportTrip(string source, string detail);
+
+    /// <summary>
     /// Why, in words, for the record that refuses the work. Part of the interface rather than an
     /// implementation detail because SAFETY.md forbids silent anything: "a refusal without a
     /// reason is itself a contract violation". Empty when nothing is wrong.

@@ -71,6 +71,49 @@ public sealed class MoundHost
     /// <summary>The device's public key — safe to publish; the controller enrolls it.</summary>
     public byte[] PublicKey => (byte[])_publicKey.Clone();
 
+    /// <summary>The software watchdog — heartbeat freshness and sticky safety trips.</summary>
+    public GuardAnt Guard => _mound.Guard;
+
+    /// <summary>Mark the runtime alive, on the cadence the service loop drives.</summary>
+    public void Beat(DateTimeOffset now) => Guard.Beat(now);
+
+    /// <summary>Refresh watchdog health (heartbeat staleness) between missions. Returns the health evidence.</summary>
+    public IReadOnlyList<EvidenceItem> PollHealth(DateTimeOffset now) => Guard.Poll(now);
+
+    /// <summary>
+    /// Drive every driver to its declared safe state — the physical half of "enter safe state". The
+    /// software half (refusing actuation) is the kernel's; this is what actually de-energizes hardware.
+    /// A driver that throws while being made safe is isolated so the others still de-energize, but the
+    /// failure is NOT silent (SAFETY.md): it is recorded as a sticky safety trip and written to stderr,
+    /// because a device that cannot be proven safe must be treated as unsafe.
+    /// </summary>
+    public void EnterSafeState()
+    {
+        foreach (var driver in _drivers)
+        {
+            try { driver.EnterSafeState(); }
+            catch (Exception ex)
+            {
+                Guard.ReportTrip("driver:" + driver.DriverId, "failed to enter safe state: " + ex.Message);
+                Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to enter safe state: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Halt actuation and enter the declared safe state — a sticky stop. Unlike a graceful shutdown,
+    /// a stop survives a restart (restart never clears a stop), so it is how a safety trip is made
+    /// durable. Keeps sensing and syncing.
+    /// </summary>
+    public void Stop()
+    {
+        Major.Stop();
+        EnterSafeState();
+    }
+
+    /// <summary>Persist current authority so a restart resumes exactly this state.</summary>
+    public void PersistAuthority() => Cache.SaveAuthority(Authority);
+
     /// <summary>
     /// Bring a mound up from a manifest over a durable file store. Fails closed: on any composition
     /// error nothing is returned and no drivers are left initialized.
