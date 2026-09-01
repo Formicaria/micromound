@@ -12,6 +12,54 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.3 — a manifest resolves to generic drivers
+
+The second M4 substrate slice: the seam that turns a manifest's hardware section into configured
+drivers, plus the first two generic driver primitives. Specialization comes from capabilities and
+settings, not from device-specific driver types — a greenhouse and a rover run the same primitives,
+configured differently. Still no real hardware ports and no runnable host; this is the resolution
+step the host will call.
+
+### Added
+
+- **`IDriverFactory` + `DriverFactoryRegistry`.** A manifest binds a device to a driver-*type* name;
+  a factory creates a fresh instance of that type, which is then handed its own settings to configure.
+  A manifest naming a type this build does not have fails composition rather than being skipped.
+- **`ManifestDriverComposer.Compose`.** Turns a manifest's hardware section into configured drivers,
+  **fail-closed as a whole**: an unknown driver, a setting that will not parse, a malformed capability
+  id, or two devices resolving to the same driver identity discards the *entire* resolution and
+  reports every reason — a mound never comes up half-wired with some hardware silently missing.
+- **Two generic driver primitives.** `DigitalActuatorDriver` (a binary `act.` actuator over an
+  `IDigitalOutput`) and `AnalogSensorDriver` (a `sense.` sensor over an `IAnalogInput`), configured
+  entirely from capabilities and settings. The actuator produces no evidence of its own (a command is
+  not evidence) and is momentary and fail-safe — it never latches a line active relying on a later
+  safe-state call; the sensor's reading is its evidence. IO sits behind a narrow `IDigitalOutput` /
+  `IAnalogInput` seam, backed in-memory here so the primitives' logic is proven with no hardware; real
+  Linux GPIO/ADC ports are a later M4 slice.
+
+### Authority / safety
+
+- **Fails closed on every configuration fault, including the ones a bare prefix check would miss.**
+  A hardware limit that is non-numeric, negative, or `NaN`/`Infinity` is rejected — a `NaN` in the
+  innermost limit tier would otherwise propagate through `Math.Min` and neutralize the device and
+  charter tiers layered under it. A capability id must be well-formed, not merely `act.`/`sense.`
+  prefixed, so the composer's "valid" means the kernel will actually register it. An unparseable
+  `active_high` is refused, because safe-state polarity must be known before a line can be trusted to
+  de-energize. A digital actuator may be pinned to `controlled` but never `hazardous` or `observe`.
+- **No wire change. Canonical bytes unchanged. No refusal reason changed. No authority widened.**
+  This is composition and driver code under the existing `IDriver`/capability seams; the golden
+  fixtures are untouched.
+
+### Notes
+
+- Real hardware ports have no `Dispose`/release seam yet, so when they arrive a later bad device in a
+  fail-closed resolution should release the ports already opened — tracked for the hardware slice.
+- Remaining M4: the runnable `Micromound.Host` daemon (composition + service loop + watchdog), the
+  real Linux driver ports behind these primitives, and the evidence store's disk backing. `v0.10.0`
+  is reserved for the boundary where the host runs on a device, not these substrate slices.
+
+---
+
 ## v0.9.2 — operational state survives on real disk
 
 The first M4 substrate slice: MICROMOUND's durable state finally has a disk backing, so a restart
