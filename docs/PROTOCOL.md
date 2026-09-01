@@ -221,9 +221,13 @@ watering a dying plant and reports success.
 
 This is a convention on the contents of an existing string field, not a new field. The v0 canonical
 bytes frozen at `v0.2.1` are unchanged.
-- Retention on-device: a ring buffer sized by the hardware profile. Evidence pending sync is never
-  evicted before acknowledgement unless storage exhaustion forces oldest-acked-first eviction,
-  which is itself reported as `evicted_acked_items`.
+- Retention on-device: a ring buffer sized by the hardware profile, bounded by two ordered rules.
+  Acknowledged proof is reclaimed oldest-first past the soft capacity, reported as
+  `evicted_acked_items`. Unacknowledged proof is retained past the soft capacity — silently
+  dropping it would be indistinguishable from never capturing it — but not past a hard ceiling:
+  beyond it the oldest unacknowledged item spills and is reported as `spilled_unacked_items` (added
+  in `v0.9.0` — an additive field; the frozen v0 bytes are otherwise unchanged). Neither loss is
+  ever silent.
 
 ## 7. Stop orders
 

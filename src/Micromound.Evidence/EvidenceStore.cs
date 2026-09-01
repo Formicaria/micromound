@@ -6,11 +6,14 @@ namespace Micromound.Evidence;
 /// <summary>
 /// The local evidence store — ARCHITECTURE.md Layer 6, the Witness Ant's memory.
 ///
-/// Retention is a ring buffer sized by the hardware profile, with one rule that overrides
-/// capacity: evidence pending synchronization is never evicted before it is acknowledged, unless
-/// storage exhaustion forces oldest-acked-first eviction — and that eviction is itself reported
-/// on the wire via <c>evicted_acked_items</c>. Silently dropping proof is indistinguishable from
-/// never having captured it.
+/// Retention is a ring buffer sized by the hardware profile, with two ordered rules under
+/// pressure. First: acknowledged proof — already delivered — is reclaimed oldest-first past the
+/// soft capacity, reported as <c>evicted_acked_items</c>. Then, and only then: unacknowledged
+/// proof is retained past the soft capacity because silently dropping it is indistinguishable from
+/// never capturing it — but it is not unbounded. Past a hard ceiling the oldest unacknowledged
+/// item is dropped and counted as <c>spilled_unacked_items</c>, so a mound offline for a week
+/// bounds its storage and reports exactly how much proof the gap cost. Both counts ride the wire;
+/// neither loss is ever silent.
 /// </summary>
 public interface IEvidenceStore : IEvidenceLookup
 {
@@ -24,6 +27,12 @@ public interface IEvidenceStore : IEvidenceLookup
 
     /// <summary>How many acknowledged items storage pressure has forced out since the last bundle.</summary>
     int TakeEvictedCount();
+
+    /// <summary>
+    /// How many UNacknowledged items the hard ceiling forced out since the last bundle — proof the
+    /// controller never saw. Reported so a spill is loud, never a silent gap in the audit trail.
+    /// </summary>
+    int TakeSpilledCount();
 }
 
 /// <summary>

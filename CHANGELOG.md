@@ -12,6 +12,50 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.0 — the store bounds itself and says what it cost
+
+An M3 durability slice: the local evidence store no longer grows without bound when a mound is
+disconnected, and it never loses proof silently.
+
+### The gap
+
+`InMemoryEvidenceStore` had one rule under pressure — reclaim acknowledged proof oldest-first past
+capacity — and one deliberate hole: when nothing was acknowledged it kept growing, on the correct
+principle that silently dropping unacknowledged proof is indistinguishable from never capturing it.
+Correct, but not a complete answer: a mound offline for a week grows without limit. And the
+accounting that was supposed to make eviction visible was never wired — `IEvidenceBundler` had no
+implementation and `TakeEvictedCount()` had no caller, so `evicted_acked_items` rode no bundle.
+
+### Added
+
+- **A hard ceiling with an explicit spill policy.** `InMemoryEvidenceStore` now takes a
+  `hardCeiling` (default twice the soft capacity, never below it). Under pressure it reclaims
+  acknowledged proof first; unacknowledged proof is still retained past the soft capacity, but past
+  the hard ceiling the oldest unacknowledged item **spills** — dropped and counted, never silently.
+  A long-disconnected mound bounds its storage and reports exactly what the gap cost.
+- **`spilled_unacked_items` on the evidence bundle**, a sibling of `evicted_acked_items`: an evicted
+  item was delivered and acknowledged, a spilled one was not. Both counts are now actually attached
+  to emitted bundles at the composition root (closing the never-wired accounting), each reported
+  once and then reset.
+
+### Wire
+
+**Additive, not a break.** `spilled_unacked_items` is a new field on the `evidence_bundle` body
+(default `0`). Per PROTOCOL.md §11 additive fields are always legal while v0 is fluid, and no
+firmware has shipped. The frozen bodies otherwise stand: `charter`, `action_record`, `mission`,
+`mission_report`, and every existing field of `evidence_bundle` are byte-for-byte unchanged. The
+golden fixtures were regenerated — the `evidence_bundle` body gains the one field, and because it
+sits mid-chain the canonical-envelope fixture re-hashes from that envelope onward; the frozen
+`mound_sync` and `action_record` envelopes before it are untouched, and the chain still links.
+
+### Tests
+
+Spill drops oldest-unacknowledged first and counts it; acknowledged proof is always reclaimed
+before any unacknowledged spill; the spill count rides one bundle then resets; and the default
+ceiling still retains a small unacknowledged backlog without spilling (the prior never-evict
+guarantee, now bounded rather than infinite). Goldens regenerated and verified through the real
+serializer; the smoke run's ten enforcement claims and the end-to-end mission are unaffected.
+
 ## v0.8.0 — a reading from before the act is not evidence of it
 
 An M3 evidence-correlation slice, and a real verification change: a confirming reading is now
