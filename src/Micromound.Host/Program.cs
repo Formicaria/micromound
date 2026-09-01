@@ -25,12 +25,13 @@ var options = HostArgs.Parse(args);
 if (options is null)
 {
     Console.Error.WriteLine(
-        "usage: micromound --manifest <path> [--state <dir>] [--controller <url>] [--interval-s <n>] [--heartbeat-s <n>]\n" +
-        "  --manifest    path to the mound manifest (JSON). required.\n" +
-        "  --state       state root (identity + durable state). default: /var/lib/micromound\n" +
-        "  --controller  controller base URL, e.g. https://anthill.example. default: offline\n" +
-        "  --interval-s  seconds between service ticks. default: 5\n" +
-        "  --heartbeat-s watchdog heartbeat timeout; 0 disables the timing check. default: 30");
+        "usage: micromound --manifest <path> [--state <dir>] [--controller <url>] [--enroll-token <t>] [--interval-s <n>] [--heartbeat-s <n>]\n" +
+        "  --manifest     path to the mound manifest (JSON). required.\n" +
+        "  --state        state root (identity + durable state). default: /var/lib/micromound\n" +
+        "  --controller   controller base URL, e.g. https://anthill.example. default: offline\n" +
+        "  --enroll-token one-time enrollment token; used once if not already enrolled (PROTOCOL.md §3)\n" +
+        "  --interval-s   seconds between service ticks. default: 5\n" +
+        "  --heartbeat-s  watchdog heartbeat timeout; 0 disables the timing check. default: 30");
     return 2;
 }
 
@@ -52,12 +53,27 @@ MoundService service;
 try
 {
     var keys = MoundHost.LoadOrCreateIdentity(options.StateDirectory);
+
+    // Enrollment (PROTOCOL.md §3): with a controller configured, load the controller key from a prior
+    // enrollment or present the one-time token now. Without it, downlink stays unverifiable — the safe
+    // direction — and the mound only uplinks.
+    IPublicKeyDirectory controllerKeys = new InMemoryPublicKeyDirectory();
+    if (options.ControllerUrl is not null)
+    {
+        using var enroller = new HttpEnrollmentClient(new Uri(options.ControllerUrl),
+            hardwareProfile: string.Join(",", manifest.Capabilities), tier: "mound_major");
+        controllerKeys = MoundHost.ResolveControllerKeys(
+            options.StateDirectory, enroller, keys.PublicKey, options.EnrollToken, out _, out var enrollDetail);
+        Console.WriteLine($"micromound: {enrollDetail}");
+    }
+
     host = MoundHost.Create(new HostOptions
     {
         Keys = keys,
         Manifest = manifest,
         StateDirectory = options.StateDirectory,
         GuardHeartbeatTimeoutSeconds = options.HeartbeatTimeoutSeconds,
+        ControllerKeys = controllerKeys,
         Transport = options.ControllerUrl is null ? null : new HttpSyncTransport(new Uri(options.ControllerUrl))
     });
     service = new MoundService(host);
@@ -96,13 +112,14 @@ finally
 return 0;
 
 /// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
-file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, double IntervalSeconds, double HeartbeatTimeoutSeconds)
+file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, string? EnrollToken, double IntervalSeconds, double HeartbeatTimeoutSeconds)
 {
     public static HostArgs? Parse(string[] args)
     {
         string? manifest = null;
         var state = Environment.GetEnvironmentVariable("MICROMOUND_STATE") ?? "/var/lib/micromound";
         string? controller = null;
+        string? enrollToken = null;
         var interval = 5.0;
         var heartbeat = 30.0;
 
@@ -115,12 +132,13 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
                 // PROTOCOL.md §1: device-initiated HTTPS only. A non-https (or malformed) URL is a
                 // usage error, never a cleartext or undialable transport handed to the daemon.
                 case "--controller" when i + 1 < args.Length && Uri.TryCreate(args[i + 1], UriKind.Absolute, out var cu) && cu.Scheme == Uri.UriSchemeHttps: controller = args[++i]; break;
+                case "--enroll-token" when i + 1 < args.Length: enrollToken = args[++i]; break;
                 case "--interval-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var iv) && iv > 0: interval = iv; i++; break;
                 case "--heartbeat-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var hb) && hb >= 0: heartbeat = hb; i++; break;
                 default: return null;   // unknown or malformed argument → usage
             }
         }
 
-        return manifest is null ? null : new HostArgs(manifest, state, controller, interval, heartbeat);
+        return manifest is null ? null : new HostArgs(manifest, state, controller, enrollToken, interval, heartbeat);
     }
 }
