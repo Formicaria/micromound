@@ -12,6 +12,50 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.6 — the daemon dials a controller over HTTPS
+
+The M4 slice that lifts the daemon out of offline-only: a real HTTP sync transport so a mound POSTs
+its signed envelopes to the controller and reads back the downlink, per PROTOCOL.md §1. Device
+enrollment and real hardware ports are still ahead; this is the pipe they run over.
+
+### Added
+
+- **`HttpSyncTransport`** (`Micromound.Host`) — an `ISyncTransport` that POSTs one signed uplink
+  envelope to `<controller>/micromound/v0/sync` (PROTOCOL.md §1, device-initiated) and deserializes
+  the response body as the downlink envelopes. It carries envelopes; it does not touch them — the
+  same frozen wire JSON goes out with its `sig` intact, so canonical bytes and signatures are
+  unchanged, and every downlink still flows through the Runner's existing verification.
+- **`micromound --controller <url>`** wires it into the daemon; without the flag the daemon runs
+  offline as before.
+
+### Authority / safety
+
+- **HTTPS only** (PROTOCOL.md §1): the daemon rejects a non-`https` `--controller` URL as a usage
+  error rather than dialing cleartext or an undialable scheme.
+- **Offline is a normal state, never a crash.** An unreachable controller, a timeout, a non-2xx
+  status, an unreadable body, or a scheme `HttpClient` cannot dial all return a failed exchange with
+  a reason — the durable uplink queue keeps the backlog and re-sends oldest-first. Nothing throws
+  into the service loop. A failed-but-delivered exchange advances no ack, so the controller
+  deduplicates the resend by sequence number (§2); no envelope is lost or double-processed.
+- **Bounded response.** A single downlink response is capped (8 MB on a client the transport owns),
+  so a hostile or misconfigured controller cannot OOM a constrained mound; an oversize body is a
+  failed exchange. The trust boundary is unchanged: the transport never verifies or acts on downlink
+  — an unsigned or unknown-key charter or stop in an HTTP response is still dropped and audited by
+  the verifier, exactly as over the in-process link.
+- **No wire change. Canonical bytes unchanged. No refusal reason changed. No authority widened.**
+
+### Notes
+
+- `ISyncTransport` carries no cancellation token, so a shutdown signal is observed between exchanges,
+  not during one; the per-exchange timeout (default 10 s) is what bounds an in-flight call. Threading
+  the shutdown token through the seam is a possible follow-up.
+- Remaining M4: device **enrollment** over this transport (so a mound learns the controller's key and
+  the controller learns the mound's — PROTOCOL.md §3; until then a live link can POST but cannot
+  verify downlink), and the real **Linux driver ports**. `v0.10.0` is reserved for the host running
+  on a device against real hardware.
+
+---
+
 ## v0.9.5 — a runnable daemon with a safe lifecycle
 
 The M4 slice that turns the composable host into a running service: a heartbeat-and-sync loop, a
