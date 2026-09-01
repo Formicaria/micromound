@@ -63,21 +63,22 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.2
+**Current version:** v0.9.3
 
-**M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 begun at
-`v0.9.2`.** Protocol contracts, Ed25519 signing, frozen wire bytes, the capability kernel with
-deterministic authorization, the Mound Major that walks missions — and now all six default ants as
-runtime services, a durable uplink queue whose chain is enforced at enqueue, restart recovery that
-never clears a stop, never extends a lease, and never silently resumes physical work it cannot prove
-finished, a bounded evidence store that says what a gap cost, and — new in `v0.9.2` — a **durable
-file-backed state store** so operational state survives a restart on real disk (behind the same seam
-the in-memory store uses), with the terminal report now persisted before its checkpoint is cleared
-and a cold start driving actuators to safe state. Still simulated drivers behind the real `IDriver`
-seam; end-to-end simulator missions run against an in-process controller that verifies every byte.
-The v0 canonical bytes will not change again inside v0. No real drivers or firmware yet, and the
-host does not run on a device yet — those complete M4 and M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md)
-and [`CHANGELOG.md`](CHANGELOG.md).
+**M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
+progress (`v0.9.2`, `v0.9.3`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+capability kernel with deterministic authorization, the Mound Major that walks missions — and now
+all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
+restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
+work it cannot prove finished, a bounded evidence store that says what a gap cost, a **durable
+file-backed state store** so operational state survives a restart on real disk (`v0.9.2`), and — new
+in `v0.9.3` — the **driver-resolution seam**: a manifest's hardware bindings turn into configured
+generic driver primitives (a digital actuator, an analog sensor) that specialize by capability, not
+by device-specific type, fail-closed as a whole. Real hardware ports (Linux GPIO/ADC) and a runnable
+host are still ahead. End-to-end simulator missions run against an in-process controller that
+verifies every byte. The v0 canonical bytes will not change again inside v0. No real drivers or
+firmware yet, and the host does not run on a device yet — those complete M4 and M5. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real
