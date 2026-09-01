@@ -12,6 +12,57 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.4 — the host composes and runs a mound from a manifest
+
+The M4 slice that ties the substrate together: one shared composition, and a `MoundHost` that brings
+a mound up from a manifest over the durable file store and runs it — the same runtime the simulator
+proves, now driven by a real manifest and real disk. The daemon's service loop and real hardware
+ports are still ahead; this makes the runtime itself composable and runnable.
+
+### Added
+
+- **`MoundComposition.Build` — the one place a mound is wired together.** The `kernel → registries →
+  evidence → ants → Mound Major → Runner` composition was factored out of the simulator into the
+  runtime, so the simulator and the host compose the *identical* runtime and cannot drift. It takes
+  the driver layer's output (capability descriptors and executors) and the crypto as signer/verifier
+  interfaces, so it depends on no concrete driver or crypto implementation — the composition root
+  supplies those. The report-before-clear and recovery orderings live here too (`RunAndReport`,
+  `RecoverAndReport`), shared by both roots so the safety-critical sequence has a single definition.
+- **`MoundHost` — the real composition root.** Brings a mound up from a `MoundManifest`: resolves its
+  drivers through the `v0.9.3` composer, composes over a `FileStateStore`, applies the manifest's
+  authority slice, and runs missions, persists state, and recovers across restarts — the full
+  manifest → generic drivers → kernel → ants → mission path, proven end to end over real disk.
+  `LoadOrCreateIdentity` persists the device's Ed25519 seed (owner-only, flushed to disk) and reloads
+  it across a restart.
+- **`IEvidenceSource`** — the small interface the composition wires a driver's readings through, so
+  the evidence sink is shared rather than sim-specific.
+
+### Authority / safety
+
+- **Fails closed on bring-up.** An unresolvable driver, a malformed manifest, or a missing `safe_state`
+  throws rather than starting a half-configured mound; if bring-up fails after drivers are configured,
+  they are driven to safe state before the error propagates, so a failed start never leaves hardware
+  energized or half-claimed.
+- **Recovery semantics are unchanged and now shared.** The `v0.9.1` no-replay rule and the `v0.9.2`
+  report-before-clear ordering are defined once in `MoundComposition` and used by both the simulator
+  and the host; the host recovers an interrupted mid-actuation mission from disk exactly as the
+  simulator does — reported `failed`, never replayed, checkpoint cleared only after the report is
+  durably queued.
+- **No wire change. Canonical bytes unchanged. No refusal reason changed. No authority widened.** The
+  extraction is behaviour-preserving (the simulator's full suite and the ten-claim smoke run are
+  unchanged); `MoundHost` adds a composition root, not a protocol.
+
+### Notes
+
+- The device identity seed is written owner-only (`0600`) and flushed; a boot that loses a
+  create race loads the winner's seed rather than clobbering it.
+- Remaining M4: the daemon **service loop** (a real network transport to the controller, the sync-beat
+  loop, signal-driven graceful shutdown, the timing watchdog) and the **real Linux driver ports**
+  (GPIO/ADC) behind the generic primitives, which will also add the `Dispose` seam the primitives
+  note. `v0.10.0` is reserved for the boundary where the host runs on a device.
+
+---
+
 ## v0.9.3 — a manifest resolves to generic drivers
 
 The second M4 substrate slice: the seam that turns a manifest's hardware section into configured

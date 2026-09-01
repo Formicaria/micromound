@@ -25,8 +25,16 @@
 // The daemon requires no browser and no graphical environment. All user-facing configuration and
 // visualization belongs to the upstream controller — see docs/UPSTREAM.md.
 
+// The runtime is composable and runnable: MoundHost.Create brings a mound up from a manifest over
+// a durable file store, using the same MoundComposition the simulator does, and runs missions,
+// persists state, and recovers across restarts. What this entry point still lacks is the daemon
+// SERVICE LOOP — a real network transport to the controller, the sync-beat loop, signal-driven
+// graceful shutdown, and the timing watchdog — which is the next M4 slice. Until then a mound is
+// brought up in-process (see MoundHost / the tests), not from this argv-less stub.
+
 Console.Error.WriteLine(
-    "micromound host is an M4 deliverable and is not runnable yet. " +
-    "Run Micromound.Sim for the simulated mound, and see docs/ROADMAP.md for what lands when.");
+    "micromound host: the runtime composes and runs from a manifest (MoundHost), but the daemon " +
+    "service loop (network transport, sync beat, signal handling, watchdog) is the next M4 slice. " +
+    "Run Micromound.Sim for the simulated mound; see docs/ROADMAP.md for what lands when.");
 
 return 2;

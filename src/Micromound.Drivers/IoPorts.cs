@@ -1,4 +1,18 @@
+using Micromound.Protocol;
+
 namespace Micromound.Drivers;
+
+/// <summary>
+/// A driver that observes and reports readings — the evidence side of a sensor. Composition wires
+/// <see cref="Publish"/> to the mound's evidence sink so a reading reaches the local store and the
+/// uplink; a pure actuator produces no evidence and need not implement this. Kept off
+/// <see cref="IDriver"/> itself because not every driver is an evidence source.
+/// </summary>
+public interface IEvidenceSource
+{
+    /// <summary>Where this driver's readings go. Wired by composition; null until then.</summary>
+    Action<EvidenceItem>? Publish { get; set; }
+}
 
 /// <summary>
 /// The narrow hardware seam a generic driver primitive sits on — one line or one channel, nothing

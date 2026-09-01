@@ -42,7 +42,8 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     private RunnerAnt? _runner;
     private CacheAnt? _cache;
     private GuardAnt? _guard;
-    private DurableUplinkQueue? _queue;
+    private IUplinkQueue? _queue;
+    private ComposedMound? _composed;
 
     public string MoundId { get; } = moundId;
 
@@ -153,8 +154,10 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
         if (_built) return;
         _built = true;
 
-        // Drivers first: hardware truth comes from them, not from any document.
-        var registry = new DriverRegistry();
+        // Drivers first: hardware truth comes from them, not from any document. The simulator
+        // supplies its own fake-hardware drivers and its crypto; the runtime is then composed the
+        // one shared way (MoundComposition), so the simulator and the real host cannot drift.
+        var drivers = new List<SimDriverBase>();
         foreach (var id in DeviceCapabilities)
         {
             SimDriverBase driver = CapabilityId.IsSense(id)
@@ -162,67 +165,34 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
                 : new SimRelayDriver(id, FirmwareLimits.TryGetValue(id, out var limits) ? limits : null);
 
             driver.ProduceEvidence = _sensorHealthy;
-            driver.Publish = PublishEvidence;
             _drivers[id] = driver;
-            registry.Register(driver);
+            drivers.Add(driver);
         }
 
-        // Registries and kernel from what the drivers actually expose.
-        var capabilities = new CapabilityRegistry();
-        foreach (var driver in registry.All)
-            foreach (var descriptor in driver.Capabilities)
-                capabilities.Register(descriptor);
-
-        var routines = new RoutineRegistry(capabilities);
-        _kernel = new CapabilityKernel(capabilities, routines, new KernelAuthority(MoundId));
-
-        foreach (var driver in registry.All)
-            foreach (var executor in driver.Executors)
-                _kernel.RegisterExecutor(executor);
-
-        // Evidence, then the ants, then the coordinator, then transport — the host's own order.
-        _evidenceStore = new InMemoryEvidenceStore();
-        _queue = new DurableUplinkQueue(Store);
-        _cache = new CacheAnt(Store);
-        _guard = new GuardAnt(heartbeatTimeoutSeconds: 0);   // liveness is the harness's, explicitly
-
-        _major = new MoundMajor(_kernel, _evidenceStore,
-            recorded: record => _runner!.Publish(EnvelopeKinds.ActionRecord, record, ParseOrNow(record.EndedAt)));
-
-        _runner = new RunnerAnt(_major, _queue, _transport,
+        var composed = MoundComposition.Build(
+            MoundId,
+            drivers.SelectMany(d => d.Capabilities).ToList(),
+            drivers.SelectMany(d => d.Executors).ToList(),
+            Store,
             new Ed25519EnvelopeSigner(MoundId, Keys),
             new Ed25519EnvelopeVerifier(_downlinkKeys),
-            _evidenceStore);
+            _transport,
+            guardHeartbeatTimeoutSeconds: 0);   // liveness is the harness's, explicitly
 
-        _major.Workers.Register(new ScoutAnt(_kernel, _evidenceStore));
-        _major.Workers.Register(new ForagerAnt(_kernel, _evidenceStore));
-        _major.Workers.Register(_guard);
-        _major.Workers.Register(new WitnessAnt(new EvidenceCorrelator(_evidenceStore)));
-        _major.Workers.Register(_cache);
-        _major.Workers.Register(_runner);
+        _composed = composed;
+        _kernel = composed.Kernel;
+        _evidenceStore = composed.EvidenceStore;
+        _major = composed.Major;
+        _runner = composed.Runner;
+        _cache = composed.Cache;
+        _guard = composed.Guard;
+        _queue = composed.Queue;
+
+        // Wire each sim driver's readings into the shared evidence sink, mirroring every item for
+        // the test-facing Evidence view as it passes.
+        foreach (var driver in drivers)
+            driver.Publish = item => { _evidenceMirror[item.EvidenceId] = item; composed.PublishEvidence(item); };
     }
-
-    private void PublishEvidence(EvidenceItem item)
-    {
-        _evidenceMirror[item.EvidenceId] = item;
-        _evidenceStore!.Add(item);   // may evict acked or spill unacked under storage pressure
-
-        // The pressure accounting rides out with the bundle it caused — the composition root is
-        // where the store meets the wire, so it is where the counts are attached. Both reset on
-        // read, so each loss is reported exactly once.
-        _runner!.Publish(EnvelopeKinds.EvidenceBundle,
-            new EvidenceBundle
-            {
-                BundleId = Guid.NewGuid().ToString(),
-                Items = [item],
-                EvictedAckedItems = _evidenceStore.TakeEvictedCount(),
-                SpilledUnackedItems = _evidenceStore.TakeSpilledCount()
-            },
-            ParseOrNow(item.CapturedAt));
-    }
-
-    private static DateTimeOffset ParseOrNow(string wire) =>
-        ProtocolTime.TryParse(wire, out var parsed) ? parsed : DateTimeOffset.UtcNow;
 
     // ---------------------------------------------------------------------------------------
     // The controller link
@@ -270,9 +240,8 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
     /// <summary>Execute a mission locally and queue its report — what a downlinked mission also does.</summary>
     public MissionReport ExecuteMission(Mission mission, DateTimeOffset now)
     {
-        var report = WatchingForSafeState(() => Major.Execute(mission, now));
-        Runner.Publish(EnvelopeKinds.MissionReport, report, now);   // durable result first
-        Major.ClearMissionCheckpoint();                             // then clear the intent
+        EnsureBuilt();
+        var report = WatchingForSafeState(() => _composed!.RunAndReport(mission, now));
         Cache.SaveAuthority(Authority);
         return report;
     }
@@ -325,10 +294,7 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMaj
         if (Cache.TryLoad<MissionCheckpoint>(MissionCheckpoint.Key, out var checkpoint))
         {
             foreach (var driver in _drivers.Values) driver.EnterSafeState();   // cold-start safe: target checkpoint.SafeState
-
-            var report = Major.RecoverMission(checkpoint, now);
-            Runner.Publish(EnvelopeKinds.MissionReport, report, now);   // durable result first
-            Major.ClearMissionCheckpoint();                            // then clear the intent
+            _composed!.RecoverAndReport(checkpoint, now);   // shared: recover -> publish -> clear
         }
 
         return result;

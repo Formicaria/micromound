@@ -9,7 +9,7 @@ namespace Micromound.Drivers;
 /// fails closed, a health flag that a bad configuration turns off, and the safe-state bookkeeping
 /// every driver owes. Concrete primitives add the one operation they turn a capability into.
 /// </summary>
-public abstract class GenericDriverBase : IDriver
+public abstract class GenericDriverBase : IDriver, IEvidenceSource
 {
     private readonly List<string> _errors = [];
 
