@@ -128,18 +128,23 @@ Drivers expose typed capabilities, validate device-level parameters, return stru
 expose health state, declare their safe-state behaviour, remain independent of any reasoning
 provider, and are unit-testable through hardware abstractions.
 
-**Hardware is not the top-level abstraction:**
+**Hardware is not the top-level abstraction.** A driver exposes typed *capabilities*, and the
+generic default ants consume them — the Scout Ant reads a `sense.*` capability, the Forager Ant
+requests an `act.*` one — with no device-specific worker in between:
 
 ```text
-BME280  →  BME280 driver  →  sense.temperature      →  Climate Ant
+BME280  →  BME280 driver  →  sense.temperature      →  Scout Ant (senses)
                              sense.humidity
                              sense.pressure
 
-Relay   →  GPIO relay driver  →  act.water_valve    →  Watering Ant
+Relay   →  GPIO relay driver  →  act.water_valve    →  Forager Ant (requests actuation)
 ```
 
-New hardware is added without changing the colony runtime, and without the upstream controller
-learning anything about boards, buses, or part numbers.
+The capability is the seam. New hardware is added without changing the colony runtime, and without
+the upstream controller learning anything about boards, buses, or part numbers. A deployment that
+genuinely needs domain logic over a capability may declare an *optional* specialized worker in the
+manifest (see [`ANTS.md`](ANTS.md)), but the standard path — and most mounds — need only the generic
+ants plus the right capabilities.
 
 ### Layer 6 — Evidence
 

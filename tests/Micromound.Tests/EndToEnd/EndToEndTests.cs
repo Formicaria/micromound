@@ -219,6 +219,132 @@ public class EndToEndTests
         Assert.Contains(Account.Records, r => r.Capability == Valve);
     }
 
+    // ---- mission recovery across a restart (v0.9.1) ---------------------------------------
+
+    /// <summary>A checkpoint left mid-mission is reported; a completed mission leaves none.</summary>
+    private MissionCheckpoint InterruptedAt(string actuationInFlight = "")
+    {
+        var checkpoint = MissionCheckpoint.Of(Watering(Now), Now);
+        checkpoint.ActuationInFlight = actuationInFlight;
+        _mound.Cache.Save(MissionCheckpoint.Key, checkpoint);
+        return checkpoint;
+    }
+
+    private MissionReport RecoveredReport(SimMound reborn, DateTimeOffset now)
+    {
+        reborn.Restore(now);
+        reborn.ConnectTo(_controller);
+        reborn.Sync(now.AddSeconds(5));
+        return Account.Reports.LastOrDefault(r => r.MissionId == "ms-e2e")!;
+    }
+
+    [Fact]
+    public void A_restart_with_no_mission_in_flight_reports_nothing()
+    {
+        _controller.IssueCharter(Charter(Now), Now);
+        _mound.Sync(Now);
+
+        var reborn = Restarted();
+        reborn.Restore(Now.AddSeconds(30));
+        reborn.ConnectTo(_controller);
+        reborn.Sync(Now.AddSeconds(35));
+
+        Assert.DoesNotContain(Account.Reports, r => r.State == MissionStates.Failed);
+    }
+
+    [Fact]
+    public void A_restart_before_actuation_reports_the_mission_interrupted()
+    {
+        _controller.IssueCharter(Charter(Now), Now);
+        _mound.Sync(Now);
+        InterruptedAt();   // a mission in flight, no actuation yet dispatched
+
+        var report = RecoveredReport(Restarted(), Now.AddSeconds(30));
+
+        Assert.Equal(MissionStates.Failed, report.State);
+        Assert.Contains("interrupted by a restart", report.Detail);
+    }
+
+    [Fact]
+    public void A_restart_mid_actuation_is_ambiguous_and_the_actuation_is_never_replayed()
+    {
+        _controller.IssueCharter(Charter(Now), Now);
+        _mound.Sync(Now);
+        InterruptedAt(actuationInFlight: "water");   // dispatched to hardware, result never recorded
+
+        var reborn = Restarted();
+        var report = RecoveredReport(reborn, Now.AddSeconds(30));
+
+        // Commands are not evidence: the actuation's outcome cannot be proven, so it is neither
+        // replayed nor assumed to have succeeded.
+        Assert.Equal(MissionStates.Failed, report.State);
+        Assert.Contains("mid-actuation", report.Detail);
+        Assert.Equal(0, reborn.Relay(Valve).Actuations);   // the relay never fired on recovery
+    }
+
+    [Fact]
+    public void A_restart_while_stopped_reports_stopped_and_does_not_clear_the_stop()
+    {
+        _controller.IssueCharter(Charter(Now), Now);
+        _mound.Sync(Now);
+        InterruptedAt(actuationInFlight: "water");
+        _mound.Stop();
+
+        var reborn = Restarted();
+        var report = RecoveredReport(reborn, Now.AddSeconds(30));
+
+        Assert.Equal(MissionStates.Stopped, report.State);
+        Assert.Equal("stopped", reborn.State);             // a restart is not a way around a stop
+        Assert.Contains("mid-actuation", report.Detail);   // the stop does not erase the ambiguous actuation from the audit trail
+    }
+
+    [Fact]
+    public void A_restart_after_the_lease_expired_reports_authority_gone()
+    {
+        _controller.IssueCharter(Charter(Now, ttl: 900), Now);
+        _mound.Sync(Now);
+        InterruptedAt();
+
+        var reborn = Restarted();
+        var report = RecoveredReport(reborn, Now.AddSeconds(2000));   // lease long dead
+
+        Assert.Equal(MissionStates.Failed, report.State);
+        Assert.Contains("authority did not survive", report.Detail);
+        Assert.Equal("quiesced", reborn.State);            // expired authority did not come back
+    }
+
+    [Fact]
+    public void A_completed_mission_leaves_no_checkpoint_to_recover()
+    {
+        _controller.IssueCharter(Charter(Now), Now);
+        _mound.Sync(Now);
+        _controller.AssignMission(Watering(Now), Now.AddSeconds(10));
+        _mound.Sync(Now.AddSeconds(10));   // runs to completion, clearing the checkpoint
+        _mound.Sync(Now.AddSeconds(20));
+
+        var reborn = Restarted();
+        reborn.Restore(Now.AddSeconds(30));
+        reborn.ConnectTo(_controller);
+        reborn.Sync(Now.AddSeconds(35));
+
+        Assert.DoesNotContain(Account.Reports, r => r.State == MissionStates.Failed);
+    }
+
+    [Fact]
+    public void A_corrupt_checkpoint_recovers_to_nothing_rather_than_an_exception()
+    {
+        _controller.IssueCharter(Charter(Now), Now);
+        _mound.Sync(Now);
+        _mound.Store.Put("cache:" + MissionCheckpoint.Key, "{not json");
+
+        var reborn = Restarted();
+        reborn.Restore(Now.AddSeconds(30));   // must not throw
+        reborn.ConnectTo(_controller);
+        reborn.Sync(Now.AddSeconds(35));
+
+        Assert.DoesNotContain(Account.Reports, r => r.State == MissionStates.Failed);
+    }
+
     [Fact]
     public void Tampered_uplink_is_dropped_audited_and_never_acknowledged()
     {

@@ -117,6 +117,49 @@ public sealed class CacheAnt(IStateStore store, WorkerDescriptor? descriptor = n
     }
 }
 
+/// <summary>
+/// A mission in flight — the operational state a restart needs to answer one question deterministically:
+/// what happened to the mission the process was running when it died?
+///
+/// It is written before a mission runs and cleared the moment it finishes (through the coordinator's
+/// single <c>Finish</c> funnel). The one path that does NOT reach <c>Finish</c> is a process death
+/// mid-mission, and that is exactly the path that leaves this behind. It is not a resume point: the
+/// synchronous runtime does not replay half-run physical steps. It exists so the restart reports the
+/// interruption instead of losing the mission, and — via <see cref="ActuationInFlight"/> — so the
+/// one genuinely dangerous window is reported as such rather than papered over.
+///
+/// <see cref="ActuationInFlight"/> carries the id of a step whose actuation was dispatched to
+/// hardware but whose result had not yet been recorded when this was last written. A death in that
+/// gap is inherently ambiguous — the actuation may or may not have physically happened, and there is
+/// no evidence either way — so the recovery path fails closed: it neither replays the actuation nor
+/// assumes it succeeded. Empty means no actuation is in that window.
+/// </summary>
+public sealed class MissionCheckpoint
+{
+    /// <summary>Cache key (the Cache Ant prefixes it). One mission runs at a time, so one slot.</summary>
+    public const string Key = "mission";
+
+    [JsonPropertyName("mission_id")] public string MissionId { get; set; } = "";
+    [JsonPropertyName("charter_id")] public string CharterId { get; set; } = "";
+    [JsonPropertyName("started_at")] public string StartedAt { get; set; } = "";
+    /// <summary>
+    /// The interrupted mission's declared safe state. The M4 host reads this to bring physical
+    /// outputs a half-run mission may have left energized into the mission's own safe state on a
+    /// cold start; persisted now so the recovery need is captured where the interruption is.
+    /// </summary>
+    [JsonPropertyName("safe_state")] public string SafeState { get; set; } = "";
+    /// <summary>Step id whose actuation was dispatched but not yet settled; empty when none is in flight.</summary>
+    [JsonPropertyName("actuation_in_flight")] public string ActuationInFlight { get; set; } = "";
+
+    public static MissionCheckpoint Of(Mission mission, DateTimeOffset now) => new()
+    {
+        MissionId = mission.MissionId,
+        CharterId = mission.CharterId,
+        StartedAt = now.ToWire(),
+        SafeState = mission.SafeState
+    };
+}
+
 /// <summary>What one sync attempt did — for the caller's log and the colony view, not for control flow.</summary>
 public sealed class SyncOutcome
 {

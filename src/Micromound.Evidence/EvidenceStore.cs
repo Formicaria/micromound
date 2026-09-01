@@ -50,14 +50,3 @@ public interface IEvidenceCorrelator
     /// </summary>
     IReadOnlyDictionary<string, EvidenceItem> For(ActionRecord record, EvidencePolicy policy, DateTimeOffset now);
 }
-
-/// <summary>
-/// The durable uplink queue as evidence sees it: bundles built from pending items, hash-chained
-/// through envelope <c>prev_digest</c> so offline gaps and reordering are detectable after the
-/// fact rather than merely suspected.
-/// </summary>
-public interface IEvidenceBundler
-{
-    /// <summary>Build the next bundle from pending items, oldest first, up to a size budget.</summary>
-    EvidenceBundle NextBundle(int maxItems, DateTimeOffset now);
-}

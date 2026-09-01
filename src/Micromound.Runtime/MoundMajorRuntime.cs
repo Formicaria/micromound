@@ -108,6 +108,14 @@ public sealed class MoundMajor : IMoundMajor
     {
         var startedAt = now;
 
+        // Checkpoint the mission before it runs; every exit funnels through Finish, which clears
+        // it. A process death mid-mission — the one path that does NOT reach Finish — leaves the
+        // checkpoint behind, and RecoverMission turns it into a reported outcome rather than a
+        // mission the controller simply never hears about again.
+        var cache = Workers.All.OfType<ICacheAnt>().FirstOrDefault();
+        var checkpoint = MissionCheckpoint.Of(mission, now);
+        cache?.Save(MissionCheckpoint.Key, checkpoint);
+
         // The lease is checked against the device's own clock before anything else. A mission
         // that arrived while the lease was alive must not run after it expired.
         _kernel.Authority.QuiesceIfExpired(now);
@@ -239,9 +247,25 @@ public sealed class MoundMajor : IMoundMajor
                 continue;
             }
 
+            // Persist intent -> execute -> persist result. For an actuation, mark it in flight
+            // BEFORE it reaches hardware and clear it AFTER its record is in hand. A death in that
+            // gap is the ambiguous window: the actuation may or may not have physically happened, so
+            // RecoverMission fails closed rather than replay it. Observations carry no such risk.
+            if (actuates && cache is not null)
+            {
+                checkpoint.ActuationInFlight = step.StepId;
+                cache.Save(MissionCheckpoint.Key, checkpoint);
+            }
+
             var record = Dispatch(mission, step, now);
             _actions.Add(record);
             dispatched.Add(record);
+
+            if (actuates && cache is not null)
+            {
+                checkpoint.ActuationInFlight = "";
+                cache.Save(MissionCheckpoint.Key, checkpoint);
+            }
 
             result.ActionId = record.ActionId;
             result.Detail = record.Detail;
@@ -472,13 +496,76 @@ public sealed class MoundMajor : IMoundMajor
         };
     }
 
-    private static MissionReport Finish(MissionReport report, string state, string detail,
+    private MissionReport Finish(MissionReport report, string state, string detail,
         DateTimeOffset now)
     {
+        // The single exit funnel, so the single place the in-flight checkpoint is cleared: a
+        // mission that reached here finished — completed, refused, stopped, quiesced, recovered,
+        // whatever — and is no longer in flight. Only a death that never reaches Finish leaves it.
+        Workers.All.OfType<ICacheAnt>().FirstOrDefault()?.Delete(MissionCheckpoint.Key);
+
         report.State = state;
         report.EndedAt = now.ToWire();
         if (!string.IsNullOrEmpty(detail))
             report.Detail = string.IsNullOrEmpty(report.Detail) ? detail : $"{report.Detail}; {detail}";
         return report;
+    }
+
+    /// <summary>
+    /// The recovery decision, made once, deterministically, when a restart finds a mission the last
+    /// run never finished. It never re-dispatches a step — the synchronous runtime cannot replay
+    /// half-run physical work — and it never invents authority or evidence. It reads the restored
+    /// authority in the same downward-resolving order a fresh mission faces, and produces a report
+    /// the controller can audit. The checkpoint is cleared here (via Finish) so a second restart
+    /// does not report the same interruption twice.
+    ///
+    /// The outcomes, in order:
+    /// <list type="bullet">
+    /// <item>stopped — a stop is in force; the interrupted mission is not resumed under it.</item>
+    /// <item>authority gone (quiesced, expired lease, or no charter) — the mission cannot continue,
+    ///   and a restart cannot revive the authority it needed.</item>
+    /// <item>ambiguous actuation — a step's actuation was dispatched but its result never recorded;
+    ///   its physical outcome cannot be proven and it is not replayed (commands are not evidence).</item>
+    /// <item>interrupted — the mission was cut short before completing, with no actuation in doubt.</item>
+    /// </list>
+    /// Every case is <c>failed</c> or <c>stopped</c> in the existing vocabulary — a mission that did
+    /// not complete, reported honestly. No new wire state, no automatic replay, no assumed success.
+    /// </summary>
+    public MissionReport RecoverMission(MissionCheckpoint checkpoint, DateTimeOffset now)
+    {
+        // The device's own clock may have crossed the lease expiry while the process was down.
+        _kernel.Authority.QuiesceIfExpired(now);
+
+        var report = new MissionReport
+        {
+            MissionId = checkpoint.MissionId,
+            CharterId = checkpoint.CharterId,
+            StartedAt = checkpoint.StartedAt
+        };
+
+        // A stop wins over everything — but if a step was also in the ambiguous actuation window,
+        // the controller still needs to know that, so the stop does not erase the ambiguity from
+        // the audit trail. The mission stays stopped and is never resumed regardless.
+        if (_kernel.Authority.IsStopped)
+        {
+            var stopDetail = string.IsNullOrEmpty(checkpoint.ActuationInFlight)
+                ? "a stop is in force after the restart; the interrupted mission is not resumed"
+                : $"a stop is in force after the restart; the interrupted mission is not resumed " +
+                  $"(a step '{checkpoint.ActuationInFlight}' was mid-actuation — its physical outcome " +
+                  "is unproven and is not replayed under the stop)";
+            return Finish(report, MissionStates.Stopped, stopDetail, now);
+        }
+
+        if (_kernel.Authority.IsQuiesced || _kernel.Authority.ActiveCharter is null)
+            return Finish(report, MissionStates.Failed,
+                "authority did not survive the restart; the interrupted mission cannot continue", now);
+
+        if (!string.IsNullOrEmpty(checkpoint.ActuationInFlight))
+            return Finish(report, MissionStates.Failed,
+                $"interrupted mid-actuation ('{checkpoint.ActuationInFlight}'): its physical outcome " +
+                "cannot be proven across a restart and will not be replayed", now);
+
+        return Finish(report, MissionStates.Failed,
+            "interrupted by a restart before completion; not resumed", now);
     }
 }

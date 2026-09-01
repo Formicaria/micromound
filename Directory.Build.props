@@ -10,7 +10,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <Deterministic>true</Deterministic>
-    <MicromoundVersion>0.9.0</MicromoundVersion>
+    <!--
+      Versioning after v0.9.0: the M3 line continues as PATCH releases — v0.9.1, v0.9.2, …
+      Each is a small, self-contained hardening or cleanup slice. v0.10.0 is reserved for a
+      later, meaningful milestone (M4: real host + persistent storage + drivers), not claimed
+      automatically just because it is the numeric successor to v0.9.x. The release scripts read
+      this value literally and never assume the next release; bump it here by hand per slice.
+    -->
+    <MicromoundVersion>0.9.1</MicromoundVersion>
     <Version>$(MicromoundVersion)</Version>
     <Authors>ANTHILL Project</Authors>
     <Product>MICROMOUND</Product>
