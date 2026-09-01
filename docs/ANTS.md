@@ -11,20 +11,21 @@ functions in it, and both descriptions are correct.
 
 ## Implementation status
 
-The roster is a design, and the runtime is catching up to it. As of `v0.4.0`:
+The full default roster is implemented as of `v0.6.0`, and hardened since. Every ant runs as a
+runtime service over the real kernel, proven end to end against `Micromound.Sim`.
 
 | Ant | Status |
 |---|---|
-| Mound Major | **Implemented** (`v0.3.0`) — mission state machine, conditions, dispatch, reports |
+| Mound Major | **Implemented** (`v0.3.0`) — mission state machine, conditions, dispatch, reports; durable in-flight recovery (`v0.9.1`) |
 | Scout Ant | **Implemented** (`v0.4.0`) — submits under its own ceiling; the reading is evidence |
 | Forager Ant | **Implemented** (`v0.4.0`) — submits under its own ceiling; holds no driver |
 | Guard Ant | **Implemented** (`v0.4.0`) — the software watchdog SAFETY.md Layer 1 promised |
-| Witness Ant | **Implemented** (`v0.5.0`) — confirms an action against a later observation |
-| Cache Ant | Interface only — operational persistence |
-| Runner Ant | Interface only — transport, enrollment, durable uplink |
+| Witness Ant | **Implemented** (`v0.5.0`) — confirms an action against a later observation; only a reading captured at or after the act can confirm it (`v0.8.0`) |
+| Cache Ant | **Implemented** (`v0.6.0`) — operational persistence; restart never clears a stop or extends a lease, and now recovers in-flight mission state without replaying unprovable physical work (`v0.9.1`) |
+| Runner Ant | **Implemented** (`v0.6.0`) — transport, enrollment, durable uplink; the chain enforced at enqueue, retention governed by acknowledgement, bounded storage with a loud spill policy (`v0.9.0`) |
 
-Cache and Runner are what remain: operational persistence, and transport. Both are about what
-happens to a record *after* the mission, and both land with durable storage and the uplink queue.
+The roster is complete. What remains is not another ant but the substrate under two of them — the
+disk backing for Cache's durable state and for the evidence store — which lands with the M4 host.
 
 ## The default roster
 
@@ -128,34 +129,44 @@ upload, evidence synchronization, stop-order receipt, and protocol version negot
 
 The only outward-facing worker. Everything else in the mound is local by construction.
 
-## Specialized ants
+## Specialized ants — an optional extension, never the standard colony
 
-The default roster handles generic physical execution. Deployments add application-specific ants
-on top, declared in the manifest rather than coded into the runtime.
+**The standard colony is always the same.** Every mound — greenhouse, rover, workshop, or bench —
+ships the *identical* Mound Major and six default ants above, unchanged, and specializes to its
+hardware through **configuration and capabilities**, not by swapping in device-specific ants. There
+is no built-in "Soil Ant" or "Watering Ant" type in the runtime, and a device-specific class in the
+core (`WateringAnt`, `GreenhouseRuntime`) is the signal an abstraction is wrong.
+
+On top of that unchanged roster, a deployment *may* — optionally — declare application-specific
+workers **in the manifest** when generic sensing and actuation genuinely need domain logic of their
+own (a navigation planner, a vision-inspection classifier). These are data in the manifest, not code
+in the runtime, and they are the exception, not the rule: most mounds need none, because the default
+ants plus the right capabilities already cover generic physical execution.
+
+The rosters below are **illustrations of that extension point**, not a catalogue of standard ant
+types. The bottom group in each column is what a given deployment *chose* to declare; the top group
+is always present and always identical.
 
 ```text
 Greenhouse MicroMound          Rover MicroMound            Workshop MicroMound
-    Mound Major                    Mound Major                 Mound Major
-    Scout Ant                      Scout Ant                   Scout Ant
-    Forager Ant                    Forager Ant                 Forager Ant
-    Guard Ant                      Guard Ant                   Guard Ant
-    Witness Ant                    Witness Ant                 Witness Ant
-    Cache Ant                      Cache Ant                   Cache Ant
-    Runner Ant                     Runner Ant                  Runner Ant
-    Soil Ant                       Vision Ant                  Machine State Ant
-    Climate Ant                    Navigation Ant              Vision Inspection Ant
-    Watering Ant                   Drive Ant                   Dust Collection Ant
-    Vision Ant                     Lidar Ant                   Material Handling Ant
-                                   Battery Ant
+    Mound Major                    Mound Major                 Mound Major        ─┐
+    Scout Ant                      Scout Ant                   Scout Ant           │ the standard
+    Forager Ant                    Forager Ant                 Forager Ant         │ colony, always
+    Guard Ant                      Guard Ant                   Guard Ant           │ the same six +
+    Witness Ant                    Witness Ant                 Witness Ant         │ Mound Major
+    Cache Ant                      Cache Ant                   Cache Ant           │
+    Runner Ant                     Runner Ant                  Runner Ant         ─┘
+    ----------------               ----------------            ----------------
+    (optional, manifest-declared specialized workers this deployment chose)
+    Climate planner                Navigation planner          Machine-state monitor
+    Vision inspector               Vision inspector            Vision inspector
+                                   Battery monitor             Material-handling planner
 ```
 
-```text
-ESP32 Controller Mound
-    Sensor Ant
-    Relay Ant
-    Guard Ant
-    Runner Ant
-```
+A constrained ESP32 controller runs a **reduced profile** of the same design — the same kernel and
+protocol in C, with only the workers a small controller needs (sensing, actuation via the kernel,
+the watchdog, transport). It is not a different colony and it does not introduce new ant types; it
+is the standard model with fewer moving parts.
 
 ## Declaring a specialized ant
 

@@ -85,10 +85,14 @@ Primary Mound                  Greenhouse MicroMound          Rover MicroMound
     ProxmoxAnt                     Witness Ant                    Witness Ant
     StorageAnt                     Cache Ant                      Cache Ant
                                    Runner Ant                     Runner Ant
-                                   Soil Ant                       Vision Ant
-                                   Climate Ant                    Navigation Ant
-                                   Watering Ant                   Drive Ant
+                                   · optional specialized ·       · optional specialized ·
+                                   (e.g. vision inspector)        (e.g. navigation planner)
 ```
+
+Every MicroMound in the colony runs the *same* standard Mound Major and six default ants; the two
+here differ only in hardware and in whatever *optional* specialized workers each manifest chose to
+add (see [`ANTS.md`](ANTS.md)). Neither is a device-specific colony — both are the one generic
+colony configured by capabilities.
 
 Connectivity is part of the picture, because a disconnected mound is a normal state and not an
 error:

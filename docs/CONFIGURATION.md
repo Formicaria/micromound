@@ -1,8 +1,15 @@
 # Configuration
 
 MicroMound is configured declaratively. A **mound manifest** describes what hardware is attached,
-what capabilities that hardware exposes, which workers exist, which routines are available, what
-the operator's own limits are, and whether reasoning is enabled.
+what capabilities that hardware exposes, any *optional* specialized workers to add, which routines
+are available, what the operator's own limits are, and whether reasoning is enabled.
+
+The manifest specializes a mound to its hardware **through capabilities**, not by defining its
+colony: the standard Mound Major and six default ants are always present and are not declared here.
+The `workers:` block below is only for *optional* application-specific ants a deployment chooses to
+add on top of that default roster (see [`ANTS.md`](ANTS.md)); a mound that needs none omits the
+block entirely and still runs a complete colony. The device-specific workers in the example are
+illustrations of that extension point, not built-in types.
 
 Configuration is validated before activation and **fails closed**: an unparseable or internally
 inconsistent manifest leaves the previous manifest in force and the refusal is reported.

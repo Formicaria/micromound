@@ -105,9 +105,12 @@ These names are deliberately distinct from any upstream colony's own roles, so t
 "Verifier" (which judges whether a mission succeeded) and a mound's "Witness Ant" (which judges
 whether a valve actually opened) are never mistaken for one another.
 
-Application-specific ants — Soil, Climate, Watering, Vision, Navigation, Drive, Lidar, Battery,
-Machine State, Dust Collection — are declared in the manifest and layered on top. See
-[`ANTS.md`](ANTS.md).
+The standard colony is always exactly this Mound Major and six default ants, on every mound; a
+mound specializes to its hardware through capabilities, not by swapping in device-specific ants.
+*Optionally*, a deployment may declare application-specific workers — a vision inspector, a
+navigation planner — in the manifest, layered on top of the unchanged roster. These are the
+exception, not the rule (most mounds need none), and they are data in the manifest, never built-in
+types in the runtime. See [`ANTS.md`](ANTS.md).
 
 On constrained hardware several ants compile into one firmware image and remain ants only in the
 metadata a UI renders. The colony metaphor and the runtime implementation are intentionally

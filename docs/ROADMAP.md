@@ -13,8 +13,8 @@ Milestones land in order. A later milestone never ships while an earlier one's t
 | **M0** — Protocol, identity, kernel | **Frozen at `v0.2.1`** | Wire contracts, Ed25519 signing, canonical bytes, charters, leases, evidence contracts, and the capability kernel with deterministic authorization |
 | **M1** — Runtime interfaces and the Mound Major | **Done at `v0.3.0`** | Driver, worker, routine, evidence, persistence, and transport interfaces; the Mound Major workflow and mission state machine |
 | **M2** — The six default ants | **Done at `v0.6.0`** | Scout, Forager, Guard, Witness, Cache, Runner as lightweight runtime services; simulated drivers; end-to-end simulator missions |
-| **M3** — Evidence, offline state, and sync | **In progress** | Evidence correlation, durable offline state, reconnect and backlog synchronization. Shipped: `mission`/`mission_report` golden pins (`v0.7.0`); confirming-reading temporal correlation (`v0.8.0`); evidence spill/backpressure policy (`v0.9.0`). Remaining: durable in-flight/mission state (its disk backing arrives with M4). |
-| **M4** — The Linux/Pi host and first real drivers | Planned (next) | The headless `Micromound.Host` daemon made runnable, SQLite-backed durable state, a strong declarative hardware manifest, generic driver *primitives* (digital I/O, analog, binary/proportional/position/velocity actuators), device/capability composition from the manifest, service lifecycle, watchdog, and host-owned safe-state de-energizing on stop/quiesce/expiry/fault/shutdown |
+| **M3** — Evidence, offline state, and sync | **Done at `v0.9.1`** | Evidence correlation, durable offline state, reconnect and backlog synchronization. Shipped: `mission`/`mission_report` golden pins (`v0.7.0`); confirming-reading temporal correlation (`v0.8.0`); evidence spill/backpressure policy (`v0.9.0`); durable in-flight mission semantics — a restart never repeats, resumes, or fabricates the outcome of physical work it cannot prove finished (`v0.9.1`). The *semantics* are complete and proven on the in-memory/sim store; the *disk* backing for both durable state and the evidence store is deferred to M4, where the real host lands, and is a storage substrate change, not an M3 rule change. |
+| **M4** — The Linux/Pi host and first real drivers | Planned (next) | The headless `Micromound.Host` daemon made runnable, SQLite-backed durable state, a strong declarative hardware manifest, generic driver *primitives* (digital I/O, analog, binary/proportional/position/velocity actuators), device/capability composition from the manifest, service lifecycle, watchdog, host-owned safe-state de-energizing on stop/quiesce/expiry/fault/shutdown, and — because the state store is finally durable — two ordering duties the sim leaves as no-ops: cold-start de-energizing to the mission checkpoint's `safe_state`, and persisting a terminal mission report *before* clearing its checkpoint so a crash between the two re-reports rather than losing the record (the audit-record analogue of the v0.9.1 no-replay rule) |
 | **M5** — Constrained controller firmware | Planned | ESP32 reduced controller (`firmware/esp32`, currently a placeholder) implementing the same protocol and capability kernel in C, verified byte-for-byte against the golden fixtures, over a compact versioned Pi↔ESP32 packet protocol |
 | **Acceptance** — Generic Physical Mound | Criteria, not a code milestone | The end-to-end proof on a minimal real bench that a fresh mound boots its default colony, is configured and chartered from upstream, moves generic hardware through the kernel, verifies with independent evidence, survives disconnect/reboot/lease-expiry safely, and synchronizes an auditable history back. See [The target](#the-target-a-generic-physical-mound). |
 | **M6** — Optional reasoning | Planned (last) | The reasoning provider interface wired in — only after deterministic execution is mature. Never on the physical authority path. |
@@ -30,13 +30,15 @@ exists with tests, hazardous actions are refused unconditionally and cannot even
 Six questions this document should answer at a glance:
 
 1. **What is already complete?** M0 (protocol, identity, kernel — frozen at `v0.2.1`), M1 (runtime
-   interfaces and the Mound Major — `v0.3.0`), and M2 (the six default ants over simulated
-   hardware, end to end — `v0.6.0`). All proven against `Micromound.Sim`, which runs the real
-   kernel over fake hardware.
-2. **What is being built now?** M3 — the record survives and travels correctly: it is pinned on
-   the wire (`v0.7.0`), verified only by evidence that follows the act (`v0.8.0`), and bounded in
-   storage by a loud spill policy (`v0.9.0`); what remains is durable in-flight mission state (its
-   disk backing arrives with M4).
+   interfaces and the Mound Major — `v0.3.0`), M2 (the six default ants over simulated hardware,
+   end to end — `v0.6.0`), and M3 (evidence, offline state, and sync semantics — closed at
+   `v0.9.1`). All proven against `Micromound.Sim`, which runs the real kernel over fake hardware.
+2. **What was M3?** The record survives and travels correctly: it is pinned on the wire (`v0.7.0`),
+   verified only by evidence that follows the act (`v0.8.0`), bounded in storage by a loud spill
+   policy (`v0.9.0`), and durable across a restart mid-mission — a reboot never repeats, resumes,
+   or fabricates the outcome of physical work it cannot prove finished (`v0.9.1`). What M3 does
+   **not** include is the disk substrate under those semantics: durable state and the evidence
+   store are proven in memory and in the simulator, and their SQLite backing lands with M4's host.
 3. **What must exist before real hardware can move?** M4 — a runnable `Micromound.Host`, durable
    state on disk, a declarative hardware manifest, and generic driver *primitives*. Nothing turns
    a physical output on until this lands, because the host is what de-energizes it on stop.
@@ -76,9 +78,15 @@ The load-bearing property throughout: **the same unchanged Micromound binary bec
 physical mound through configuration, never through a fork.** A device-specific class in the core
 (`GreenhouseRuntime`, `RoverAnt`, a named appliance driver) is the signal an abstraction is wrong.
 
-## Where M3 stands
+## What M3 covered
 
-M3 is being taken in slices, each a coherent release that preserves all prior behavior.
+M3 was taken in slices, each a coherent release that preserved all prior behavior. **M3 closed at
+`v0.9.1`.** Its closure condition was: the record a mound produces survives and travels correctly —
+pinned on the wire, verified only by evidence that followed the act, bounded in storage without
+silent loss, and durable across a restart mid-mission — all proven end to end against
+`Micromound.Sim`, with no v0 canonical-byte change. The one thing deliberately **left to M4** is the
+persistent-disk substrate beneath those semantics (SQLite-backed state and evidence); that is a
+storage-engine change, not a rule change, so it does not hold M3 open.
 
 - **`v0.7.0` — the record is pinned.** `mission` and `mission_report` joined the golden fixtures
   (bare bodies and the canonical-envelope chain) with round-trip agreement tests, closing the gap
@@ -92,9 +100,18 @@ M3 is being taken in slices, each a coherent release that preserves all prior be
   spill/backpressure policy: a hard ceiling above the soft capacity, acknowledged proof reclaimed
   first, then oldest unacknowledged proof spilled and counted on the wire as `spilled_unacked_items`.
   A long-disconnected mound bounds its storage without ever silently dropping proof.
-- **Remaining before M3 closes:** durable in-flight/mission state so a restart mid-mission resumes
-  or fails coherently rather than losing the mission. (The disk backing for durable state, and the
-  disk-backed evidence store, land with M4's real host.)
+- **`v0.9.1` — a restart never repeats physical work it cannot prove finished.** Durable in-flight
+  mission state: the Mound Major persists a `cache:mission` checkpoint at mission start and clears
+  it at finish, and around every actuating step it persists intent → executes → persists result.
+  A crash in the ambiguous window leaves the step marked `actuation_in_flight`. On restart, after
+  authority is re-evaluated, recovery is deterministic and fail-closed — a stop stays in force,
+  lost authority fails the mission, a mid-actuation step fails as *ambiguous and is never replayed*,
+  an interruption before actuation fails as interrupted, and a completed or absent mission recovers
+  to nothing. Every outcome is `failed` or `stopped`; a restart can only end an interrupted mission,
+  never silently continue one. No new wire state — canonical bytes unchanged. **This closed M3.**
+- **Deferred to M4, not M3:** the *disk* backing for durable state, and the disk-backed evidence
+  store. The M3 semantics above are complete and proven on the in-memory/sim store; giving them a
+  persistent substrate is M4's real-host work, not an open M3 rule.
 
 ## What M0 actually covers
 

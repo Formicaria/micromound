@@ -2,6 +2,7 @@ using Micromound.Capabilities;
 using Micromound.Evidence;
 using Micromound.Protocol;
 using Micromound.Runtime;
+using Micromound.Sync;
 using Xunit;
 
 namespace Micromound.Tests;
@@ -327,6 +328,46 @@ public class VerificationTests
         var report = major.Execute(Watering(Now), Now);
 
         Assert.Contains("confirms 'water'", report.Steps.Single(s => s.StepId == "confirm").Detail);
+    }
+
+    /// <remarks>
+    /// The intent → execute → result checkpoint discipline the recovery path depends on: an
+    /// actuation is marked in flight BEFORE it reaches hardware and cleared AFTER its record is in
+    /// hand. A store that remembers every write proves both halves happened — without this, dropping
+    /// either write in a refactor leaves every recovery test that plants a checkpoint by hand green
+    /// while the real ambiguous window is no longer recorded.
+    /// </remarks>
+    [Fact]
+    public void A_running_actuation_is_marked_in_flight_then_cleared()
+    {
+        _h.SensorExecutor.Reading = 42;
+        var store = new RecordingStore();
+
+        var major = new MoundMajor(_h.Kernel, _h.Evidence);
+        major.Workers.Register(new ScoutAnt(_h.Kernel, _h.Evidence));
+        major.Workers.Register(new ForagerAnt(_h.Kernel, _h.Evidence));
+        major.Workers.Register(new WitnessAnt(new EvidenceCorrelator(_h.Evidence)));
+        major.Workers.Register(new CacheAnt(store));
+        major.AcceptCharter(KernelHarness.NewCharter(Now), Now);
+
+        major.Execute(Watering(Now), Now);
+
+        var missionWrites = store.Writes
+            .Where(w => w.Key == "cache:" + MissionCheckpoint.Key).Select(w => w.Value).ToList();
+
+        Assert.Contains(missionWrites, v => v.Contains("\"actuation_in_flight\":\"water\""));  // intent
+        Assert.False(store.TryGet("cache:" + MissionCheckpoint.Key, out _));                    // cleared by Finish
+    }
+
+    /// <summary>An <see cref="IStateStore"/> that remembers every write, so a write a later delete hides is still provable.</summary>
+    private sealed class RecordingStore : IStateStore
+    {
+        private readonly InMemoryStateStore _inner = new();
+        public List<(string Key, string Value)> Writes { get; } = [];
+
+        public void Put(string key, string value) { Writes.Add((key, value)); _inner.Put(key, value); }
+        public bool TryGet(string key, out string value) => _inner.TryGet(key, out value);
+        public void Delete(string key) => _inner.Delete(key);
     }
 }
 

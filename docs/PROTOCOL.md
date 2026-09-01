@@ -262,7 +262,7 @@ execution representation stays executable with no language model in the loop.
   "mission_id": "uuid",
   "mound_id": "mm-7f3a…",
   "charter_id": "uuid",
-  "worker": "Watering Ant",
+  "worker": "Forager Ant",
   "required_capabilities": ["sense.soil_moisture", "sense.temperature"],
   "allowed_routines": ["routine.water_cycle"],
   "steps": [

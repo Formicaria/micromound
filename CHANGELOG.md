@@ -12,6 +12,59 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.1 — a restart never repeats physical work it cannot prove finished
+
+The cleanup-and-hardening slice that closes M3. A mission interrupted by a restart is now durable:
+the runtime remembers that physical work was in progress, and refuses to guess its outcome.
+
+### The gap
+
+Restart recovery restored **authority** correctly — a stop was never cleared, a lease was never
+extended, expired authority never came back. But it remembered nothing about a *mission in flight*.
+A mound that crashed one instruction into opening a water valve came back with no record that a
+valve was ever touched. Nothing replayed the step — but nothing reported it either, and the only
+reason the actuator did not fire twice is that missions were not resumed across restarts at all.
+That is a safe accident, not a decided rule. M3 asks for the rule to be explicit and provable.
+
+### Added
+
+- **A durable mission checkpoint.** The Mound Major now persists a small `cache:mission` record
+  the moment a mission begins and clears it the moment the mission finishes. Around any step that
+  drives an actuator it follows a strict order — persist *intent* (which step is about to fire)
+  → execute the hardware → persist the *result*. A crash in the ambiguous window between execute
+  and result leaves the checkpoint marking that step `actuation_in_flight`.
+- **A deterministic recovery path.** On restart, after authority is re-evaluated, the Major reads
+  the checkpoint and decides once, with no ambiguity:
+  - a **stop** in force → the mission stays stopped, the stop is not cleared;
+  - authority **did not survive** (quiesced / expired / no charter) → the mission fails, closed;
+  - a step was **mid-actuation** → the mission fails as *ambiguous*: its physical outcome cannot
+    be proven across a restart and is **never replayed**;
+  - interrupted **before** any actuation → the mission fails as interrupted, not resumed;
+  - **completed** or **no mission** → nothing to recover, no phantom report.
+
+### Authority / safety
+
+- **Narrows behavior, never widens it.** Every recovery outcome is `failed` or `stopped` — a
+  restart can only end an interrupted mission, never silently continue one. This is the fail-closed
+  rule from SAFETY.md applied to in-flight physical work: *if MicroMound cannot prove whether an
+  actuation occurred, it does not automatically repeat it.*
+- **No new wire state.** Recovery reports reuse the existing `MissionReport` vocabulary
+  (`failed` / `stopped`); the checkpoint is local cache state (`cache:mission`), never on the wire.
+  **Canonical bytes are unchanged.** No refusal reason changed.
+
+### Cleanup
+
+- Removed a dangling `IEvidenceBundler` interface that had no implementation and no caller (a
+  loose end noted in the v0.9.0 entry).
+- Documentation now describes the **standard six-ant colony configured by capabilities**, not a
+  catalogue of device-specific ants (no "Soil Ant" / "Watering Ant" as if they were distinct
+  types). Specialized workers remain an explicit, optional extension point. ROADMAP marks **M3
+  complete** and states the remaining M4 work concretely.
+- Versioning convention recorded: the M3 line continues as patch releases (`v0.9.1`, `v0.9.2`, …);
+  `v0.10.0` is reserved for the next real milestone.
+
+---
+
 ## v0.9.0 — the store bounds itself and says what it cost
 
 An M3 durability slice: the local evidence store no longer grows without bound when a mound is
