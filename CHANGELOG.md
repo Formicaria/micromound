@@ -12,6 +12,65 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.10 — the independent watchdog thread
+
+The M4 slice that closes the safety gap v0.9.9 opened. A held actuation keeps a line energized between
+ticks, so a service loop that *hangs* could leave a line hot — the soft, loop-driven heartbeat refuses
+new actuations but cannot release a line the loop is no longer running to release. This adds a
+hardware-independent watchdog on its own thread that notices the loop has stopped and drives the mound
+to a de-energized, stopped state without the loop's cooperation. It was flagged in v0.9.9 as a
+prerequisite before a mound holds real loads unattended; it now exists. No wire change, no new refusal
+reason, no authority widened.
+
+### Added
+
+- **`LoopWatchdog`** (`Micromound.Host`): the pure timing core — `Kick(now)` pushes the deadline
+  forward, `CheckUnresponsive(now)` fires ONCE (latched) when the loop has been silent past the
+  timeout. Holds no thread and no clock (it is fed the time), so its whole decision is unit-tested
+  against a fake clock.
+- **`WatchdogThread`** (`Micromound.Host`): the thin wrapper that runs the watchdog on its OWN
+  background thread (not the loop's, and not a thread-pool thread a blocked continuation could
+  starve), waking on a short cadence to check. `Start` / `Kick` / `Dispose(join)`. The clock is
+  injectable so even the thread is tested deterministically.
+- **`MoundHost.WatchdogStop(reason)`**: the fire action — a sticky, persisted stop that de-energizes
+  every driver and records an auditable trip, run on the watchdog thread.
+- **The daemon arms it.** New `--watchdog-s`: the hard timeout; `0` disables, omitted auto-derives a
+  generous `max(3×heartbeat, 6×interval)`. The loop kicks after each completed tick and disposes the
+  watchdog before a deliberate shutdown (so a clean stop is never mistaken for a hang).
+
+### Authority / safety
+
+- **A held line can no longer stay hot behind a hung loop.** When the loop stops kicking for the whole
+  timeout, the watchdog thread de-energizes and stops the mound. The stop is sticky and persisted — a
+  loop that had to be rescued by the independent watchdog is not trusted until an operator has looked,
+  and a restart never clears it. Set the timeout generously so an ordinary GC or scheduling pause never
+  trips it.
+- **The concurrency is made correct, not assumed.** `GuardAnt` is now internally thread-safe (the one
+  component touched by both the loop and the watchdog thread). The host serialises its safe-state path
+  (`EnterSafeState` / `Stop` / `ServiceActuations` / `PersistAuthority` / `WatchdogStop`) behind one
+  gate, with a consistent lock order (gate → guard) so there is no deadlock, and the watchdog takes the
+  gate with a *bounded* wait so it can never itself wedge. The service loop answers the watchdog at the
+  TOP of each tick — reading the trip through the Guard's lock, a memory barrier — so a loop resuming
+  from a hang stops *itself* before sync could authorize an actuation on a stale, not-yet-stopped view
+  of authority (a real window on the weak-memory ARM target).
+- **The one residual gap, named.** If the loop is wedged INSIDE a hardware op holding the safe-state
+  gate, the watchdog cannot safely drive the same drivers; it records the trip it can (the Guard is
+  independently thread-safe) and logs loudly, leaving process supervision (systemd `Restart=`, whose
+  restart de-energizes at configure time) as the documented backstop. Every ordinary hang — sync, a
+  stalled delay, a busy loop — leaves the gate free and the mound is driven fully safe.
+
+### Notes
+
+- The watchdog's logic and the cross-thread stop are proven in the sandbox (a fake clock for the
+  timing, real threads with an injected clock for the thread, and a real host for `WatchdogStop`,
+  including a concurrency stress that runs the gated safe-state ops against the running watchdog with
+  no deadlock). The physical de-energize rides the existing driver safe-state path, so its on-hardware
+  behavior rests on the GPIO port validated on a real board.
+- SAFETY.md's Layer-1 note is updated: the hung-loop gap the timed hold introduced is now closed by
+  this thread, with the wedged-in-driver case as the named residual.
+
+---
+
 ## v0.9.9 — the digital actuator holds its line for a real duration
 
 The M4 slice that makes an actuation actually last. Until now the generic digital actuator was

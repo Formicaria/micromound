@@ -53,6 +53,13 @@ public sealed class MoundHost
     private readonly ComposedMound _mound;
     private readonly byte[] _publicKey;
 
+    // Serialises the physical safe-state path so the service loop and the independent watchdog thread
+    // (WatchdogStop) cannot drive the same hardware and persist authority at the same time. It guards
+    // the hardware-touching, authority-persisting operations — NOT the network sync, which is where a
+    // hang is most likely, so the watchdog can still acquire it and de-energize when the loop is stuck
+    // in sync. Monitor is re-entrant, so the nested EnterSafeState inside Stop is fine.
+    private readonly object _safeGate = new();
+
     private MoundHost(string moundId, byte[] publicKey, IReadOnlyList<IDriver> drivers, ComposedMound mound)
     {
         MoundId = moundId;
@@ -90,13 +97,16 @@ public sealed class MoundHost
     /// </summary>
     public void EnterSafeState()
     {
-        foreach (var driver in _drivers)
+        lock (_safeGate)
         {
-            try { driver.EnterSafeState(); }
-            catch (Exception ex)
+            foreach (var driver in _drivers)
             {
-                Guard.ReportTrip("driver:" + driver.DriverId, "failed to enter safe state: " + ex.Message);
-                Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to enter safe state: {ex.Message}");
+                try { driver.EnterSafeState(); }
+                catch (Exception ex)
+                {
+                    Guard.ReportTrip("driver:" + driver.DriverId, "failed to enter safe state: " + ex.Message);
+                    Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to enter safe state: {ex.Message}");
+                }
             }
         }
     }
@@ -111,15 +121,18 @@ public sealed class MoundHost
     /// </summary>
     public void ServiceActuations(DateTimeOffset now)
     {
-        foreach (var driver in _drivers)
+        lock (_safeGate)
         {
-            if (driver is not ITimedDriver timed)
-                continue;
-            try { timed.ServiceHolds(now); }
-            catch (Exception ex)
+            foreach (var driver in _drivers)
             {
-                Guard.ReportTrip("driver:" + driver.DriverId, "failed to release a timed hold: " + ex.Message);
-                Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to release a timed hold: {ex.Message}");
+                if (driver is not ITimedDriver timed)
+                    continue;
+                try { timed.ServiceHolds(now); }
+                catch (Exception ex)
+                {
+                    Guard.ReportTrip("driver:" + driver.DriverId, "failed to release a timed hold: " + ex.Message);
+                    Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to release a timed hold: {ex.Message}");
+                }
             }
         }
     }
@@ -131,12 +144,53 @@ public sealed class MoundHost
     /// </summary>
     public void Stop()
     {
-        Major.Stop();
-        EnterSafeState();
+        lock (_safeGate)
+        {
+            Major.Stop();
+            EnterSafeState();
+        }
+    }
+
+    /// <summary>
+    /// The independent watchdog's stop, run on the watchdog thread when the service loop has gone
+    /// unresponsive for the whole timeout: de-energize and halt durably, so a held line cannot stay
+    /// hot behind a hung loop. It is a sticky, persisted stop (a restart never clears it) — a loop that
+    /// had to be rescued by the watchdog is not trusted until an operator has looked.
+    ///
+    /// <para>It takes the safe-state gate with a <em>bounded</em> wait rather than blocking forever: if
+    /// the loop is wedged INSIDE a hardware op holding the gate, the watchdog cannot safely drive the
+    /// same drivers, so it records the trip it can (the Guard is independently thread-safe) and logs
+    /// loudly, leaving process supervision (systemd <c>Restart=</c>, whose restart de-energizes at
+    /// configure time) as the backstop. In every ordinary hang — sync, a stalled delay, a busy loop —
+    /// the gate is free and the mound is driven fully safe.</para>
+    /// </summary>
+    public void WatchdogStop(string reason)
+    {
+        // Record the trip first and unconditionally: the Guard is thread-safe on its own, so even if
+        // the gate cannot be taken the mound still carries the reason it must not act.
+        Guard.ReportTrip("watchdog", reason);
+
+        if (!Monitor.TryEnter(_safeGate, TimeSpan.FromSeconds(2)))
+        {
+            Console.Error.WriteLine(
+                "micromound: WATCHDOG could not take the safe-state gate (loop wedged in a hardware op); " +
+                "trip recorded, relying on process supervision to restart and de-energize");
+            return;
+        }
+        try
+        {
+            Major.Stop();
+            EnterSafeState();          // re-entrant on _safeGate
+            Cache.SaveAuthority(Authority);
+        }
+        finally
+        {
+            Monitor.Exit(_safeGate);
+        }
     }
 
     /// <summary>Persist current authority so a restart resumes exactly this state.</summary>
-    public void PersistAuthority() => Cache.SaveAuthority(Authority);
+    public void PersistAuthority() { lock (_safeGate) Cache.SaveAuthority(Authority); }
 
     /// <summary>
     /// Bring a mound up from a manifest over a durable file store. Fails closed: on any composition

@@ -49,10 +49,20 @@ Also at this layer:
   capped again at the effective `max_on_s`), and it is released on the service loop's cadence and by
   the `safe_state` on any stop, quiesce, shutdown, or trip. A line that will not de-energize is not
   swallowed: it keeps its hold pending and escalates to a sticky, persisted stop, because a line that
-  cannot be proven safe is treated as unsafe. The known gap is a fully *hung* loop — the stale-heartbeat
-  rule refuses new actuations but cannot release a line already held — which the **dedicated watchdog
-  thread** (a hardware-independent timer, still to land) closes; it is a prerequisite before a mound
-  holds real loads unattended, and until then `max_on_s` stays conservative and the tick interval short.
+  cannot be proven safe is treated as unsafe.
+- **An independent watchdog releases a held line behind a hung loop.** Because a timed actuation is
+  held between ticks, a service loop that *hangs* would leave a line hot — the stale-heartbeat rule
+  refuses new actuations but cannot release a line already held. A hardware-independent watchdog on its
+  own thread (`LoopWatchdog` / `WatchdogThread`, daemon `--watchdog-s`) notices the loop has stopped
+  kicking and drives the mound to a de-energized, sticky, persisted stop without the loop's help. The
+  concurrency is made correct rather than hoped for: the Guard is thread-safe, the host's safe-state
+  path is serialised behind one gate with a consistent lock order and a bounded wait so the watchdog
+  cannot itself wedge, and the loop answers the watchdog at the top of each tick — through the Guard's
+  lock, a memory barrier — so a loop resuming from a hang stops itself before it could actuate on a
+  stale, not-yet-stopped view of authority. The one residual case is a loop wedged *inside* a driver
+  op holding the gate: the watchdog records the trip it can and logs loudly, and process supervision
+  (systemd `Restart=`, whose restart de-energizes at configure time) is the backstop. Set the timeout
+  generously so an ordinary GC or scheduling pause never trips it.
 - **Clamp, don't lie.** Where a limit narrows a request, the work proceeds and the outcome is
   `clamped`, carrying both the requested and the effective parameters plus the limit responsible.
   A silent clamp is a false statement about what the mound did.

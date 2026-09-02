@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.9
+**Current version:** v0.9.10
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.9`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.10`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -78,12 +78,14 @@ transport** over HTTPS (`v0.9.6`), **device enrollment** (PROTOCOL.md §3): the 
 one-time token, receives and persists the controller's key, and can then verify downlink (`v0.9.7`),
 the **first real driver port**: a Linux GPIO output over `/sys/class/gpio` (`SysfsDigitalOutput`) that
 the generic digital actuator drives instead of an in-memory line, opened fail-closed from the
-manifest's `pin` (`v0.9.8`), and — new in `v0.9.9` — a **digital actuator that holds its line for a
-real duration**: an actuation drives the line active and holds it for the effective `on_s`, released
-on the service loop's cadence and by the safe state on any stop, quiesce, shutdown, or trip (a stuck
-line escalates to a persisted stop). What's still ahead: the analog/ADC real port, a libgpiod backing,
-and the **dedicated watchdog thread** that a held line makes a safety prerequisite (it de-energizes a
-line if the loop hangs) — and the GPIO writes themselves verified on a physical board. End-to-end
+manifest's `pin` (`v0.9.8`), a **digital actuator that holds its line for a real duration**: an
+actuation drives the line active and holds it for the effective `on_s`, released on the service loop's
+cadence and by the safe state on any stop, quiesce, shutdown, or trip (`v0.9.9`), and — new in
+`v0.9.10` — the **independent watchdog thread**: a hardware-independent timer on its own thread that
+de-energizes and stops the mound if the service loop hangs, closing the one gap a held line opened (the
+concurrency is made correct — a thread-safe Guard, a serialised safe-state gate, and the loop
+answering the watchdog before it could actuate on a stale view). What's still ahead: the analog/ADC
+real port and a libgpiod backing — and the GPIO writes themselves verified on a physical board. End-to-end
 simulator missions run against an in-process controller that verifies every byte. The v0 canonical
 bytes will not change again inside v0. The host still runs against generic driver primitives, now
 with a real GPIO line available for digital actuation, not yet a device against real hardware — that

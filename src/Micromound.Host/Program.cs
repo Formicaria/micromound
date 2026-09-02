@@ -31,7 +31,10 @@ if (options is null)
         "  --controller   controller base URL, e.g. https://anthill.example. default: offline\n" +
         "  --enroll-token one-time enrollment token; used once if not already enrolled (PROTOCOL.md §3)\n" +
         "  --interval-s   seconds between service ticks. default: 5\n" +
-        "  --heartbeat-s  watchdog heartbeat timeout; 0 disables the timing check. default: 30");
+        "  --heartbeat-s  soft watchdog heartbeat timeout; 0 disables the timing check. default: 30\n" +
+        "  --watchdog-s   HARD independent-watchdog timeout: an own-thread timer that de-energizes and\n" +
+        "                 stops the mound if the service loop hangs this long. 0 disables; omitted\n" +
+        "                 auto-derives max(3*heartbeat, 6*interval). Keep it generous to avoid false trips.");
     return 2;
 }
 
@@ -86,25 +89,46 @@ catch (HostStartupException ex)
     return 1;
 }
 
+// The HARD watchdog: an independent thread that de-energizes and stops the mound if this loop hangs
+// long enough that a held actuation could stay hot behind it (the soft, loop-driven heartbeat cannot
+// release a line the loop is no longer running to release). Omitted → derive a generous default from
+// the heartbeat and tick interval; 0 → disabled.
+var watchdogSeconds = options.WatchdogSeconds
+    ?? Math.Max(options.HeartbeatTimeoutSeconds > 0 ? options.HeartbeatTimeoutSeconds * 3 : 0, options.IntervalSeconds * 6);
+
 Console.WriteLine(
     $"micromound: {host.MoundId} up, state={host.State}. Running offline until a controller " +
-    "transport is configured; Ctrl-C / SIGTERM to stop safely.");
+    "transport is configured; Ctrl-C / SIGTERM to stop safely." +
+    (watchdogSeconds > 0 ? $" Independent watchdog armed at {watchdogSeconds:0.#}s." : " Independent watchdog disabled."));
 
 using var cts = new CancellationTokenSource();
 using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, c => { c.Cancel = true; cts.Cancel(); });
 using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, c => { c.Cancel = true; cts.Cancel(); });
+
+WatchdogThread? watchdog = null;
+if (watchdogSeconds > 0)
+{
+    watchdog = new WatchdogThread(TimeSpan.FromSeconds(watchdogSeconds), () =>
+    {
+        Console.Error.WriteLine("micromound: WATCHDOG fired — service loop unresponsive; de-energizing and stopping.");
+        host.WatchdogStop($"service loop unresponsive for {watchdogSeconds:0.#}s");
+    });
+    watchdog.Start();
+}
 
 try
 {
     while (!cts.IsCancellationRequested)
     {
         service.Tick(DateTimeOffset.UtcNow);
+        watchdog?.Kick();   // a full tick completed: the loop is alive
         try { await Task.Delay(TimeSpan.FromSeconds(options.IntervalSeconds), cts.Token); }
         catch (TaskCanceledException) { /* a shutdown signal; fall through to the safe stop */ }
     }
 }
 finally
 {
+    watchdog?.Dispose();   // stop watching before the deliberate shutdown, so a clean stop is not a "hang"
     service.Shutdown(DateTimeOffset.UtcNow);
     Console.WriteLine("micromound: safe state entered, authority persisted. Stopped.");
 }
@@ -112,7 +136,7 @@ finally
 return 0;
 
 /// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
-file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, string? EnrollToken, double IntervalSeconds, double HeartbeatTimeoutSeconds)
+file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, string? EnrollToken, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
 {
     public static HostArgs? Parse(string[] args)
     {
@@ -122,6 +146,7 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
         string? enrollToken = null;
         var interval = 5.0;
         var heartbeat = 30.0;
+        double? watchdog = null;   // null → auto-derive a safe default; 0 → explicitly disabled
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -135,10 +160,11 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
                 case "--enroll-token" when i + 1 < args.Length: enrollToken = args[++i]; break;
                 case "--interval-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var iv) && iv > 0: interval = iv; i++; break;
                 case "--heartbeat-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var hb) && hb >= 0: heartbeat = hb; i++; break;
+                case "--watchdog-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var wd) && wd >= 0: watchdog = wd; i++; break;
                 default: return null;   // unknown or malformed argument → usage
             }
         }
 
-        return manifest is null ? null : new HostArgs(manifest, state, controller, enrollToken, interval, heartbeat);
+        return manifest is null ? null : new HostArgs(manifest, state, controller, enrollToken, interval, heartbeat, watchdog);
     }
 }

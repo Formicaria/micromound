@@ -26,15 +26,23 @@ public sealed class MoundService(MoundHost host)
     public bool SafeStateEngaged => host.Guard.SafeStateRequired;
 
     /// <summary>
-    /// One service tick: mark the runtime alive, run a sync beat, refresh the watchdog, release any
-    /// elapsed actuation hold, and respond to the watchdog. A sticky trip is escalated to a persisted
-    /// stop (durable across a restart); any safe-state demand also physically de-energizes now. The
-    /// hold sweep runs before the watchdog response so that a hold that will not release — itself a
-    /// trip — is escalated within the same tick. Idempotent.
+    /// One service tick: mark the runtime alive, respond to any pending trip, run a sync beat, refresh
+    /// the watchdog, release any elapsed actuation hold, and respond again. A sticky trip is escalated
+    /// to a persisted stop (durable across a restart); any safe-state demand also physically
+    /// de-energizes now. Idempotent.
+    ///
+    /// <para><b>Why the watchdog is answered FIRST, before sync.</b> The independent watchdog thread
+    /// can record a trip (and drive a stop) while this loop is stuck. When the loop resumes, reading
+    /// <c>Guard.HasTrip</c> here takes the Guard's own lock — a memory barrier — so the loop observes
+    /// that trip and stops ITSELF before <see cref="MoundHost.Sync"/> could authorize a downlinked
+    /// actuation on a stale, not-yet-stopped view of authority (a real window on the weak-memory ARM
+    /// target). From that point everything is same-thread. The second response at the end catches a
+    /// trip that AROSE during this tick — e.g. a driver that failed to release a hold.</para>
     /// </summary>
     public void Tick(DateTimeOffset now)
     {
         host.Beat(now);
+        RespondToWatchdog(now);        // observe any watchdog/interlock trip first, via the Guard lock barrier
         host.Sync(now);
         host.PollHealth(now);
         host.ServiceActuations(now);   // release any line whose on_s has elapsed

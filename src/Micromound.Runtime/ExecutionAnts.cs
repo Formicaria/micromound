@@ -132,6 +132,13 @@ public sealed class ForagerAnt(CapabilityKernel kernel, IEvidenceLookup? evidenc
 /// </summary>
 public sealed class GuardAnt : IGuardAnt
 {
+    // The Guard is the one runtime component touched from two threads: the service loop (Beat, Poll,
+    // and the trip reads) and the independent watchdog thread (ReportTrip when it finds the loop
+    // unresponsive — see Micromound.Host's LoopWatchdog). Every read and write of its mutable state is
+    // taken under this lock so a concurrent ReportTrip and Poll cannot corrupt the trip map or race on
+    // the heartbeat flags. Evidence is built under the lock but published outside it, so a sink that
+    // re-entered the Guard could not deadlock.
+    private readonly object _lock = new();
     private readonly Dictionary<string, string> _trips = new(StringComparer.Ordinal);
     private readonly Action<EvidenceItem>? _publish;
     private DateTimeOffset? _lastBeat;
@@ -162,44 +169,57 @@ public sealed class GuardAnt : IGuardAnt
     public WorkerState State => SafeStateRequired ? WorkerState.Degraded : WorkerState.Idle;
 
     /// <summary>True when the mound must not actuate. Reflects the most recent <see cref="Poll"/>.</summary>
-    public bool SafeStateRequired => _heartbeatStale || _trips.Count > 0;
+    public bool SafeStateRequired { get { lock (_lock) return _heartbeatStale || _trips.Count > 0; } }
 
     /// <summary>True when a sticky safety trip is in force — as opposed to a self-healing stale heartbeat.</summary>
-    public bool HasTrip => _trips.Count > 0;
+    public bool HasTrip { get { lock (_lock) return _trips.Count > 0; } }
 
     /// <summary>Why, in words, for the record that refuses the work. Empty when nothing is wrong.</summary>
-    public string Reason =>
-        _trips.Count > 0
-            ? "safety trip observed — " + string.Join("; ", _trips.Select(t => $"{t.Key}: {t.Value}"))
-            : _heartbeatStale
-                ? $"runtime heartbeat stale (timeout {HeartbeatTimeoutSeconds}s)"
-                : "";
+    public string Reason
+    {
+        get
+        {
+            lock (_lock)
+                return _trips.Count > 0
+                    ? "safety trip observed — " + string.Join("; ", _trips.Select(t => $"{t.Key}: {t.Value}"))
+                    : _heartbeatStale
+                        ? $"runtime heartbeat stale (timeout {HeartbeatTimeoutSeconds}s)"
+                        : "";
+        }
+    }
 
     /// <summary>The runtime is alive. Called on a cadence by whatever owns the loop.</summary>
-    public void Beat(DateTimeOffset now) => _lastBeat = now;
+    public void Beat(DateTimeOffset now) { lock (_lock) _lastBeat = now; }
 
     /// <summary>
-    /// Record an observed safety trip — an interlock, a thermal cut-out, a limit switch. Sticky
-    /// by construction: nothing here clears it.
+    /// Record an observed safety trip — an interlock, a thermal cut-out, a limit switch, or the
+    /// independent watchdog finding the loop unresponsive. Sticky by construction: nothing here
+    /// clears it. Safe to call from the watchdog thread while the loop is polling.
     /// </summary>
-    public void ReportTrip(string source, string detail) => _trips[source] = detail;
+    public void ReportTrip(string source, string detail) { lock (_lock) _trips[source] = detail; }
 
     public IReadOnlyList<EvidenceItem> Poll(DateTimeOffset now)
     {
-        _heartbeatStale = HeartbeatTimeoutSeconds > 0 &&
-                          (_lastBeat is not { } beat || (now - beat).TotalSeconds > HeartbeatTimeoutSeconds);
+        EvidenceItem item;
+        lock (_lock)
+        {
+            _heartbeatStale = HeartbeatTimeoutSeconds > 0 &&
+                              (_lastBeat is not { } beat || (now - beat).TotalSeconds > HeartbeatTimeoutSeconds);
 
-        // Health is reported as evidence rather than as a log line, because a mound that entered
-        // its safe state has to be able to prove afterwards why it did — SAFETY.md forbids silent
-        // anything, and "it just stopped" is the silent kind.
-        var age = _lastBeat is { } last ? (now - last).TotalSeconds : -1;
+            // Health is reported as evidence rather than as a log line, because a mound that entered
+            // its safe state has to be able to prove afterwards why it did — SAFETY.md forbids silent
+            // anything, and "it just stopped" is the silent kind.
+            var age = _lastBeat is { } last ? (now - last).TotalSeconds : -1;
 
-        // The counter, not the clock, makes the id unique. Two polls inside the same wire-format
-        // second are ordinary, and an evidence store keyed by id would silently keep one of them.
-        var item = EvidenceReadings.Create(
-            $"guard-{++_polls}-{now.ToWire()}", "sense.runtime_heartbeat_age_s", age, now,
-            unit: "seconds", source: DefaultAnts.Guard);
+            // The counter, not the clock, makes the id unique. Two polls inside the same wire-format
+            // second are ordinary, and an evidence store keyed by id would silently keep one of them.
+            item = EvidenceReadings.Create(
+                $"guard-{++_polls}-{now.ToWire()}", "sense.runtime_heartbeat_age_s", age, now,
+                unit: "seconds", source: DefaultAnts.Guard);
+        }
 
+        // Publish outside the lock: a sink is not expected to re-enter the Guard, and holding the lock
+        // across an external callback is how a deadlock is invited.
         _publish?.Invoke(item);
         return [item];
     }

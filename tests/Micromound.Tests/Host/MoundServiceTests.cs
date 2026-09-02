@@ -181,6 +181,61 @@ public sealed class MoundServiceTests : IDisposable
         Assert.Equal("stopped", reborn.State);
     }
 
+    [Fact]
+    public void The_watchdog_stop_de_energizes_a_held_line_stops_and_persists()
+    {
+        // The independent watchdog's action, exercised directly: a mission has left a line held hot,
+        // the loop is (imagined) hung, and WatchdogStop must drive the line safe, halt, and make the
+        // stop durable — the whole reason the watchdog exists now that actuations are held.
+        var keys = Ed25519KeyPair.Generate();
+        var line = new InMemoryDigitalOutput();
+        var host = Host("mm-wd", line, keys);
+        var service = new MoundService(host);
+        host.Major.AcceptCharter(Charter("mm-wd"), Now);
+        host.Cache.SaveAuthority(host.Authority);
+        service.Tick(Now);
+
+        host.ExecuteMission(Watering("mm-wd"), Now);   // waters: the line is held active
+        Assert.True(line.State);
+
+        host.WatchdogStop("service loop unresponsive");
+        Assert.False(line.State);             // de-energized
+        Assert.Equal("stopped", host.State);  // halted
+        Assert.True(host.Guard.HasTrip);      // a recorded, auditable reason
+
+        // Durable: a reborn host over a working line stays stopped.
+        var reborn = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Manifest("mm-wd"), StateDirectory = _dir,
+            Drivers = FactoriesWith(new InMemoryDigitalOutput())
+        });
+        reborn.Restore(Now.AddSeconds(5));
+        Assert.Equal("stopped", reborn.State);
+    }
+
+    [Fact]
+    public void A_resumed_loop_observes_the_watchdog_stop_before_it_could_actuate_again()
+    {
+        // The concurrency case: the watchdog fired on its own thread (here, a direct call) while this
+        // loop was stuck. When the loop resumes and ticks, it must observe the stop at the TOP of the
+        // tick — before sync could authorize an actuation — and stay stopped.
+        var line = new InMemoryDigitalOutput();
+        var host = Host("mm-wd2", line, Ed25519KeyPair.Generate());
+        var service = new MoundService(host);
+        host.Major.AcceptCharter(Charter("mm-wd2"), Now);
+        host.Cache.SaveAuthority(host.Authority);
+        service.Tick(Now);
+
+        host.WatchdogStop("service loop unresponsive");   // fired while the loop was "hung"
+
+        service.Tick(Now.AddSeconds(1));                  // the loop resumes and ticks
+        Assert.Equal("stopped", host.State);              // honoured the stop, did not carry on
+
+        var report = host.ExecuteMission(Watering("mm-wd2"), Now.AddSeconds(2));
+        Assert.NotEqual(MissionStates.Completed, report.State);   // actuation refused under the stop
+        Assert.False(line.State);
+    }
+
     /// <summary>A line that refuses to de-energize once hot — the physical failure a held line must
     /// survive. The initial safe write (while already low) succeeds; a low write while high throws.</summary>
     private sealed class ThrowsOnRelease : IDigitalOutput
