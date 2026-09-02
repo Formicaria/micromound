@@ -43,6 +43,16 @@ Also at this layer:
   self-healing — a watchdog that latched on a scheduling hiccup is one nobody leaves enabled — but
   **an observed trip is sticky and nothing in software clears it**, because software that could
   clear a trip is software that could be asked to.
+- **A timed actuation is held, and its release is owed on every path.** A digital actuator drives its
+  line active and holds it for the effective `on_s`, so a real valve is open for its duration rather
+  than pulsed; the hold is bounded (the requested `on_s` is clamped to the intersected limit tiers and
+  capped again at the effective `max_on_s`), and it is released on the service loop's cadence and by
+  the `safe_state` on any stop, quiesce, shutdown, or trip. A line that will not de-energize is not
+  swallowed: it keeps its hold pending and escalates to a sticky, persisted stop, because a line that
+  cannot be proven safe is treated as unsafe. The known gap is a fully *hung* loop — the stale-heartbeat
+  rule refuses new actuations but cannot release a line already held — which the **dedicated watchdog
+  thread** (a hardware-independent timer, still to land) closes; it is a prerequisite before a mound
+  holds real loads unattended, and until then `max_on_s` stays conservative and the tick interval short.
 - **Clamp, don't lie.** Where a limit narrows a request, the work proceeds and the outcome is
   `clamped`, carrying both the requested and the effective parameters plus the limit responsible.
   A silent clamp is a false statement about what the mound did.

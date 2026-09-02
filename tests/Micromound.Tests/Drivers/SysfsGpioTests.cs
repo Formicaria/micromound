@@ -133,7 +133,7 @@ public sealed class SysfsGpioTests : IDisposable
     }
 
     [Fact]
-    public void The_sysfs_actuator_pulses_the_real_value_file_and_ends_inactive()
+    public void The_sysfs_actuator_holds_the_real_value_file_high_then_a_sweep_releases_it()
     {
         var pinDir = ExportPin(17);
         var driver = new SysfsDigitalActuatorFactory(_root).Create();
@@ -152,8 +152,11 @@ public sealed class SysfsGpioTests : IDisposable
         });
 
         Assert.True(outcome.Succeeded);
-        // Momentary / fail-safe: the last write leaves the physical line low, never latched hot.
-        Assert.Equal("0", File.ReadAllText(Path.Combine(pinDir, "value")));
+        // Held active for its duration — a real valve is actually open, not pulsed for a microsecond.
+        Assert.Equal("1", File.ReadAllText(Path.Combine(pinDir, "value")));
+
+        ((ITimedDriver)driver).ServiceHolds(Now.AddSeconds(5));   // the clock-driven deadline sweep
+        Assert.Equal("0", File.ReadAllText(Path.Combine(pinDir, "value")));   // released to safe
     }
 
     [Fact]
@@ -221,27 +224,6 @@ public sealed class SysfsGpioTests : IDisposable
             State = high;
             if (!high) SafeWrites++;   // count reaching the safe (low) level
         }
-    }
-
-    [Fact]
-    public void A_failure_to_release_the_line_faults_and_re_attempts_safe_never_propagates()
-    {
-        // Writes: 1 = configure's initial safe write, 2 = energize, 3 = release (throws here).
-        var line = new ThrowingDigitalOutput(throwOnWriteNumber: 3);
-        var driver = new DigitalActuatorDriver(line);
-        driver.Configure(new Dictionary<string, string> { ["capability"] = "act.water_valve" });
-
-        var outcome = driver.Executors[0].Execute(new CapabilityExecution
-        {
-            CapabilityId = "act.water_valve",
-            Parameters = new Dictionary<string, double> { ["on_s"] = 5 },
-            StartedAt = Now,
-            EffectiveLimits = new CapabilityLimits()
-        });
-
-        Assert.False(outcome.Succeeded);                 // faulted, not silently OK
-        Assert.Contains("release", outcome.Detail);      // the dangerous case named
-        Assert.False(line.State);                        // the best-effort re-safe drove it low
     }
 
     [Fact]

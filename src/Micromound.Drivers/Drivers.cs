@@ -71,6 +71,27 @@ public interface IDriver
 }
 
 /// <summary>
+/// A driver with a time-based obligation the service loop must drive to completion — for the digital
+/// actuator, a line held active for a bounded <c>on_s</c> that has to be released when its duration
+/// elapses. Kept off <see cref="IDriver"/> itself because a sensor and a momentary device have no
+/// timed obligation; the host services only the drivers that declare one (as it wires only the
+/// evidence sources for <see cref="IEvidenceSource"/>).
+///
+/// <para><b>Safety contract.</b> <see cref="ServiceHolds"/> is the clock-driven half of a bounded
+/// hold: <see cref="IDriver.EnterSafeState"/> can release a hold at any time (stop, quiesce, shutdown,
+/// trip), and this releases it when the deadline passes on the normal path. It is idempotent, and — as
+/// with <c>EnterSafeState</c> — it MAY throw if the hardware cannot be driven safe; the host isolates
+/// that and turns it into a sticky trip, because a line that will not release must be treated as
+/// unsafe. A driver that cannot release also keeps its hold pending so the next tick retries.</para>
+/// </summary>
+public interface ITimedDriver
+{
+    /// <summary>Given the current time, fulfil any elapsed time-based obligation — release a hold whose
+    /// duration has passed. Idempotent; safe to call every tick whether or not a hold is active.</summary>
+    void ServiceHolds(DateTimeOffset now);
+}
+
+/// <summary>
 /// Drivers available in this build, resolved by the id a manifest names. Populated at startup;
 /// a manifest naming a driver that is not here fails validation rather than being ignored.
 /// </summary>

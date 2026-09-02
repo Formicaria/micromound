@@ -140,7 +140,7 @@ public class DriverCompositionTests
     }
 
     [Fact]
-    public void The_actuator_executor_fires_momentarily_and_produces_no_evidence()
+    public void The_actuator_holds_the_line_for_its_duration_then_releases_and_produces_no_evidence()
     {
         var line = new InMemoryDigitalOutput();
         var driver = new DigitalActuatorDriver(line);
@@ -157,8 +157,16 @@ public class DriverCompositionTests
         Assert.True(outcome.Succeeded);
         Assert.Equal(1, driver.Actuations);
         Assert.Equal(8, driver.LastOnSeconds);
-        Assert.False(line.State);                // momentary / fail-safe: never left latched active
-        Assert.Empty(outcome.Evidence);          // a command is not evidence
+        Assert.True(line.State);                  // HELD active for its duration — a real valve is open
+        Assert.True(driver.IsHolding);
+        Assert.Empty(outcome.Evidence);           // a command is not evidence
+
+        driver.ServiceHolds(Now.AddSeconds(5));   // before the deadline: still held
+        Assert.True(line.State);
+
+        driver.ServiceHolds(Now.AddSeconds(8));   // deadline reached: released
+        Assert.False(line.State);
+        Assert.False(driver.IsHolding);
     }
 
     [Fact]

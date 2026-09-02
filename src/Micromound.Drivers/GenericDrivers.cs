@@ -122,13 +122,30 @@ public abstract class GenericDriverBase : IDriver, IEvidenceSource
 /// produces no evidence of its own: a command is not evidence, so an actuator with no independent
 /// sensor leaves its outcome <c>unverified</c> until a separate sensor device confirms it.
 ///
-/// <para><b>Momentary and fail-safe.</b> Without a hardware scheduler this primitive cannot hold the
-/// line active for <c>on_s</c> and guarantee it releases, so it drives the line to its active level
-/// and back to its safe level within one execution rather than latching a line hot that only a later
-/// <see cref="EnterSafeState"/> could clear. Holding for a real duration is the timed-driver work of
-/// the hardware slice; the effective <c>on_s</c> is required and recorded, never defaulted.</para>
+/// <para><b>Timed hold, bounded and fail-safe.</b> An execution drives the line to its active level
+/// and HOLDS it for <c>on_s</c>, then releases it — so a real valve is actually open for its duration,
+/// not pulsed for a microsecond. The hold is driven by the clock, not a private thread: the service
+/// loop calls <see cref="ServiceHolds"/> every tick, which releases the line once the deadline passes.
+/// The hold is bounded on every side — <c>on_s</c> arrives already clamped to the intersected limit
+/// tiers, and it is capped again here at the effective <c>max_on_s</c> as a last-resort belt — and it
+/// is released by <see cref="EnterSafeState"/> on any stop, quiesce, shutdown, or trip. Because the
+/// line is deliberately held active between ticks, the release granularity is one tick: the real hold
+/// can run up to one tick interval past <c>on_s</c>, so a hard hardware bound should carry that margin.
+/// If the release write itself fails the hold stays pending (the next tick retries) and the failure is
+/// escalated to a trip.</para>
+///
+/// <para><b>The safety trade this makes, and its one gap.</b> Unlike the momentary primitive it
+/// replaces, a timed hold intentionally relies on a later action to de-energize the line, so its
+/// safety depends on the service loop continuing to tick. Every ORDERLY path is covered — a stop,
+/// quiesce, shutdown, trip, or a mere slow tick all release the line — and a stuck line escalates to a
+/// persisted stop. The remaining gap is a fully <em>hung</em> loop: the kernel's stale-heartbeat rule
+/// still refuses NEW actuations, but it cannot release a line already held, so a hang can leave a line
+/// energized until it is torn down (a restart de-energizes at configure time). Closing that gap is the
+/// job of the dedicated watchdog thread — a separate hardware-independent timer that this design
+/// elevates from a nicety to a prerequisite before a mound holds real loads unattended. Until it
+/// lands, keep <c>max_on_s</c> conservative and the tick interval short. SAFETY.md tracks this.</para>
 /// </summary>
-public sealed class DigitalActuatorDriver : GenericDriverBase
+public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
 {
     private readonly Func<IReadOnlyDictionary<string, string>, IDigitalOutput> _portBuilder;
     private IDigitalOutput? _output;
@@ -136,6 +153,7 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
     private bool _activeHigh = true;
     private CapabilityDescriptor? _descriptor;
     private Executor? _executor;
+    private DateTimeOffset? _heldUntil;
 
     /// <summary>
     /// The port is built from the manifest's settings at <see cref="OnConfigure"/> time, not at
@@ -157,6 +175,9 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
     /// <summary>Effective seconds of the last actuation, for a test or a health view.</summary>
     public double LastOnSeconds { get; private set; }
 
+    /// <summary>True while the line is held active awaiting its timed release, for a test or health view.</summary>
+    public bool IsHolding => _heldUntil is not null;
+
     public override IReadOnlyList<CapabilityDescriptor> Capabilities =>
         _descriptor is null ? [] : [_descriptor];
 
@@ -169,7 +190,8 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
         _activeHigh = true;
         _descriptor = null;
         _executor = null;
-        _output = null;   // drop any port a prior configuration opened, so a failed reconfigure holds no line
+        _output = null;      // drop any port a prior configuration opened, so a failed reconfigure holds no line
+        _heldUntil = null;   // a reconfigure ends any hold; the port drops with it
     }
 
     protected override void OnConfigure(IReadOnlyDictionary<string, string> settings, List<string> errors)
@@ -230,9 +252,30 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
         _output.Write(!_activeHigh);   // start in the safe (inactive) level
     }
 
-    // Null-guarded: an unconfigured or failed driver has no line to make safe, and being asked to
-    // enter safe state must never itself throw.
-    public override void EnterSafeState() => _output?.Write(!_activeHigh);
+    // Null-guarded: an unconfigured or failed driver has no line to make safe. This is the release
+    // path for a stop, quiesce, shutdown, or trip — it drives the line to safe and ends any hold. If
+    // the port write throws, the hold stays pending (so ServiceHolds and any later safe-state call
+    // both keep trying) and the exception propagates for the host to escalate to a trip; a line that
+    // will not de-energize must be treated as unsafe (SAFETY.md).
+    public override void EnterSafeState()
+    {
+        _output?.Write(!_activeHigh);
+        _heldUntil = null;   // reached only if the write did not throw: the line is safe, the hold is over
+    }
+
+    /// <summary>
+    /// Release the held line once its duration has elapsed — the clock-driven half of the timed hold,
+    /// called by the service loop each tick. Idempotent: with no active hold, or before the deadline,
+    /// it does nothing. If the release write throws the hold is LEFT pending (the next tick retries)
+    /// and the exception propagates, so the host turns a stuck line into a sticky trip.
+    /// </summary>
+    public void ServiceHolds(DateTimeOffset now)
+    {
+        if (_heldUntil is null || now < _heldUntil.Value)
+            return;
+        _output?.Write(!_activeHigh);   // may throw → hold stays pending, host trips
+        _heldUntil = null;
+    }
 
     /// <summary>Drive to the safe level, swallowing any port error — a last-resort de-energize that
     /// must never itself throw. A real port write can fail (a yanked line, a transient sysfs error);
@@ -241,6 +284,7 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
     {
         try { _output?.Write(!_activeHigh); }
         catch { /* the line is not controllable; the fault outcome carries that upward */ }
+        _heldUntil = null;
     }
 
     private sealed class Executor(DigitalActuatorDriver driver) : ICapabilityExecutor
@@ -255,18 +299,21 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
             if (!execution.Parameters.TryGetValue("on_s", out var onSeconds))
                 return ExecutionOutcome.Fault("digital actuator requires an 'on_s' duration");
 
-            driver.Actuations++;
-            driver.LastOnSeconds = onSeconds;
+            // on_s is already clamped to the intersected limit tiers (CapabilityExecution: "effective
+            // values, not requested ones"). Cap it again at the effective max_on_s here as a last-resort
+            // belt, so even a contract violation upstream can never hold the line beyond the hardware
+            // bound. A non-positive or non-finite duration is not a hold — refuse it.
+            var hold = onSeconds;
+            if (execution.EffectiveLimits.MaxOnSeconds is { } max && hold > max)
+                hold = max;
+            if (!double.IsFinite(hold) || hold <= 0)
+                return ExecutionOutcome.Fault($"digital actuator needs a positive, bounded 'on_s', not {onSeconds}");
 
-            // Drive active, then back to safe within the one execution: never leave the line hot
-            // relying on a later EnterSafeState. A real timed driver holds for on_s; this does not.
-            // The executor exists only while Health is Healthy, which is exactly when _output is set.
-            //
-            // A real GPIO write can THROW (an in-memory line never did). Both writes are guarded so a
-            // failure never leaves a physical line latched hot with an exception sailing past: if the
-            // energize fails nothing was actuated; if the RELEASE fails — the dangerous case — we make
-            // one more best-effort attempt to drive safe and return a fault, never propagate with the
-            // line possibly still active.
+            // Drive the line active and HOLD it. The executor exists only while Health is Healthy, which
+            // is exactly when _output is set. A real GPIO write can THROW (an in-memory line never did);
+            // if the energize fails, nothing was actuated — drive safe best-effort and fault, never
+            // propagate with the line possibly latched. On success the line is now held; ServiceHolds
+            // (each tick) or EnterSafeState (any stop) releases it.
             try
             {
                 driver._output!.Write(driver._activeHigh);
@@ -277,18 +324,14 @@ public sealed class DigitalActuatorDriver : GenericDriverBase
                 return ExecutionOutcome.Fault("actuator could not drive its line active: " + ex.Message);
             }
 
-            try
-            {
-                driver._output!.Write(!driver._activeHigh);
-            }
-            catch (Exception ex)
-            {
-                driver.DriveSafeBestEffort();
-                return ExecutionOutcome.Fault("actuator could not release its line after actuating: " + ex.Message);
-            }
+            driver.Actuations++;
+            driver.LastOnSeconds = hold;
+            driver._heldUntil = execution.StartedAt + TimeSpan.FromSeconds(hold);
 
             // No evidence: a command is not evidence. A separate sensor device confirms the effect,
-            // or the outcome stays unverified. That is the gate doing its job, not a gap here.
+            // or the outcome stays unverified. That is the gate doing its job, not a gap here. The
+            // kernel infers EndedAt from the duration parameter, so duty-cycle accounting already spans
+            // the hold; the hardware now matches that model instead of pulsing.
             return ExecutionOutcome.Ok();
         }
     }

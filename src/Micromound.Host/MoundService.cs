@@ -26,15 +26,18 @@ public sealed class MoundService(MoundHost host)
     public bool SafeStateEngaged => host.Guard.SafeStateRequired;
 
     /// <summary>
-    /// One service tick: mark the runtime alive, run a sync beat, refresh the watchdog, and respond
-    /// to it. A sticky trip is escalated to a persisted stop (durable across a restart); any
-    /// safe-state demand also physically de-energizes now. Idempotent.
+    /// One service tick: mark the runtime alive, run a sync beat, refresh the watchdog, release any
+    /// elapsed actuation hold, and respond to the watchdog. A sticky trip is escalated to a persisted
+    /// stop (durable across a restart); any safe-state demand also physically de-energizes now. The
+    /// hold sweep runs before the watchdog response so that a hold that will not release — itself a
+    /// trip — is escalated within the same tick. Idempotent.
     /// </summary>
     public void Tick(DateTimeOffset now)
     {
         host.Beat(now);
         host.Sync(now);
         host.PollHealth(now);
+        host.ServiceActuations(now);   // release any line whose on_s has elapsed
         RespondToWatchdog(now);
     }
 

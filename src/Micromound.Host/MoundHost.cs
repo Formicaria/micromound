@@ -102,6 +102,29 @@ public sealed class MoundHost
     }
 
     /// <summary>
+    /// Release any timed actuation hold whose duration has elapsed — the physical half of honouring
+    /// <c>on_s</c>, driven on the service loop's cadence. A held line whose deadline has passed is
+    /// driven safe; a driver that cannot release it is isolated (its hold stays pending, so the next
+    /// tick retries) and, exactly as with <see cref="EnterSafeState"/>, the failure is NOT silent: it
+    /// becomes a sticky safety trip and is written to stderr, because a line that will not de-energize
+    /// must be treated as unsafe (SAFETY.md).
+    /// </summary>
+    public void ServiceActuations(DateTimeOffset now)
+    {
+        foreach (var driver in _drivers)
+        {
+            if (driver is not ITimedDriver timed)
+                continue;
+            try { timed.ServiceHolds(now); }
+            catch (Exception ex)
+            {
+                Guard.ReportTrip("driver:" + driver.DriverId, "failed to release a timed hold: " + ex.Message);
+                Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to release a timed hold: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
     /// Halt actuation and enter the declared safe state — a sticky stop. Unlike a graceful shutdown,
     /// a stop survives a restart (restart never clears a stop), so it is how a safety trip is made
     /// durable. Keeps sensing and syncing.

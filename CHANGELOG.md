@@ -12,6 +12,56 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.9 — the digital actuator holds its line for a real duration
+
+The M4 slice that makes an actuation actually last. Until now the generic digital actuator was
+*momentary* — it pulsed the line active then immediately safe within one execution, so on real
+hardware a valve never opened. It now drives the line active and **holds it for the effective
+`on_s`**, releasing it on the service loop's cadence. This is a driver-mechanism change behind an
+existing capability: no wire change, no new refusal reason, no authority widened.
+
+### Added
+
+- **`ITimedDriver`** (`Micromound.Drivers`): the clock-driven seam a driver with a time-based
+  obligation implements — `ServiceHolds(now)` releases a hold whose duration has elapsed. The host
+  services only the drivers that declare it, as it wires only the evidence sources for
+  `IEvidenceSource`.
+- **`DigitalActuatorDriver` now holds and releases.** An execution drives the line active and records
+  a deadline of `started_at + on_s`; `ServiceHolds` releases it once the deadline passes. `IsHolding`
+  exposes the state for a health view or a test.
+- **`MoundHost.ServiceActuations(now)`** and a **`MoundService.Tick`** step that calls it each tick, so
+  every held line is released on the loop's cadence; `Shutdown` already releases via the safe state.
+
+### Authority / safety
+
+- **A held line is bounded on every side.** `on_s` arrives already clamped to the intersected limit
+  tiers, and the driver caps it again at the effective `max_on_s` as a last-resort belt, so even a
+  contract violation upstream cannot hold a line beyond the hardware ceiling. A non-positive or a
+  non-finite-and-unbounded duration is refused, never held.
+- **The release is owed on every orderly path.** A stop, quiesce, shutdown, or trip drives the line
+  safe and ends the hold immediately; on the normal path the tick sweep releases it within one tick of
+  the deadline. A line that will not de-energize keeps its hold pending (the next tick retries) and is
+  escalated to a **sticky, persisted stop** — a line that cannot be proven safe is treated as unsafe.
+- **The trade this makes, stated plainly.** A timed hold gives up the momentary primitive's
+  self-releasing property: the line is deliberately held active between ticks, so its safety now
+  depends on the loop continuing to tick. Every orderly path is covered and a stuck line trips, but a
+  fully *hung* loop can leave a line energized — the stale-heartbeat rule still refuses new actuations
+  but cannot release a line already held (a restart de-energizes at configure time). Closing that gap
+  is the **dedicated watchdog thread** (a hardware-independent timer, still to land), which this slice
+  elevates from a nicety to a **prerequisite before a mound holds real loads unattended**. Until it
+  lands, keep `max_on_s` conservative and the tick interval short. Recorded in SAFETY.md and ROADMAP.
+
+### Notes
+
+- Release granularity is one tick: a hold can run up to one tick interval past `on_s`, so a hard
+  hardware bound should carry that margin. The kernel already models the action as spanning `on_s`
+  (it infers the end from the duration parameter), so duty-cycle / `min_off_s` accounting is unchanged
+  — the hardware now matches that model instead of pulsing.
+- The simulator's `SimRelayDriver` stays a simple momentary model for its scripted scenario; the timed
+  hold is a real-driver mechanism, proven here by driver, host, and service tests over a fake clock.
+
+---
+
 ## v0.9.8 — the first real driver port (Linux GPIO over sysfs)
 
 The M4 slice that gives the generic digital actuator a *real* line to drive: `SysfsDigitalOutput`,

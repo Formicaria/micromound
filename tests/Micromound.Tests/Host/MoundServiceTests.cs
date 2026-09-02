@@ -55,7 +55,7 @@ public sealed class MoundServiceTests : IDisposable
         }
     };
 
-    private static DriverFactoryRegistry FactoriesWith(InMemoryDigitalOutput line)
+    private static DriverFactoryRegistry FactoriesWith(IDigitalOutput line)
     {
         var factories = new DriverFactoryRegistry();
         factories.Register(new AnalogSensorFactory());
@@ -125,6 +125,73 @@ public sealed class MoundServiceTests : IDisposable
 
         var report = host.ExecuteMission(Watering("mm-s2"), Now.AddSeconds(20));   // 20s > 10s timeout
         Assert.NotEqual(MissionStates.Completed, report.State);
+    }
+
+    [Fact]
+    public void A_timed_actuation_holds_the_line_and_a_later_tick_releases_it()
+    {
+        var line = new InMemoryDigitalOutput();
+        var host = Host("mm-s4", line, Ed25519KeyPair.Generate());
+        var service = new MoundService(host);
+        host.Major.AcceptCharter(Charter("mm-s4"), Now);
+        host.Cache.SaveAuthority(host.Authority);
+        service.Tick(Now);   // beat, so the heartbeat is fresh enough to actuate
+
+        host.ExecuteMission(Watering("mm-s4"), Now);   // waters for on_s = 5s
+        Assert.True(line.State);                        // HELD active — a real valve is open for its duration
+
+        service.Tick(Now.AddSeconds(2));                // before the deadline: still held
+        Assert.True(line.State);
+
+        service.Tick(Now.AddSeconds(5));                // the sweep releases the line at the deadline
+        Assert.False(line.State);
+    }
+
+    [Fact]
+    public void A_hold_the_hardware_cannot_release_escalates_to_a_persisted_stop()
+    {
+        // The safety flip side of a timed hold: the line is deliberately held hot, so a line that will
+        // not release is a fault that must escalate — the tick sweep trips it, and the trip becomes a
+        // persisted stop (a restart never clears it).
+        var keys = Ed25519KeyPair.Generate();
+        var line = new ThrowsOnRelease();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Manifest("mm-s6"), StateDirectory = _dir,
+            Drivers = FactoriesWith(line), GuardHeartbeatTimeoutSeconds = 30
+        });
+        var service = new MoundService(host);
+        host.Major.AcceptCharter(Charter("mm-s6"), Now);
+        host.Cache.SaveAuthority(host.Authority);
+        service.Tick(Now);   // beat
+
+        host.ExecuteMission(Watering("mm-s6"), Now);   // energize succeeds; the line is held
+        Assert.True(line.State);
+
+        service.Tick(Now.AddSeconds(5));               // deadline: release throws -> trip -> stop
+        Assert.Equal("stopped", host.State);
+
+        // The stop is durable: a reboot does not clear it (and a reborn host over a working line stays stopped).
+        var reborn = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Manifest("mm-s6"), StateDirectory = _dir,
+            Drivers = FactoriesWith(new InMemoryDigitalOutput())
+        });
+        reborn.Restore(Now.AddSeconds(10));
+        Assert.Equal("stopped", reborn.State);
+    }
+
+    /// <summary>A line that refuses to de-energize once hot — the physical failure a held line must
+    /// survive. The initial safe write (while already low) succeeds; a low write while high throws.</summary>
+    private sealed class ThrowsOnRelease : IDigitalOutput
+    {
+        public bool State { get; private set; }
+        public void Write(bool high)
+        {
+            if (!high && State)
+                throw new IOException("simulated stuck line: cannot de-energize");
+            State = high;
+        }
     }
 
     [Fact]
