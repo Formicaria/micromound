@@ -12,6 +12,69 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.12 — the evidence store survives a restart
+
+The last M4 substrate piece that can be proven without hardware. The proof a mound captures — the
+Witness Ant's memory — lived only in the heap, so a week offline followed by a reboot lost exactly the
+record the mound had been keeping. It is now a directory of files under `<state>/evidence/`, with the
+in-memory store's retention policy (v0.9.0) unchanged above it. No wire change, no new refusal reason,
+no authority widened; M3's retention *rules* are untouched — only the substrate under them.
+
+### Added
+
+- **`FileEvidenceStore`** (`Micromound.Sync`, beside `FileStateStore`): an `IEvidenceStore` with a file
+  behind every item. One file per item named by its insertion sequence (`0000000000000042.json`) — the
+  name IS the order, so oldest-first eviction is recoverable from a directory listing and the id lives
+  inside the JSON where it needs no encoding. An acknowledged item has a sibling marker (`.ack`). A
+  small `counters.json` holds the evicted/spilled counts that have not yet ridden the wire, so a spill
+  the controller was never told about does not go quiet across a reboot. Reads are served from an
+  in-memory mirror rebuilt on open; every mutation is written through first.
+- **`DurableFiles`** (internal): the atomic-replace and directory-fsync primitives extracted from
+  `FileStateStore` so both disk-backed stores share exactly one implementation of "a power cut cannot
+  tear this". `FileStateStore` is refactored onto it behaviour-preservingly (its restart tests and the
+  harness's `.tmp-` collision check are unchanged and green).
+- **The composition takes an injected `IEvidenceStore`** (`MoundComposition.Build(..., evidenceStore:)`;
+  `ComposedMound.EvidenceStore` is now interface-typed). The host runs `FileEvidenceStore` at
+  `<state>/evidence` (`HostOptions.EvidenceCapacity` / `EvidenceHardCeiling`); the simulator and tests
+  keep the in-memory store. `Micromound.Sync` gains a reference to `Micromound.Evidence` (acyclic).
+
+### Authority / safety
+
+- **Retention parity is exact.** The same operation sequence on the in-memory and file stores yields
+  identical pending sets and identical evicted/spilled counts, verified side by side. Acknowledged proof
+  is reclaimed first past the soft capacity; unacknowledged proof spills only past the hard ceiling,
+  counted; a store reopened under a smaller configured bound is brought back inside it on open, with
+  the reclaim counted like any other.
+- **Crash order chosen so nothing is lost, only re-sent.** An item is written before it is remembered
+  (a crash leaves a whole item or none). The ack marker is written after the item (a crash between
+  leaves it pending — re-sent, re-acknowledged, harmless). An eviction unlinks the item before its
+  marker (a crash between leaves an orphan marker, ignored and swept on open — never a resurrected item
+  the policy had chosen to drop). A stale temporary is swept and never read as proof. A file that will
+  not parse is skipped and **reported** (`OpenFaults`, written to stderr at bring-up) — a fault, not a
+  reason to refuse to start, and not proof.
+- **After a restart the mound uplinks the proof it had pending.** Previously that proof evaporated with
+  the heap; now the next bundle carries it. A controller that keys evidence by id sees a re-send of any
+  item whose ack was lost mid-write, which is the protocol's intended idempotence.
+
+### Notes — read these before deploying on an SD card
+
+- **Write amplification.** Every evidence item is now an fsync'd file (plus a directory fsync), and the
+  dominant source is the Guard's heartbeat reading — one item **every tick** (5 s default), forever. At
+  steady-state capacity each `Add` also evicts an acknowledged item and rewrites `counters.json`, so a
+  chartered, connected mound writes on the order of **four fsyncs per tick** to `<state>/evidence`.
+  That is the honest cost of "the audit record survives a reboot", and it is kept deliberately as strong
+  as the state store's guarantee rather than weakened. On a Raspberry Pi put `--state` on high-endurance
+  or industrial media (or a USB SSD), not a consumer SD card, for a long-lived deployment. The follow-up
+  that removes most of this cost is rate-limiting or state-change-gating the heartbeat evidence (it is
+  published every poll today, a v0.9.5 choice) and, if still needed, a batched journal — neither is
+  part of this slice.
+- **Pre-existing, made visible by durability:** offline, heartbeat items accumulate toward the hard
+  ceiling and the oldest items spill first — which can be *real actuation proof* buried under later
+  heartbeats. That is the v0.9.0 policy, not a change here, but a durable store makes it worth revisiting
+  alongside the heartbeat cadence above.
+
+---
+
 ## v0.9.11 — enrollment aligned with the reference controller
 
 The M4 slice that gets a real mound through ANTHILL's front door. Reading both codebases side by side

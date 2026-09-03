@@ -35,6 +35,12 @@ public sealed class HostOptions
 
     /// <summary>Watchdog heartbeat timeout in seconds; 0 disables the timing check (the caller drives liveness).</summary>
     public double GuardHeartbeatTimeoutSeconds { get; init; }
+
+    /// <summary>Soft bound of the durable evidence store: acknowledged proof is reclaimed past this.</summary>
+    public int EvidenceCapacity { get; init; } = 2000;
+
+    /// <summary>Hard bound of the durable evidence store; null → twice the capacity. Unacknowledged proof spills past it, counted.</summary>
+    public int? EvidenceHardCeiling { get; init; }
 }
 
 /// <summary>
@@ -236,6 +242,14 @@ public sealed class MoundHost
         {
             var store = new FileStateStore(Path.Combine(options.StateDirectory, "state"));
 
+            // The evidence store is durable too: the proof a mound captured must outlive a restart, or a
+            // week offline followed by a reboot would lose exactly the record it was keeping. Corrupt
+            // item files are skipped and reported — loud, not fatal, and never treated as proof.
+            var evidence = new FileEvidenceStore(Path.Combine(options.StateDirectory, "evidence"),
+                options.EvidenceCapacity, options.EvidenceHardCeiling);
+            foreach (var fault in evidence.OpenFaults)
+                Console.Error.WriteLine($"micromound: evidence store: {fault}");
+
             var composed = MoundComposition.Build(
                 moundId,
                 resolution.Drivers.SelectMany(d => d.Capabilities).ToList(),
@@ -244,7 +258,8 @@ public sealed class MoundHost
                 new Ed25519EnvelopeSigner(moundId, options.Keys),
                 new Ed25519EnvelopeVerifier(options.ControllerKeys ?? new InMemoryPublicKeyDirectory()),
                 options.Transport ?? new OfflineTransport(),
-                options.GuardHeartbeatTimeoutSeconds);
+                options.GuardHeartbeatTimeoutSeconds,
+                evidenceStore: evidence);
 
             // Wire each evidence-source driver's readings into the shared sink.
             foreach (var driver in resolution.Drivers)

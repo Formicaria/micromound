@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Micromound.Sync;
@@ -43,7 +42,6 @@ namespace Micromound.Sync;
 public sealed class FileStateStore : IStateStore
 {
     private const string ValueSuffix = ".json";
-    private const string TempDirName = ".mmtmp";
 
     private readonly string _directory;
     private readonly string _tempDirectory;
@@ -57,10 +55,10 @@ public sealed class FileStateStore : IStateStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         _directory = directory;
-        _tempDirectory = Path.Combine(directory, TempDirName);
+        _tempDirectory = Path.Combine(directory, DurableFiles.TempDirName);
         Directory.CreateDirectory(_directory);
         Directory.CreateDirectory(_tempDirectory);
-        SweepOrphanedTemporaries();
+        DurableFiles.SweepTemporaries(_tempDirectory);
     }
 
     public void Put(string key, string value)
@@ -69,25 +67,11 @@ public sealed class FileStateStore : IStateStore
         ArgumentNullException.ThrowIfNull(value);
 
         var destination = PathFor(key);
-        var temp = Path.Combine(_tempDirectory, Guid.NewGuid().ToString("N"));
 
+        // Temp-write, flush, rename, directory-flush — the shared primitive (DurableFiles) so the
+        // evidence store and this one cannot disagree about what "durable" means.
         lock (_gate)
-        {
-            // Write the whole value to a private temp file and force it to disk before it is named,
-            // so the rename below promotes only a fully-written value.
-            using (var stream = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            using (var writer = new StreamWriter(stream, new UTF8Encoding(false)))
-            {
-                writer.Write(value);
-                writer.Flush();
-                stream.Flush(flushToDisk: true);
-            }
-
-            // The atomic step: a single rename over the destination replaces the key's value with no
-            // torn intermediate. Then flush the directory so the rename itself survives a power cut.
-            File.Move(temp, destination, overwrite: true);
-            FlushDirectory(_directory);
-        }
+            DurableFiles.WriteAtomic(_tempDirectory, destination, value);
     }
 
     public bool TryGet(string key, out string value)
@@ -114,83 +98,8 @@ public sealed class FileStateStore : IStateStore
         ArgumentNullException.ThrowIfNull(key);
 
         lock (_gate)
-        {
-            var path = PathFor(key);
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-                FlushDirectory(_directory);   // the unlink must survive a power cut too
-            }
-        }
+            DurableFiles.Delete(PathFor(key));   // the unlink must survive a power cut too
     }
 
-    private string PathFor(string key) => Path.Combine(_directory, Encode(key) + ValueSuffix);
-
-    private void SweepOrphanedTemporaries()
-    {
-        foreach (var leftover in Directory.EnumerateFiles(_tempDirectory))
-        {
-            try { File.Delete(leftover); }
-            catch (Exception) { /* still never read as a value; leave it for the next sweep */ }
-        }
-    }
-
-    /// <summary>
-    /// Reversible, collision-free key→filename encoding: unreserved characters pass through, every
-    /// other byte becomes %XX. Deterministic, so a key always maps to the same file.
-    /// </summary>
-    private static string Encode(string key)
-    {
-        var bytes = Encoding.UTF8.GetBytes(key);
-        var sb = new StringBuilder(bytes.Length + 8);
-        foreach (var b in bytes)
-        {
-            var c = (char)b;
-            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
-                || c is '.' or '_' or '-')
-                sb.Append(c);
-            else
-                sb.Append('%').Append(b.ToString("X2"));
-        }
-        return sb.ToString();
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Directory durability. A rename or unlink is only guaranteed on disk after the directory that
-    // holds the entry is itself flushed. Managed .NET exposes no directory fsync, so on POSIX this
-    // opens the directory and fsyncs its descriptor; on Windows (not a device target) it is a no-op.
-    // Best-effort: a state store that cannot fsync its directory is still correct on a clean restart.
-    // ---------------------------------------------------------------------------------------------
-
-    private static void FlushDirectory(string directory)
-    {
-        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS())
-            return;
-
-        var fd = -1;
-        try
-        {
-            fd = Open(directory, 0 /* O_RDONLY */);
-            if (fd >= 0)
-                Fsync(fd);
-        }
-        catch (Exception)
-        {
-            // No libc, or the platform refused: the value is still written and atomically named.
-        }
-        finally
-        {
-            if (fd >= 0)
-                Close(fd);
-        }
-    }
-
-    [DllImport("libc", EntryPoint = "open", SetLastError = true, CharSet = CharSet.Ansi)]
-    private static extern int Open(string path, int flags);
-
-    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
-    private static extern int Close(int fd);
-
-    [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
-    private static extern int Fsync(int fd);
+    private string PathFor(string key) => Path.Combine(_directory, DurableFiles.Encode(key) + ValueSuffix);
 }

@@ -17,7 +17,7 @@ public sealed record ComposedMound(
     RunnerAnt Runner,
     CacheAnt Cache,
     GuardAnt Guard,
-    InMemoryEvidenceStore EvidenceStore,
+    IEvidenceStore EvidenceStore,
     IUplinkQueue Queue,
     Action<EvidenceItem> PublishEvidence)
 {
@@ -77,7 +77,8 @@ public static class MoundComposition
         ISyncTransport transport,
         double guardHeartbeatTimeoutSeconds = 0,
         int evidenceCapacity = 2000,
-        int? evidenceHardCeiling = null)
+        int? evidenceHardCeiling = null,
+        IEvidenceStore? evidenceStore = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(moundId);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -99,7 +100,10 @@ public static class MoundComposition
             kernel.RegisterExecutor(executor);
 
         // Evidence, then the ants, then the coordinator, then transport — the host's own order.
-        var evidenceStore = new InMemoryEvidenceStore(evidenceCapacity, evidenceHardCeiling);
+        // The evidence store is injectable so the host can run the durable file-backed one over real
+        // disk (FileEvidenceStore) while the simulator and tests keep the in-memory store; the retention
+        // policy is identical either way, only the substrate differs.
+        evidenceStore ??= new InMemoryEvidenceStore(evidenceCapacity, evidenceHardCeiling);
         var queue = new DurableUplinkQueue(store);
         var cache = new CacheAnt(store);
 

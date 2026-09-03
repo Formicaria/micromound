@@ -41,7 +41,7 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierEdgeQuee
     private bool _built;
     private bool _sensorHealthy = true;
     private CapabilityKernel? _kernel;
-    private InMemoryEvidenceStore? _evidenceStore;
+    private IEvidenceStore? _evidenceStore;
     private MoundMajor? _major;
     private RunnerAnt? _runner;
     private CacheAnt? _cache;
@@ -148,7 +148,7 @@ public sealed class SimMound(string moundId, string tier = SimMound.TierEdgeQuee
     public IReadOnlyDictionary<string, EvidenceItem> Evidence => _evidenceMirror;
 
     /// <summary>The retention-governed store behind the Witness — for asserting on ack-driven eviction.</summary>
-    public InMemoryEvidenceStore EvidenceStore
+    public IEvidenceStore EvidenceStore
     {
         get { EnsureBuilt(); return _evidenceStore!; }
     }

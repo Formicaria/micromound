@@ -10,6 +10,7 @@
 // Local layout (operator-configured via --state, default /var/lib/micromound):
 //   <state>/identity/seed   device keypair, owner-only, never transmitted
 //   <state>/state/          durable operational state (charter, mission checkpoint, uplink queue)
+//   <state>/evidence/       durable evidence store (one file per item, ack markers, spill counters)
 //
 // With --controller the daemon enrolls (once, by a one-time token), then syncs signed envelopes on the
 // controller's cadence; without it, it runs offline and the durable queue holds the backlog. An
