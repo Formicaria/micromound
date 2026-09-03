@@ -144,19 +144,32 @@ public sealed class GuardAnt : IGuardAnt
     private DateTimeOffset? _lastBeat;
     private bool _heartbeatStale;
     private long _polls;
+    private DateTimeOffset? _lastEvidenceAt;   // when a heartbeat reading last went out
+    private bool? _lastReportedStale;          // the staleness the last reading carried; null = never reported
 
     /// <param name="heartbeatTimeoutSeconds">
     /// How long a heartbeat stays fresh. Zero disables the heartbeat check entirely, for a
     /// deployment whose liveness is guaranteed some other way — an explicit choice, not a default.
     /// </param>
-    /// <param name="publish">Receives the health evidence each poll produces, when a store exists.</param>
-    public GuardAnt(double heartbeatTimeoutSeconds = 30, Action<EvidenceItem>? publish = null)
+    /// <param name="publish">Receives the health evidence a poll produces, when a store exists.</param>
+    /// <param name="heartbeatEvidenceIntervalSeconds">
+    /// How often a ROUTINE heartbeat reading is emitted as evidence while nothing changes. A reading
+    /// always goes out on the first poll and on every fresh↔stale transition — those are the ones that
+    /// prove afterwards why a mound stopped — so this only bounds the liveness record in between. Zero
+    /// emits on every poll (the pre-v0.9.13 behaviour). Defaults to 60 s.
+    /// </param>
+    public GuardAnt(double heartbeatTimeoutSeconds = 30, Action<EvidenceItem>? publish = null,
+        double heartbeatEvidenceIntervalSeconds = 60)
     {
         HeartbeatTimeoutSeconds = Math.Max(0, heartbeatTimeoutSeconds);
+        HeartbeatEvidenceIntervalSeconds = Math.Max(0, heartbeatEvidenceIntervalSeconds);
         _publish = publish;
     }
 
     public double HeartbeatTimeoutSeconds { get; }
+
+    /// <summary>The bound on routine heartbeat evidence; 0 = every poll. See the constructor.</summary>
+    public double HeartbeatEvidenceIntervalSeconds { get; }
 
     public WorkerDescriptor Descriptor { get; } = new()
     {
@@ -200,23 +213,42 @@ public sealed class GuardAnt : IGuardAnt
 
     public IReadOnlyList<EvidenceItem> Poll(DateTimeOffset now)
     {
-        EvidenceItem item;
+        EvidenceItem? item = null;
         lock (_lock)
         {
+            // Staleness is recomputed on EVERY poll — this is what the kernel's refusal reads, and it
+            // is never rate-limited. Only the evidence emission below is.
             _heartbeatStale = HeartbeatTimeoutSeconds > 0 &&
                               (_lastBeat is not { } beat || (now - beat).TotalSeconds > HeartbeatTimeoutSeconds);
 
             // Health is reported as evidence rather than as a log line, because a mound that entered
             // its safe state has to be able to prove afterwards why it did — SAFETY.md forbids silent
-            // anything, and "it just stopped" is the silent kind.
-            var age = _lastBeat is { } last ? (now - last).TotalSeconds : -1;
+            // anything, and "it just stopped" is the silent kind. But a reading every poll — every
+            // tick AND before every actuation — is not more proof, it is the same proof repeated, and
+            // on a durable store each one is an fsync'd file. So a reading goes out when it is
+            // INFORMATIVE: the first one (a baseline), every fresh↔stale transition (the one that
+            // explains a stop), and a routine liveness record no more often than the interval.
+            var transition = _lastReportedStale is null || _lastReportedStale.Value != _heartbeatStale;
+            var routineDue = HeartbeatEvidenceIntervalSeconds <= 0
+                             || _lastEvidenceAt is not { } lastAt
+                             || (now - lastAt).TotalSeconds >= HeartbeatEvidenceIntervalSeconds;
 
-            // The counter, not the clock, makes the id unique. Two polls inside the same wire-format
-            // second are ordinary, and an evidence store keyed by id would silently keep one of them.
-            item = EvidenceReadings.Create(
-                $"guard-{++_polls}-{now.ToWire()}", "sense.runtime_heartbeat_age_s", age, now,
-                unit: "seconds", source: DefaultAnts.Guard);
+            if (transition || routineDue)
+            {
+                var age = _lastBeat is { } last ? (now - last).TotalSeconds : -1;
+
+                // The counter, not the clock, makes the id unique. Two polls inside the same wire-format
+                // second are ordinary, and an evidence store keyed by id would silently keep one of them.
+                item = EvidenceReadings.Create(
+                    $"guard-{++_polls}-{now.ToWire()}", "sense.runtime_heartbeat_age_s", age, now,
+                    unit: "seconds", source: DefaultAnts.Guard);
+                _lastEvidenceAt = now;
+                _lastReportedStale = _heartbeatStale;
+            }
         }
+
+        if (item is null)
+            return [];
 
         // Publish outside the lock: a sink is not expected to re-enter the Guard, and holding the lock
         // across an external callback is how a deadlock is invited.

@@ -41,6 +41,13 @@ public sealed class HostOptions
 
     /// <summary>Hard bound of the durable evidence store; null → twice the capacity. Unacknowledged proof spills past it, counted.</summary>
     public int? EvidenceHardCeiling { get; init; }
+
+    /// <summary>
+    /// How often a ROUTINE heartbeat reading is written as evidence while nothing changes. The first
+    /// reading and every fresh↔stale transition always go out; this only bounds the liveness record in
+    /// between — the dominant write on a durable store. 0 = every poll (the old behaviour). Default 60 s.
+    /// </summary>
+    public double HeartbeatEvidenceIntervalSeconds { get; init; } = 60;
 }
 
 /// <summary>
@@ -259,7 +266,8 @@ public sealed class MoundHost
                 new Ed25519EnvelopeVerifier(options.ControllerKeys ?? new InMemoryPublicKeyDirectory()),
                 options.Transport ?? new OfflineTransport(),
                 options.GuardHeartbeatTimeoutSeconds,
-                evidenceStore: evidence);
+                evidenceStore: evidence,
+                heartbeatEvidenceIntervalSeconds: options.HeartbeatEvidenceIntervalSeconds);
 
             // Wire each evidence-source driver's readings into the shared sink.
             foreach (var driver in resolution.Drivers)

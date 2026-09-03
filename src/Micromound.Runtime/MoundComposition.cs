@@ -78,7 +78,8 @@ public static class MoundComposition
         double guardHeartbeatTimeoutSeconds = 0,
         int evidenceCapacity = 2000,
         int? evidenceHardCeiling = null,
-        IEvidenceStore? evidenceStore = null)
+        IEvidenceStore? evidenceStore = null,
+        double heartbeatEvidenceIntervalSeconds = 60)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(moundId);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -111,7 +112,7 @@ public static class MoundComposition
         // safe state can prove afterwards why — SAFETY.md forbids a silent stop. The sink needs the
         // Runner (built after), so the guard publishes through this holder, assigned once it exists.
         Action<EvidenceItem>? guardSink = null;
-        var guard = new GuardAnt(guardHeartbeatTimeoutSeconds, item => guardSink?.Invoke(item));
+        var guard = new GuardAnt(guardHeartbeatTimeoutSeconds, item => guardSink?.Invoke(item), heartbeatEvidenceIntervalSeconds);
 
         // The Runner is built after the Major, but the Major's action-record sink and the evidence
         // sink both publish through the Runner — so both close over this holder, assigned below.

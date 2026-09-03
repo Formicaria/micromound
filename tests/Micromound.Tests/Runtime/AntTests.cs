@@ -186,12 +186,75 @@ public class AntTests
     [Fact]
     public void Two_polls_in_the_same_second_do_not_collide()
     {
-        var guard = new GuardAnt(heartbeatTimeoutSeconds: 30);
+        // Every-poll mode (interval 0), so both polls emit and the id-uniqueness property is what is tested.
+        var guard = new GuardAnt(heartbeatTimeoutSeconds: 30, heartbeatEvidenceIntervalSeconds: 0);
 
         var first = guard.Poll(Now);
         var second = guard.Poll(Now);
 
         Assert.NotEqual(first[0].EvidenceId, second[0].EvidenceId);
+    }
+
+    // -------------------------------------------------------------------------------------
+    // Heartbeat evidence is rate-limited to what is informative (v0.9.13). On a durable store
+    // every reading is an fsync'd file, and a reading every tick AND before every actuation is
+    // the same proof repeated. What must never be lost is the reading that explains a stop.
+    // -------------------------------------------------------------------------------------
+
+    [Fact]
+    public void Routine_heartbeat_readings_are_bounded_by_the_evidence_interval()
+    {
+        var guard = new GuardAnt(heartbeatTimeoutSeconds: 300, heartbeatEvidenceIntervalSeconds: 60);
+        guard.Beat(Now);
+
+        Assert.Single(guard.Poll(Now));                    // the first reading: a baseline, always
+        Assert.Empty(guard.Poll(Now.AddSeconds(5)));       // a tick later: nothing new to say
+        Assert.Empty(guard.Poll(Now.AddSeconds(30)));
+        Assert.Single(guard.Poll(Now.AddSeconds(60)));     // the routine liveness record, on the interval
+        Assert.Empty(guard.Poll(Now.AddSeconds(65)));
+    }
+
+    [Fact]
+    public void Staleness_is_still_recomputed_on_every_poll_even_when_no_reading_goes_out()
+    {
+        // The refusal logic reads SafeStateRequired; rate-limiting the EVIDENCE must never delay it.
+        var guard = new GuardAnt(heartbeatTimeoutSeconds: 10, heartbeatEvidenceIntervalSeconds: 3600);
+        guard.Beat(Now);
+        guard.Poll(Now);                                   // baseline reading
+
+        guard.Poll(Now.AddSeconds(5));                     // fresh, no reading
+        Assert.False(guard.SafeStateRequired);
+
+        guard.Poll(Now.AddSeconds(11));                    // stale — recomputed regardless of the interval
+        Assert.True(guard.SafeStateRequired);
+    }
+
+    [Fact]
+    public void A_fresh_to_stale_transition_always_emits_the_reading_that_explains_a_stop()
+    {
+        var guard = new GuardAnt(heartbeatTimeoutSeconds: 10, heartbeatEvidenceIntervalSeconds: 3600);
+        guard.Beat(Now);
+        guard.Poll(Now);                                   // baseline (fresh)
+
+        Assert.Empty(guard.Poll(Now.AddSeconds(5)));       // fresh, inside the interval: silent
+        var stale = guard.Poll(Now.AddSeconds(11));        // fresh -> stale: the one that matters
+        Assert.Single(stale);
+        Assert.True(EvidenceReadings.TryRead(stale[0], out var age) && age == 11);
+
+        Assert.Empty(guard.Poll(Now.AddSeconds(12)));      // still stale, inside the interval: silent
+
+        guard.Beat(Now.AddSeconds(13));                    // the loop comes back
+        Assert.Single(guard.Poll(Now.AddSeconds(13)));     // stale -> fresh: also a transition, also emitted
+    }
+
+    [Fact]
+    public void Interval_zero_emits_on_every_poll_the_old_behaviour()
+    {
+        var guard = new GuardAnt(heartbeatTimeoutSeconds: 30, heartbeatEvidenceIntervalSeconds: 0);
+        guard.Beat(Now);
+        Assert.Single(guard.Poll(Now));
+        Assert.Single(guard.Poll(Now.AddSeconds(1)));
+        Assert.Single(guard.Poll(Now.AddSeconds(2)));
     }
 
     // -------------------------------------------------------------------------------------

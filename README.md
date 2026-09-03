@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.12
+**Current version:** v0.9.13
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.12`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.13`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -89,9 +89,11 @@ hardcoded `mound_major` was refused), sends its `mound_id` as a cross-check plus
 — throttling the sync beat only, never the safety rhythm (`v0.9.11`), and — new in `v0.9.12` — a
 **durable evidence store**: the proof a mound captures now lives in a directory of files under
 `<state>/evidence` with the v0.9.0 retention policy unchanged above it, so it survives a reboot and is
-uplinked afterwards instead of evaporating with the heap. What's still ahead: the analog/ADC real port
-and a libgpiod backing — the two pieces that need real hardware — and the GPIO writes themselves
-verified on a physical board. End-to-end
+uplinked afterwards instead of evaporating with the heap (`v0.9.12`), and — new in `v0.9.13` — the
+Guard's heartbeat evidence **rate-limited to what is informative** (the first reading, every
+fresh↔stale transition, and a per-minute liveness record) so a durable mound writes ~12× less, with the
+refusal logic untouched. What's still ahead: the analog/ADC real port and a libgpiod backing — the two
+pieces that need real hardware — and the GPIO writes themselves verified on a physical board. End-to-end
 simulator missions run against an in-process controller that verifies every byte. The v0 canonical
 bytes will not change again inside v0. The host still runs against generic driver primitives, now
 with a real GPIO line available for digital actuation, not yet a device against real hardware — that

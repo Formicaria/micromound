@@ -12,6 +12,50 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.13 — heartbeat evidence is rate-limited to what is informative
+
+The follow-up v0.9.12 named. Making the evidence store durable turned every heartbeat reading into an
+fsync'd file, and the Guard emitted one on every poll — every service tick AND before every actuation —
+so a chartered mound wrote on the order of four fsyncs per tick to an SD card, forever, mostly to say
+"still alive" again. A reading now goes out only when it is informative. No wire change, no new refusal
+reason, no authority widened; the watchdog's refusal logic is untouched.
+
+### Changed
+
+- **`GuardAnt.Poll` emits a heartbeat reading when it is INFORMATIVE, not on every call.** Three cases
+  always emit: the first poll (a baseline), and every fresh→stale and stale→fresh transition — the
+  readings that prove afterwards why a mound stopped, or that it recovered. Between those, a routine
+  liveness record goes out no more often than `heartbeatEvidenceIntervalSeconds` (default 60 s). `0`
+  restores the old every-poll behaviour. Surfaced as `HostOptions.HeartbeatEvidenceIntervalSeconds`
+  and `MoundComposition.Build(..., heartbeatEvidenceIntervalSeconds:)`.
+- **Staleness is still recomputed on every poll.** Only the *evidence emission* is rate-limited; the
+  `SafeStateRequired` the kernel's refusal reads is refreshed exactly as before, including on the
+  pre-actuation poll in `MoundMajorRuntime`. Tested: a heartbeat that goes stale inside a long evidence
+  interval is refused on that very poll, and its transition reading is emitted.
+
+### Authority / safety
+
+- **Nothing that explains a stop is lost.** A stop caused by a stale heartbeat has its fresh→stale
+  reading in the store by construction (a transition is never suppressed). SAFETY.md's "a mound that
+  entered its safe state has to be able to prove afterwards why it did" holds unchanged — what is
+  removed is the same proof repeated every five seconds, not the proof.
+- **Measured, not estimated.** On a real `MoundHost` over the real `FileEvidenceStore`, ten minutes of
+  5 s ticks wrote **120 evidence files** under the old behaviour and **10** under the new default — a
+  12× reduction in the dominant write source, plus the elimination of the per-actuation reading.
+- The trade, stated plainly: the routine liveness record in the audit trail is now per minute rather
+  than per tick. A deployment that wants the old density sets the interval to 0 and accepts the wear.
+
+### Notes
+
+- `AntTests.Two_polls_in_the_same_second_do_not_collide` now pins the every-poll mode (interval 0), so
+  the id-uniqueness property it tests is unchanged. `AntTests` and `MissionTests` are now part of the
+  sandbox compile-check set.
+- Pre-existing and still open (v0.9.12 note): offline, heartbeat items accumulate toward the hard
+  ceiling and the oldest proof spills first. This slice makes that ~12× slower to reach; ranking real
+  actuation proof above liveness readings at spill time is a separate policy question, not taken here.
+
+---
+
 ## v0.9.12 — the evidence store survives a restart
 
 The last M4 substrate piece that can be proven without hardware. The proof a mound captures — the
