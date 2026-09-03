@@ -50,11 +50,33 @@ public interface IEnrollmentClient
 {
     /// <summary>
     /// Present the one-time token and this device's public key; receive the controller's public
-    /// key in return. Returns false with a reason on refusal — a burned or unknown token is a
-    /// definite answer, not a retry.
+    /// key — and what else the controller tells the device about itself — in return. Returns false
+    /// with a reason on refusal — a burned or unknown token is a definite answer, not a retry.
     /// </summary>
-    bool TryEnroll(string token, byte[] devicePublicKey, out byte[] controllerPublicKey, out string detail);
+    bool TryEnroll(string token, byte[] devicePublicKey, out ControllerEnrollment? enrollment, out string detail);
 }
+
+/// <summary>
+/// What a successful enrollment hands the device (PROTOCOL.md §3 step 3). The controller's public
+/// key is the part the device MUST have — it is what every downlink envelope is verified against.
+/// The rest is the controller telling the device about its own place in the colony: which mound
+/// record it was bound to, how often to sync, and which protocol/colony versions it is talking to.
+/// Every field but the key is optional on the wire, so an older controller that returns only the
+/// key still enrolls; a device simply falls back to its local configuration for the rest.
+/// </summary>
+/// <param name="ControllerPublicKey">The controller's Ed25519 public key; validated (32 bytes, non-zero) before trust.</param>
+/// <param name="MoundId">The controller's record of which mound this is, or "" if not returned. Must agree
+/// with the device's own manifest id — the device signs every uplink with that id, and a controller
+/// that bound the key under a different one would refuse every subsequent beat.</param>
+/// <param name="SyncIntervalSeconds">The controller-driven sync cadence, or null to keep the local one.</param>
+/// <param name="ProtocolVersion">The controller's protocol version, or null if not returned.</param>
+/// <param name="ColonyVersion">The controller's software version, informational; "" if not returned.</param>
+public sealed record ControllerEnrollment(
+    byte[] ControllerPublicKey,
+    string MoundId = "",
+    double? SyncIntervalSeconds = null,
+    int? ProtocolVersion = null,
+    string ColonyVersion = "");
 
 /// <summary>
 /// Sync beat scheduling — PROTOCOL.md §1. Interval comes from the charter (15 s for a Pi-class

@@ -12,6 +12,78 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.11 — enrollment aligned with the reference controller
+
+The M4 slice that gets a real mound through ANTHILL's front door. Reading both codebases side by side
+showed that the signed sync path needs nothing: ANTHILL compiles against `Micromound.Protocol` and
+`Micromound.Crypto`, so the envelope, canonical bytes, Ed25519 verification, hash chain, protocol
+version, and downlink kinds are the same code on both sides. The only place the two could drift was
+the hand-matched enrollment handshake — and it had drifted into a hard blocker. No wire change to any
+signed envelope, no new refusal reason, no authority widened.
+
+### Fixed
+
+- **Enrollment against ANTHILL was refused outright.** The daemon declared `tier: "mound_major"`, a
+  label that existed only in this repository's simulator; the controller validates the tier against
+  `edge_queen` / `deterministic_controller` and refuses anything else. The device now declares
+  `edge_queen` by default (`--tier` overrides; a Pi running the full colony IS an edge queen), and the
+  vocabulary lives in one shared place both sides compile against — `Micromound.Protocol.ControllerTiers`
+  — so it cannot drift again. The simulator's tier constants now read from the same place.
+
+### Added
+
+- **The enroll request says what the device is.** Besides the token and key it now sends its manifest
+  `mound_id` (a cross-check against the mound the operator minted the token for — the device signs every
+  later uplink with that id, so a mismatch is refused at the door with both names instead of surfacing
+  as unexplained signature refusals on every beat), `protocol_version` (explicit, so a skew is refused
+  rather than defaulted away), and `capabilities[]` (the structured list the fleet view is built from;
+  `hardware_profile` stays for controllers that read only that). Every field name and type matches the
+  controller's DTO exactly, verified by round-tripping the client's own body through a replica of it.
+- **The enroll response is read in full.** `IEnrollmentClient.TryEnroll` now yields a
+  `ControllerEnrollment` — the key plus the controller's `mound_id`, `sync_interval_s`,
+  `protocol_version`, and `colony_version`. The device checks the bound `mound_id` against its own
+  manifest and the protocol version against its own, and refuses either mismatch itself (a belt for a
+  controller that did not cross-check). Every field but the key is optional, so an older controller
+  that returns only the key still enrolls.
+- **The controller's refusal reason is surfaced.** A 4xx carrying `{accepted:false, reason}` now reports
+  the reason — "unknown tier 'mound_major'", "enrollment token expired" — instead of a generic "token
+  burned or unknown". It is the operator standing next to the hardware who needs it.
+- **The controller's sync cadence is honoured.** The controller judges a mound offline from
+  `sync_interval_s` (missed beats × interval), so a mound syncing on its own schedule was being
+  mis-judged. The cadence returned at enrollment is the bootstrap — persisted beside the key in an
+  additive `controller.meta.json` sidecar (an older state directory with only `controller.pub` still
+  loads), because enrollment happens once per token and anything learned then and not persisted would be
+  lost on the first reboot — and the **active charter's** `sync_interval_s` takes over as the live
+  authority once chartered (`MoundService.EffectiveSyncInterval`). `MoundHost.ResolveControllerLink`
+  is the rich form of `ResolveControllerKeys`, which remains as a wrapper.
+
+### Authority / safety
+
+- **The cadence throttles the sync beat ONLY.** It is deliberately not the tick interval: the tick also
+  releases elapsed actuation holds, kicks the independent watchdog, and refreshes the heartbeat, and
+  those keep `--interval-s`. A controller asking to hear from the mound every 60 s is choosing how often
+  it hears from it — it is not asking for a valve's 5 s hold to be released 60 s late. Tested: a 60 s
+  cadence with a 5 s hold releases the hold on the next tick while the sync stays throttled.
+- **A too-long cadence is self-limiting, so no cap is imposed.** A cadence longer than the lease TTL
+  means the mound cannot renew and quiesces — the fail-safe direction. The lease is the bound.
+- **The one cross-repo hazard the review caught.** The shared tier constants were first named
+  `MoundTiers`; ANTHILL already declares its own `MoundTiers` in a namespace it imports alongside
+  `Micromound.Protocol`, so that name would have made every unqualified use on its side ambiguous and
+  broken its build the next time it compiled against this repository — exactly the lockstep breakage
+  the shared-source arrangement invites. Renamed to `ControllerTiers` (PROTOCOL.md §3's own phrase),
+  with the reason recorded on the type so it is not renamed back.
+
+### Notes
+
+- PROTOCOL.md §3 now documents the actual enroll request and response bodies, the refusal shape, the
+  tier vocabulary, and the cadence rule. The daemon's usage text and stale header comment were
+  refreshed too (it no longer claims to be "running offline until a transport is configured").
+- Because ANTHILL source-references `Micromound.Protocol`/`Micromound.Crypto`, the two repositories
+  must stay in lockstep on those assemblies; publishing them as pinned packages is the eventual
+  decoupling, not part of this slice.
+
+---
+
 ## v0.9.10 — the independent watchdog thread
 
 The M4 slice that closes the safety gap v0.9.9 opened. A held actuation keeps a line energized between

@@ -92,13 +92,71 @@ those files.
 ## 3. Enrollment
 
 1. An operator creates the mound in the controller, which mints a one-time enrollment token stored
-   write-only.
+   write-only. **The token is minted for one mound id**, and it is the controller's lookup: which
+   mound a device is was settled by the operator, not claimed by the device.
 2. The device boots with the token, generates its Ed25519 keypair on-device (private key never
-   leaves), and POSTs `enroll` with its public key, hardware profile, and controller tier.
-3. The controller binds the public key to the mound record, burns the token, and returns the
-   controller public key. From here on, only signed traffic.
+   leaves), and POSTs `enroll`:
+
+   ```json
+   {
+     "token": "…",
+     "mound_id": "mm-7f3a…",
+     "device_public_key": "…64 hex…",
+     "tier": "edge_queen",
+     "hardware_profile": "sense.soil_moisture,act.water_valve",
+     "capabilities": ["sense.soil_moisture", "act.water_valve"],
+     "protocol_version": 0
+   }
+   ```
+
+   `token` is the auth for this one request. `mound_id` is the device's manifest id, sent as a
+   **cross-check, not the lookup**: the device signs every later uplink with that id, so if the
+   operator minted the token for a different mound, a controller that cross-checks refuses here with
+   both names — instead of binding the key under one id and refusing every subsequent beat as
+   unattributable. `tier` is from the vocabulary below. `capabilities` is the structured list the
+   fleet view is built from; `hardware_profile` is the older flat summary, kept for controllers that
+   read only that. `protocol_version` is sent explicitly so a skew is refused rather than defaulted
+   away.
+3. The controller binds the public key to the mound record, burns the token, and returns:
+
+   ```json
+   {
+     "accepted": true,
+     "controller_public_key": "…64 hex…",
+     "mound_id": "mm-7f3a…",
+     "sync_interval_s": 15,
+     "protocol_version": 0,
+     "colony_version": "0.3.8.118"
+   }
+   ```
+
+   `controller_public_key` is the one REQUIRED field — every downlink envelope is verified against
+   it. Every other field is optional on the wire; a device falls back to its local configuration for
+   the rest. `mound_id` is the record the key was bound to, and the device checks it against its own
+   manifest as well. A refusal is an HTTP **4xx** carrying `{"accepted": false, "reason": "…"}` — a
+   burned or expired token, an unknown tier, a mound-id mismatch, a protocol skew. The status code is
+   the answer (a retry will not change it); the `reason` is for the operator standing next to the
+   hardware. A 5xx or an unreachable controller means *not yet enrolled*, and the device tries again
+   next boot. From here on, only signed traffic.
 4. Re-enrollment (key rotation, reflash) requires a new operator-minted token. There is no
    self-service re-key.
+
+**Tier vocabulary.** `tier` is the class of device, not the coordinator that runs on it (every mound
+is run by a Mound Major). The controller validates it against exactly this set and refuses anything
+else, so the strings live in one shared place — `Micromound.Protocol.ControllerTiers` — that both
+sides compile against:
+
+| `tier` | Meaning |
+|---|---|
+| `edge_queen` | A full-colony edge device — a Linux/Pi host running every ant. The usual tier. |
+| `deterministic_controller` | A constrained, deterministic-only subordinate (the M5 ESP32 profile). |
+
+**Sync cadence.** The controller judges a mound offline from `sync_interval_s` (missed beats × the
+interval), so the device honours it: the value returned at enrollment is the bootstrap, and the
+active charter's `sync_interval_s` (§4) takes over as the live authority once chartered. The cadence
+throttles the sync beat *only* — it never slows the device's own safety rhythm (hold release, the
+watchdog, the heartbeat). A cadence longer than the lease TTL is self-limiting: the mound cannot renew
+and quiesces, the fail-safe direction.
 
 ## 4. Charter
 

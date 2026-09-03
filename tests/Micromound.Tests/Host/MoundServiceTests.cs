@@ -2,6 +2,7 @@ using Micromound.Crypto;
 using Micromound.Drivers;
 using Micromound.Host;
 using Micromound.Protocol;
+using Micromound.Sync;
 using Xunit;
 
 namespace Micromound.Tests;
@@ -234,6 +235,105 @@ public sealed class MoundServiceTests : IDisposable
         var report = host.ExecuteMission(Watering("mm-wd2"), Now.AddSeconds(2));
         Assert.NotEqual(MissionStates.Completed, report.State);   // actuation refused under the stop
         Assert.False(line.State);
+    }
+
+    private MoundHost HostWithTransport(string moundId, IDigitalOutput line, ISyncTransport transport) =>
+        MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = Manifest(moundId), StateDirectory = _dir,
+            Drivers = FactoriesWith(line), GuardHeartbeatTimeoutSeconds = 30, Transport = transport
+        });
+
+    [Fact]
+    public void The_charters_sync_cadence_throttles_sync_only_and_never_delays_a_hold_release()
+    {
+        // The live cadence is the active charter's sync_interval_s (PROTOCOL.md §4) — the controller
+        // sets it and judges the mound offline from it. The safety property of honouring it: a
+        // controller asking to hear from the mound every 60 s is NOT asking for a 5 s valve hold to be
+        // released 60 s late. The tick keeps its own rhythm for hold release; only the sync is throttled.
+        var line = new InMemoryDigitalOutput();
+        var transport = new CountingTransport();
+        var host = HostWithTransport("mm-cad", line, transport);
+        var service = new MoundService(host);
+        var charter = Charter("mm-cad");
+        charter.SyncIntervalSeconds = 60;
+        host.Major.AcceptCharter(charter, Now);
+        host.Cache.SaveAuthority(host.Authority);
+
+        service.Tick(Now);                                 // first tick always syncs
+        Assert.Equal(1, transport.Exchanges);
+        Assert.Equal(TimeSpan.FromSeconds(60), service.EffectiveSyncInterval);
+
+        host.ExecuteMission(Watering("mm-cad"), Now);      // holds the line for 5 s
+        Assert.True(line.State);
+
+        service.Tick(Now.AddSeconds(5));                   // 5 s later: hold released, but NOT yet time to sync
+        Assert.False(line.State);                          // released on the tick's rhythm
+        Assert.Equal(1, transport.Exchanges);              // sync still throttled
+
+        service.Tick(Now.AddSeconds(30));
+        Assert.Equal(1, transport.Exchanges);              // still inside the 60 s cadence
+
+        service.Tick(Now.AddSeconds(60));
+        Assert.Equal(2, transport.Exchanges);              // cadence elapsed: synced
+    }
+
+    [Fact]
+    public void Before_any_charter_the_enrollment_cadence_is_the_bootstrap()
+    {
+        // Enrollment's sync_interval_s applies until a charter arrives.
+        var transport = new CountingTransport();
+        var host = HostWithTransport("mm-boot", new InMemoryDigitalOutput(), transport);
+        var service = new MoundService(host) { SyncInterval = TimeSpan.FromSeconds(60) };
+
+        service.Tick(Now);
+        service.Tick(Now.AddSeconds(30));
+        Assert.Equal(1, transport.Exchanges);              // throttled by the enrollment cadence
+        service.Tick(Now.AddSeconds(60));
+        Assert.Equal(2, transport.Exchanges);
+    }
+
+    [Fact]
+    public void An_arriving_charter_takes_over_the_cadence_from_enrollment()
+    {
+        // The charter is the fresher copy of the same controller setting: once chartered, it wins.
+        var transport = new CountingTransport();
+        var host = HostWithTransport("mm-take", new InMemoryDigitalOutput(), transport);
+        var service = new MoundService(host) { SyncInterval = TimeSpan.FromSeconds(60) };
+        var charter = Charter("mm-take");
+        charter.SyncIntervalSeconds = 20;
+        host.Major.AcceptCharter(charter, Now);
+
+        Assert.Equal(TimeSpan.FromSeconds(20), service.EffectiveSyncInterval);
+        service.Tick(Now);
+        service.Tick(Now.AddSeconds(20));
+        Assert.Equal(2, transport.Exchanges);              // synced at the charter's 20 s, not enrollment's 60 s
+    }
+
+    [Fact]
+    public void With_no_controller_cadence_every_tick_syncs_as_before()
+    {
+        var transport = new CountingTransport();
+        var host = HostWithTransport("mm-nocad", new InMemoryDigitalOutput(), transport);
+        var service = new MoundService(host);              // no charter, no enrollment cadence: the prior behaviour
+
+        service.Tick(Now);
+        service.Tick(Now.AddSeconds(5));
+        service.Tick(Now.AddSeconds(10));
+        Assert.Equal(3, transport.Exchanges);
+    }
+
+    /// <summary>A transport that counts exchanges and answers "offline" — enough to observe the cadence.</summary>
+    private sealed class CountingTransport : ISyncTransport
+    {
+        public int Exchanges { get; private set; }
+        public bool TryExchange(Envelope uplink, out IReadOnlyList<Envelope> downlink, out string detail)
+        {
+            Exchanges++;
+            downlink = [];
+            detail = "counting";
+            return false;
+        }
     }
 
     /// <summary>A line that refuses to de-energize once hot — the physical failure a held line must

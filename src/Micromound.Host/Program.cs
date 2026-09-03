@@ -11,10 +11,10 @@
 //   <state>/identity/seed   device keypair, owner-only, never transmitted
 //   <state>/state/          durable operational state (charter, mission checkpoint, uplink queue)
 //
-// A real network transport to the controller, and the timing watchdog's own thread, are the next M4
-// slice; until then the daemon runs offline (the durable queue holds the backlog) and the watchdog
-// is driven by the tick loop. All user-facing configuration and visualization belong to the upstream
-// controller — see docs/UPSTREAM.md.
+// With --controller the daemon enrolls (once, by a one-time token), then syncs signed envelopes on the
+// controller's cadence; without it, it runs offline and the durable queue holds the backlog. An
+// independent watchdog thread de-energizes and stops the mound if this loop hangs. All user-facing
+// configuration and visualization belong to the upstream controller — see docs/UPSTREAM.md.
 
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -25,12 +25,15 @@ var options = HostArgs.Parse(args);
 if (options is null)
 {
     Console.Error.WriteLine(
-        "usage: micromound --manifest <path> [--state <dir>] [--controller <url>] [--enroll-token <t>] [--interval-s <n>] [--heartbeat-s <n>]\n" +
+        "usage: micromound --manifest <path> [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
         "  --state        state root (identity + durable state). default: /var/lib/micromound\n" +
         "  --controller   controller base URL, e.g. https://anthill.example. default: offline\n" +
         "  --enroll-token one-time enrollment token; used once if not already enrolled (PROTOCOL.md §3)\n" +
-        "  --interval-s   seconds between service ticks. default: 5\n" +
+        "  --tier         controller tier declared at enrollment: edge_queen (a Pi running the full\n" +
+        "                 colony) or deterministic_controller (a constrained subordinate). default: edge_queen\n" +
+        "  --interval-s   seconds between service ticks (hold release, watchdog, heartbeat). default: 5.\n" +
+        "                 The SYNC cadence follows the controller's sync_interval_s once enrolled.\n" +
         "  --heartbeat-s  soft watchdog heartbeat timeout; 0 disables the timing check. default: 30\n" +
         "  --watchdog-s   HARD independent-watchdog timeout: an own-thread timer that de-energizes and\n" +
         "                 stops the mound if the service loop hangs this long. 0 disables; omitted\n" +
@@ -61,13 +64,22 @@ try
     // enrollment or present the one-time token now. Without it, downlink stays unverifiable — the safe
     // direction — and the mound only uplinks.
     IPublicKeyDirectory controllerKeys = new InMemoryPublicKeyDirectory();
+    double? controllerSyncInterval = null;
     if (options.ControllerUrl is not null)
     {
+        // The device tells the controller what it is: its manifest mound id (a cross-check against the
+        // mound the operator minted the token for), its tier (one the controller accepts), its
+        // capabilities, and its protocol version — so a misconfiguration is refused at the door,
+        // loudly, instead of surfacing as an unexplained signature refusal on every later beat.
         using var enroller = new HttpEnrollmentClient(new Uri(options.ControllerUrl),
-            hardwareProfile: string.Join(",", manifest.Capabilities), tier: "mound_major");
-        controllerKeys = MoundHost.ResolveControllerKeys(
-            options.StateDirectory, enroller, keys.PublicKey, options.EnrollToken, out _, out var enrollDetail);
-        Console.WriteLine($"micromound: {enrollDetail}");
+            hardwareProfile: string.Join(",", manifest.Capabilities),
+            tier: options.Tier,
+            moundId: manifest.MoundId,
+            capabilities: manifest.Capabilities);
+        var link = MoundHost.ResolveControllerLink(options.StateDirectory, enroller, keys.PublicKey, options.EnrollToken);
+        controllerKeys = link.Keys;
+        controllerSyncInterval = link.SyncIntervalSeconds;
+        Console.WriteLine($"micromound: {link.Detail}");
     }
 
     host = MoundHost.Create(new HostOptions
@@ -80,6 +92,10 @@ try
         Transport = options.ControllerUrl is null ? null : new HttpSyncTransport(new Uri(options.ControllerUrl))
     });
     service = new MoundService(host);
+    // Honour the controller's sync cadence if it stated one. This throttles the sync beat ONLY; the
+    // tick — hold release, watchdog kick, heartbeat — keeps --interval-s regardless.
+    if (controllerSyncInterval is { } cadence)
+        service.SyncInterval = TimeSpan.FromSeconds(cadence);
     host.Restore(DateTimeOffset.UtcNow);   // recover any mission a prior run left in flight
 }
 catch (HostStartupException ex)
@@ -97,8 +113,9 @@ var watchdogSeconds = options.WatchdogSeconds
     ?? Math.Max(options.HeartbeatTimeoutSeconds > 0 ? options.HeartbeatTimeoutSeconds * 3 : 0, options.IntervalSeconds * 6);
 
 Console.WriteLine(
-    $"micromound: {host.MoundId} up, state={host.State}. Running offline until a controller " +
-    "transport is configured; Ctrl-C / SIGTERM to stop safely." +
+    $"micromound: {host.MoundId} up, state={host.State}. " +
+    (options.ControllerUrl is null ? "Running offline (no --controller); " : $"Controller {options.ControllerUrl}; ") +
+    "Ctrl-C / SIGTERM to stop safely." +
     (watchdogSeconds > 0 ? $" Independent watchdog armed at {watchdogSeconds:0.#}s." : " Independent watchdog disabled."));
 
 using var cts = new CancellationTokenSource();
@@ -136,7 +153,7 @@ finally
 return 0;
 
 /// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
-file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, string? EnrollToken, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
+file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
 {
     public static HostArgs? Parse(string[] args)
     {
@@ -144,6 +161,7 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
         var state = Environment.GetEnvironmentVariable("MICROMOUND_STATE") ?? "/var/lib/micromound";
         string? controller = null;
         string? enrollToken = null;
+        var tier = ControllerTiers.EdgeQueen;   // a Pi running the full colony, unless told otherwise
         var interval = 5.0;
         var heartbeat = 30.0;
         double? watchdog = null;   // null → auto-derive a safe default; 0 → explicitly disabled
@@ -158,6 +176,9 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
                 // usage error, never a cleartext or undialable transport handed to the daemon.
                 case "--controller" when i + 1 < args.Length && Uri.TryCreate(args[i + 1], UriKind.Absolute, out var cu) && cu.Scheme == Uri.UriSchemeHttps: controller = args[++i]; break;
                 case "--enroll-token" when i + 1 < args.Length: enrollToken = args[++i]; break;
+                // Only a tier the controller accepts; an unknown one would be refused at enrollment anyway,
+                // so refuse it here as a usage error with the vocabulary in the message.
+                case "--tier" when i + 1 < args.Length && ControllerTiers.IsKnown(args[i + 1]): tier = args[++i]; break;
                 case "--interval-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var iv) && iv > 0: interval = iv; i++; break;
                 case "--heartbeat-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var hb) && hb >= 0: heartbeat = hb; i++; break;
                 case "--watchdog-s" when i + 1 < args.Length && double.TryParse(args[i + 1], out var wd) && wd >= 0: watchdog = wd; i++; break;
@@ -165,6 +186,6 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
             }
         }
 
-        return manifest is null ? null : new HostArgs(manifest, state, controller, enrollToken, interval, heartbeat, watchdog);
+        return manifest is null ? null : new HostArgs(manifest, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
     }
 }

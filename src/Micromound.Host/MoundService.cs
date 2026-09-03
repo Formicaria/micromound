@@ -20,10 +20,48 @@ namespace Micromound.Host;
 /// </summary>
 public sealed class MoundService(MoundHost host)
 {
+    private DateTimeOffset? _lastSync;
+
     public MoundHost Host => host;
 
     /// <summary>True when the watchdog demands safe state — a sticky safety trip or a stale heartbeat.</summary>
     public bool SafeStateEngaged => host.Guard.SafeStateRequired;
+
+    /// <summary>
+    /// The sync cadence the controller stated at ENROLLMENT (PROTOCOL.md §3's <c>sync_interval_s</c>) —
+    /// the bootstrap value, in force until a charter arrives. Null — the default — means no controller
+    /// cadence is known and the mound syncs on every tick.
+    /// </summary>
+    public TimeSpan? SyncInterval { get; set; }
+
+    /// <summary>
+    /// The cadence actually in force. The ACTIVE CHARTER's <c>sync_interval_s</c> (PROTOCOL.md §4) wins
+    /// whenever the mound is chartered: it is the live authority, and the controller sets it from the
+    /// same mound record it answered enrollment from, so it is simply the fresher copy — an operator who
+    /// changes the cadence issues a new charter. Before any charter, the enrollment value applies. With
+    /// neither, every tick syncs.
+    ///
+    /// <para><b>Deliberately NOT the tick interval.</b> The tick also releases elapsed actuation holds,
+    /// kicks the independent watchdog, and refreshes the heartbeat; those must stay fast. A controller
+    /// that asks to be synced every 60 s is choosing how often it hears from the mound — it is not
+    /// asking for a valve's 5 s hold to be released 60 s late. So the cadence throttles the sync beat
+    /// alone, and everything safety-bearing keeps the tick's own rhythm.</para>
+    ///
+    /// <para><b>Why honouring it matters, and its safety bound.</b> The controller judges a mound
+    /// offline from this very cadence (missed beats × interval), so a mound syncing on its own schedule
+    /// would be mis-reported. A cadence longer than the lease TTL is self-limiting: the mound cannot
+    /// renew and quiesces — the fail-safe direction — so no cap is needed here; the lease is the bound.</para>
+    /// </summary>
+    public TimeSpan? EffectiveSyncInterval
+    {
+        get
+        {
+            var charter = host.Authority.ActiveCharter;
+            if (charter is { SyncIntervalSeconds: > 0 })
+                return TimeSpan.FromSeconds(charter.SyncIntervalSeconds);
+            return SyncInterval;
+        }
+    }
 
     /// <summary>
     /// One service tick: mark the runtime alive, respond to any pending trip, run a sync beat, refresh
@@ -43,11 +81,20 @@ public sealed class MoundService(MoundHost host)
     {
         host.Beat(now);
         RespondToWatchdog(now);        // observe any watchdog/interlock trip first, via the Guard lock barrier
-        host.Sync(now);
+        if (SyncDue(now))
+        {
+            host.Sync(now);
+            _lastSync = now;
+        }
         host.PollHealth(now);
-        host.ServiceActuations(now);   // release any line whose on_s has elapsed
+        host.ServiceActuations(now);   // release any line whose on_s has elapsed — every tick, never throttled
         RespondToWatchdog(now);
     }
+
+    /// <summary>Sync every tick unless a controller cadence is in force, in which case only once it has
+    /// elapsed. The first tick always syncs, so a freshly booted mound reports in immediately.</summary>
+    private bool SyncDue(DateTimeOffset now) =>
+        EffectiveSyncInterval is not { } interval || _lastSync is not { } last || now - last >= interval;
 
     /// <summary>
     /// Graceful shutdown: drive every actuator to its safe state, then persist authority. If a sticky

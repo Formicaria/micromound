@@ -38,6 +38,17 @@ public sealed class HostOptions
 }
 
 /// <summary>
+/// The device's link to its controller as resolved at boot: the key directory downlink is verified
+/// against, whether the mound is enrolled at all, a human-readable account of how that was decided,
+/// and — when the controller stated one at enrollment — the sync cadence it asked for.
+/// </summary>
+/// <param name="Keys">Holds <c>KeyIds.Controller</c> when enrolled; empty otherwise (downlink unverifiable, so dropped).</param>
+/// <param name="Enrolled">True when a controller key is trusted for this boot.</param>
+/// <param name="Detail">How the link was resolved, for the operator's log line.</param>
+/// <param name="SyncIntervalSeconds">The controller-requested sync cadence, or null to keep the local one.</param>
+public sealed record ControllerLink(IPublicKeyDirectory Keys, bool Enrolled, string Detail, double? SyncIntervalSeconds);
+
+/// <summary>
 /// The real composition root — the headless daemon's runtime, built from a manifest over a durable
 /// file-backed store, using the exact <see cref="MoundComposition"/> the simulator uses so the two
 /// cannot drift. This slice makes the mound composable and runnable from a manifest and disk; the
@@ -366,64 +377,121 @@ public sealed class MoundHost
         string stateDirectory, IEnrollmentClient? enrollment, byte[] devicePublicKey, string? token,
         out bool enrolled, out string detail)
     {
+        var link = ResolveControllerLink(stateDirectory, enrollment, devicePublicKey, token);
+        enrolled = link.Enrolled;
+        detail = link.Detail;
+        return link.Keys;
+    }
+
+    /// <summary>
+    /// The rich form of <see cref="ResolveControllerKeys"/>: the same key resolution, plus what the
+    /// controller told the device about itself at enrollment — chiefly the <b>sync cadence</b> it wants.
+    /// That cadence is persisted beside the key (<c>controller.meta.json</c>, additive — an older state
+    /// directory with only <c>controller.pub</c> still loads) so a restart keeps it; enrollment happens
+    /// exactly once per token, so anything learned then and not persisted would be lost on the first
+    /// reboot and never learned again.
+    /// </summary>
+    public static ControllerLink ResolveControllerLink(
+        string stateDirectory, IEnrollmentClient? enrollment, byte[] devicePublicKey, string? token)
+    {
         ArgumentException.ThrowIfNullOrWhiteSpace(stateDirectory);
         ArgumentNullException.ThrowIfNull(devicePublicKey);
 
         var directory = new InMemoryPublicKeyDirectory();
         var keyPath = Path.Combine(stateDirectory, "controller.pub");
+        var metaPath = Path.Combine(stateDirectory, "controller.meta.json");
 
         if (File.Exists(keyPath))
         {
             if (TryLoadControllerKey(keyPath, out var storedKey))
             {
                 directory.Register(KeyIds.Controller, storedKey);
-                enrolled = true;
-                detail = "controller key loaded from a prior enrollment";
-                return directory;
+                var meta = TryLoadControllerMeta(metaPath);
+                return new ControllerLink(directory, true,
+                    "controller key loaded from a prior enrollment" +
+                    (meta?.SyncIntervalSeconds is { } s ? $" (sync cadence {s:0.#}s)" : ""),
+                    meta?.SyncIntervalSeconds);
             }
 
             // The stored key is unreadable or malformed — it would verify nothing and, because the
             // file exists, would block re-enrollment forever. If a fresh token is available, clear it
             // and enroll again; otherwise stay un-enrolled (downlink unverifiable — the safe state).
             if (enrollment is null || string.IsNullOrWhiteSpace(token))
-            {
-                enrolled = false;
-                detail = "stored controller key is invalid and no token is available to recover; not enrolled";
-                return directory;
-            }
+                return new ControllerLink(directory, false,
+                    "stored controller key is invalid and no token is available to recover; not enrolled", null);
             SafeDelete(keyPath);
+            SafeDelete(metaPath);
         }
 
         if (enrollment is null || string.IsNullOrWhiteSpace(token))
-        {
-            enrolled = false;
-            detail = "not enrolled: no stored controller key and no enrollment token — downlink cannot be verified yet";
-            return directory;
-        }
+            return new ControllerLink(directory, false,
+                "not enrolled: no stored controller key and no enrollment token — downlink cannot be verified yet", null);
 
-        if (!enrollment.TryEnroll(token, devicePublicKey, out var controllerKey, out var enrollDetail))
-        {
-            enrolled = false;
-            detail = enrollDetail;
-            return directory;
-        }
+        if (!enrollment.TryEnroll(token, devicePublicKey, out var enrolled, out var enrollDetail) || enrolled is null)
+            return new ControllerLink(directory, false, enrollDetail, null);
 
+        var controllerKey = enrolled.ControllerPublicKey;
         if (controllerKey.Length != Ed25519KeyPair.PublicKeyLength || Array.TrueForAll(controllerKey, b => b == 0))
-        {
-            enrolled = false;
-            detail = "enrollment returned an invalid controller key; not enrolled";
-            return directory;
-        }
+            return new ControllerLink(directory, false, "enrollment returned an invalid controller key; not enrolled", null);
 
         // Trust the key in memory for this boot regardless of whether persistence succeeds — a disk
         // problem must not throw past the daemon's fail-closed bring-up. If the write fails, the mound
         // is enrolled now and re-enrolls next boot (the token is one-time, so recovery needs a new one).
         directory.Register(KeyIds.Controller, controllerKey);
-        enrolled = true;
-        detail = TryPersistControllerKey(keyPath, controllerKey)
-            ? "enrolled: " + enrollDetail
-            : "enrolled (in memory; controller key could not be persisted — will re-enroll next boot): " + enrollDetail;
-        return directory;
+        var persisted = TryPersistControllerKey(keyPath, controllerKey);
+        if (persisted)
+            TryPersistControllerMeta(metaPath, enrolled);   // best-effort; the key is what must survive
+        return new ControllerLink(directory, true,
+            persisted
+                ? "enrolled: " + enrollDetail
+                : "enrolled (in memory; controller key could not be persisted — will re-enroll next boot): " + enrollDetail,
+            enrolled.SyncIntervalSeconds);
+    }
+
+    /// <summary>What the controller told the device beyond its key, persisted beside <c>controller.pub</c>.</summary>
+    private sealed record ControllerMeta(
+        [property: System.Text.Json.Serialization.JsonPropertyName("sync_interval_s")] double? SyncIntervalSeconds,
+        [property: System.Text.Json.Serialization.JsonPropertyName("mound_id")] string? MoundId,
+        [property: System.Text.Json.Serialization.JsonPropertyName("protocol_version")] int? ProtocolVersion,
+        [property: System.Text.Json.Serialization.JsonPropertyName("colony_version")] string? ColonyVersion);
+
+    private static ControllerMeta? TryLoadControllerMeta(string metaPath)
+    {
+        try
+        {
+            if (!File.Exists(metaPath)) return null;
+            var meta = System.Text.Json.JsonSerializer.Deserialize<ControllerMeta>(File.ReadAllText(metaPath));
+            // A cadence must be a positive, finite number of seconds to be one at all.
+            return meta is null ? null : meta with
+            {
+                SyncIntervalSeconds = meta.SyncIntervalSeconds is { } s && double.IsFinite(s) && s > 0 ? s : null
+            };
+        }
+        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException)
+        {
+            return null;   // a corrupt sidecar only costs the cadence; the key file is the thing that matters
+        }
+    }
+
+    private static void TryPersistControllerMeta(string metaPath, ControllerEnrollment enrolled)
+    {
+        var tmp = metaPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(new ControllerMeta(
+                enrolled.SyncIntervalSeconds, enrolled.MoundId, enrolled.ProtocolVersion, enrolled.ColonyVersion));
+            using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                stream.Write(Encoding.UTF8.GetBytes(json));
+                stream.Flush();
+                stream.Flush(flushToDisk: true);
+            }
+            File.Move(tmp, metaPath, overwrite: true);
+        }
+        catch (Exception)
+        {
+            SafeDelete(tmp);   // best-effort: losing the sidecar costs only the cadence
+        }
     }
 
     private static bool TryLoadControllerKey(string keyPath, out byte[] key)

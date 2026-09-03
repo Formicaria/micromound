@@ -21,13 +21,17 @@ namespace Micromound.Sim;
 ///
 /// Network-free: the "wire" is <see cref="SimLink"/>, an in-process call with an Online switch.
 /// </summary>
-public sealed class SimMound(string moundId, string tier = SimMound.TierMoundMajor)
+public sealed class SimMound(string moundId, string tier = SimMound.TierEdgeQueen)
 {
+    // The tier strings are the shared wire vocabulary (Micromound.Protocol.ControllerTiers) — the same set
+    // the controller validates at enrollment — so the simulator speaks the labels a real controller
+    // accepts, not a private spelling of them.
+
     /// <summary>Pi-class: full runtime, full envelope set, a Mound Major coordinating ants.</summary>
-    public const string TierMoundMajor = "mound_major";
+    public const string TierEdgeQueen = ControllerTiers.EdgeQueen;
 
     /// <summary>ESP32-class: compiled routines, reduced envelope set, no open-ended planning.</summary>
-    public const string TierController = "deterministic_controller";
+    public const string TierController = ControllerTiers.DeterministicController;
 
     private readonly Dictionary<string, EvidenceItem> _evidenceMirror = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SimDriverBase> _drivers = new(StringComparer.Ordinal);
