@@ -1,0 +1,67 @@
+# MicroMound — the headless edge-colony daemon, as a systemd service on a Raspberry Pi / Linux SBC.
+#
+# Install with deploy/install.sh, or by hand:
+#   sudo cp micromound.service /etc/systemd/system/
+#   sudo install -d -o micromound -g micromound -m 0750 /var/lib/micromound /etc/micromound
+#   sudo cp micromound.env /etc/micromound/micromound.env    # then edit it
+#   sudo systemctl daemon-reload && sudo systemctl enable --now micromound
+#
+# Arguments come from /etc/micromound/micromound.env (MICROMOUND_ARGS). Everything the daemon accepts
+# is documented by `micromound` with no arguments; docs/DEPLOY.md walks through a first bring-up.
+#
+# SAFETY: `Restart=always` is the process-supervision backstop SAFETY.md names for a loop wedged
+# inside a driver operation. A restart requests every output line at its SAFE level again (the
+# driver's !active_high), and a mound that was stopped stays stopped — a stop survives a reboot.
+# Between the crash and the restart, the kernel has released the lines to their default state;
+# whether THAT is safe is your board's property (pull-ups on relay inputs), not this unit's.
+
+[Unit]
+Description=MicroMound edge-colony daemon
+Documentation=https://github.com/Formicaria/micromound
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=micromound
+Group=micromound
+# gpio: /dev/gpiochip* (and /sys/class/gpio on a legacy kernel). i2c: /dev/i2c-*.
+SupplementaryGroups=gpio i2c
+EnvironmentFile=/etc/micromound/micromound.env
+ExecStart=/opt/micromound/micromound $MICROMOUND_ARGS
+WorkingDirectory=/var/lib/micromound
+
+# Supervision (SAFETY.md Layer 1: the backstop for a wedged loop). Give a clean stop time to
+# de-energize and persist before SIGKILL; the daemon handles SIGTERM as a safe shutdown.
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+# State the daemon owns; identity is never transmitted and is owner-only.
+StateDirectory=micromound
+StateDirectoryMode=0750
+
+# Hardening. The daemon needs: its state directory, /dev/gpiochip* and /dev/i2c-* (device
+# access via the supplementary groups), outbound HTTPS to the controller, and nothing else.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# DevicePolicy=closed would hide the GPIO/I2C nodes; allow exactly those.
+DevicePolicy=closed
+DeviceAllow=char-gpiochip rw
+DeviceAllow=char-i2c rw
+# The legacy sysfs GPIO path needs /sys writable for export/direction/value; the default chardev
+# backing does not. Uncomment ONLY with --gpio sysfs.
+#ReadWritePaths=/sys/class/gpio
+
+[Install]
+WantedBy=multi-user.target

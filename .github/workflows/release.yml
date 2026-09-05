@@ -106,6 +106,12 @@ jobs:
               -o ./publish/${{ matrix.rid }}
           done
           cp README.md CHANGELOG.md LICENSE ./publish/${{ matrix.rid }}/
+          # The Pi deployment kit rides along with the Linux daemon: unit, env template, installer, guide.
+          if [ "${{ matrix.rid }}" != "win-x64" ]; then
+            mkdir -p ./publish/${{ matrix.rid }}/deploy
+            cp deploy/micromound.service deploy/micromound.env deploy/install.sh ./publish/${{ matrix.rid }}/deploy/
+            cp docs/DEPLOY.md ./publish/${{ matrix.rid }}/
+          fi
 
       - name: Package (${{ matrix.archive }})
         run: |

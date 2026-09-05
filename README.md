@@ -127,8 +127,10 @@ GPIO lines on the character device (`/dev/gpiochipN`; manifest `pin`, optional `
 for a legacy kernel) and analog sensors open ADS1115 channels over I2C (manifest `channel`, `bus`,
 `address`, `gain`). Enable I2C (`raspi-config` → Interfaces), run as a user in the `i2c` and `gpio`
 groups, and keep every ADC input below VDD + 0.3 V — the gain setting is resolution, not protection.
-`micromound --describe-drivers` prints every setting. Without `--hardware` every port is in-memory and
-the daemon says so at start-up.
+`micromound --describe-drivers` prints every setting; `--check-hardware` claims every port the manifest
+names and reads each sensor once without actuating anything. Without `--hardware` a manifest that names
+physical ports is refused unless you pass `--simulate`. [`docs/DEPLOY.md`](docs/DEPLOY.md) is the
+step-by-step bring-up (systemd unit and installer in `deploy/`).
 Releases are cut with `scripts/release.sh` (or `scripts/release.ps1`) from a synced `main`.
 
 Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
@@ -147,6 +149,7 @@ src/Micromound.Sync/           Runner Ant transport (enrollment, sync beat, dura
 src/Micromound.Reasoning/      optional reasoning provider, and the null default
 src/Micromound.Host/           the headless Linux/Pi daemon
 src/Micromound.Sim/            simulated mounds — the real kernel over fake hardware
+deploy/                        systemd unit, environment template, installer for a Pi
 firmware/esp32/                reduced deterministic controller (ESP-IDF)
 tests/Micromound.Tests/        contract, authority, kernel, evidence, and golden-byte tests
 ```
@@ -176,6 +179,7 @@ See [`docs/UPSTREAM.md`](docs/UPSTREAM.md).
 | [`docs/PROTOCOL.md`](docs/PROTOCOL.md) | Wire contract: envelopes, charters, missions, evidence, canonical bytes |
 | [`docs/SAFETY.md`](docs/SAFETY.md) | Safety model. **Where documents disagree, this one wins** |
 | [`docs/UPSTREAM.md`](docs/UPSTREAM.md) | The controller contract, and ANTHILL as its reference integration |
+| [`docs/DEPLOY.md`](docs/DEPLOY.md) | Bringing a mound up on a Raspberry Pi: buses, install, check the wiring, enroll, charter, first mission |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestones and build order |
 
 ## Non-goals
