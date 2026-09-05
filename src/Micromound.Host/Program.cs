@@ -37,7 +37,8 @@ var options = HostArgs.Parse(args);
 if (options is null)
 {
     Console.Error.WriteLine(
-        "usage: micromound --manifest <path> [--hardware [--gpio chardev|sysfs]] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
+        "usage: micromound --manifest <path> [--hardware [--gpio chardev|sysfs] | --simulate] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
+        "       micromound --manifest <path> --check-hardware [--gpio chardev|sysfs]   claim every port the manifest names, read each sensor once, report, exit (0 = all claimed)\n" +
         "       micromound --describe-drivers [--hardware]   print the driver types this build ships and their settings (JSON), then exit\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
         "  --hardware     drive REAL ports: digital actuators on sysfs GPIO (setting 'pin'), analog sensors\n" +
@@ -45,6 +46,11 @@ if (options is null)
         "                 every port is in-memory — nothing physical moves and readings are zero.\n" +
         "  --gpio         GPIO backing with --hardware: chardev (/dev/gpiochipN, the libgpiod interface; default)\n" +
         "                 or sysfs (legacy /sys/class/gpio, for kernels that still ship it).\n" +
+        "  --simulate     run a manifest that names physical ports (pin, channel, bus, address) on IN-MEMORY ports\n" +
+        "                 anyway — for a development machine. Without --hardware or --simulate such a manifest\n" +
+        "                 is refused, because its readings and actuations would look real and be neither.\n" +
+        "  --check-hardware  open every device exactly as bring-up would (real ports, safe level), take one\n" +
+        "                 reading per sensor, print a per-device report, exit. Actuates nothing; composes no mound.\n" +
         "  --state        state root (identity + durable state). default: /var/lib/micromound\n" +
         "  --controller   controller base URL, e.g. https://anthill.example. default: offline\n" +
         "  --enroll-token one-time enrollment token; used once if not already enrolled (PROTOCOL.md §3)\n" +
@@ -72,15 +78,30 @@ catch (Exception ex)
     return 2;
 }
 
+// `--check-hardware`: the operator's question at the board — does the wiring match the manifest?
+// Every port is opened exactly as bring-up would open it; each sensor is read once; nothing is
+// actuated and no mound is composed. Exit 0 only if every device was claimed.
+if (options.CheckHardware)
+{
+    var report = HardwareCheck.Run(manifest, MoundHost.HardwareDriverFactories(options.GpioBacking), DateTimeOffset.UtcNow);
+    Console.WriteLine(HardwareCheck.Format(report, "real ports, GPIO via " + options.GpioBacking));
+    return report.AllOk ? 0 : 1;
+}
+
 // A manifest that names PHYSICAL ports (a pin, an I2C channel) while the daemon runs in-memory would
-// produce readings and "actuations" that look real and are not. Say so loudly; the banner repeats it.
+// produce readings and "actuations" that look real and are not. That is REFUSED unless the operator
+// says --simulate in so many words; a development machine can, a device must not by accident.
 if (!options.Hardware)
 {
-    var physical = manifest.Hardware
-        .Where(h => h.Value.Settings.Keys.Any(k => k is "pin" or "channel" or "bus" or "address"))
-        .Select(h => h.Key).ToList();
+    var physical = HardwareCheck.DevicesNamingPhysicalPorts(manifest);
+    if (physical.Count > 0 && !options.Simulate)
+    {
+        Console.Error.WriteLine($"micromound: refused (fail-closed): the manifest names physical ports for {string.Join(", ", physical)} but neither --hardware nor --simulate was given. " +
+                                "On a device pass --hardware; on a development machine pass --simulate to run every port in memory (nothing physical is driven or measured).");
+        return 2;
+    }
     if (physical.Count > 0)
-        Console.Error.WriteLine($"micromound: WARNING: manifest names physical ports for {string.Join(", ", physical)} but --hardware is not set; every port is IN-MEMORY and nothing physical is driven or measured.");
+        Console.Error.WriteLine($"micromound: SIMULATING: manifest names physical ports for {string.Join(", ", physical)}; every port is IN-MEMORY and nothing physical is driven or measured.");
 }
 
 MoundHost host;
@@ -188,7 +209,7 @@ finally
 return 0;
 
 /// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
-file sealed record HostArgs(string ManifestPath, bool Hardware, string GpioBacking, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
+file sealed record HostArgs(string ManifestPath, bool Hardware, bool Simulate, bool CheckHardware, string GpioBacking, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
 {
     /// <summary>The <c>--gpio</c> value in a raw argument list, or the default; used before full parsing.</summary>
     public static string GpioBackingOf(string[] args)
@@ -201,6 +222,8 @@ file sealed record HostArgs(string ManifestPath, bool Hardware, string GpioBacki
     {
         string? manifest = null;
         var hardware = false;   // in-memory ports unless the operator asks for the real ones
+        var simulate = false;   // ...and a manifest naming physical ports needs this to run in memory
+        var check = false;      // --check-hardware: report and exit
         var gpio = GpioBackings.Chardev;
         var state = Environment.GetEnvironmentVariable("MICROMOUND_STATE") ?? "/var/lib/micromound";
         string? controller = null;
@@ -216,6 +239,8 @@ file sealed record HostArgs(string ManifestPath, bool Hardware, string GpioBacki
             {
                 case "--manifest" when i + 1 < args.Length: manifest = args[++i]; break;
                 case "--hardware": hardware = true; break;
+                case "--simulate": simulate = true; break;
+                case "--check-hardware": check = true; break;
                 case "--gpio" when i + 1 < args.Length && GpioBackings.IsKnown(args[i + 1]): gpio = args[++i]; break;
                 case "--state" when i + 1 < args.Length: state = args[++i]; break;
                 // PROTOCOL.md §1: device-initiated HTTPS only. A non-https (or malformed) URL is a
@@ -232,6 +257,7 @@ file sealed record HostArgs(string ManifestPath, bool Hardware, string GpioBacki
             }
         }
 
-        return manifest is null ? null : new HostArgs(manifest, hardware, gpio, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
+        if (hardware && simulate) return null;   // contradictory: usage
+        return manifest is null ? null : new HostArgs(manifest, hardware, simulate, check, gpio, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
     }
 }
