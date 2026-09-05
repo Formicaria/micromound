@@ -31,7 +31,7 @@ jobs:
       version: ${{ steps.extract.outputs.version }}
       ref: ${{ steps.extract.outputs.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.tag || github.ref }}
 
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.verify-version.outputs.ref }}
 
@@ -89,7 +89,7 @@ jobs:
             projects: 'src/Micromound.Sim/Micromound.Sim.csproj'
             archive: zip
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.verify-version.outputs.ref }}
 
@@ -136,7 +136,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.verify-version.outputs.ref }}
 
