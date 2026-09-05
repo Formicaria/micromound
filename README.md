@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.19
+**Current version:** v0.9.20
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.19`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.20`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -116,11 +116,16 @@ a written rule (PROTOCOL.md §2) instead of a runtime behaviour, and — new in 
 reader**: a bounded, allocation-free JSON reader and decoders for the `charter`, `stop` and `ack` a
 device receives, verifying each downlink envelope's signature from the bytes as received and applying
 the same validators and the same refusal reasons as the host, pinned by a new golden fixture of REAL
-signatures (`canonical-signed.txt`) that BouncyCastle and TweetNaCl both reproduce. What's still ahead
+signatures (`canonical-signed.txt`) that BouncyCastle and TweetNaCl both reproduce, and — new in
+`v0.9.20` — **the kernel in C**: `mm_kernel` reproduces `CapabilityKernel` decision for decision — the
+same thirteen checks in the same order, the three-tier limit intersection, duty cycle and rate across
+every capability a routine moves, clamping that says what narrowed, the evidence gate — pinned by a new
+golden fixture (`kernel-decisions.txt`) in which a C# test scripts 42 steps against a fixed device and the
+C kernel must reproduce every reason, detail, effective parameter, state and record. What's still ahead
 for M4 is only the board itself. End-to-end simulator missions run against an in-process controller that verifies every
 byte. The v0 canonical bytes of every existing fixture are unchanged. The host has both a real digital
 line and a real analog channel available, but has not yet been run on a device against real hardware —
-that boundary finishes M4; the rest of the firmware (the kernel in C, compiled routines, the ESP-IDF
+that boundary finishes M4; the rest of the firmware (the device loop over the C kernel, the ESP-IDF
 project) is M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate

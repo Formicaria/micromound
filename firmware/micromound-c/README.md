@@ -9,7 +9,7 @@ run.
 
 ```bash
 make            # build/libmicromound.a
-make test       # 1,200+ checks, including every golden file, byte for byte
+make test       # 1,600+ checks, including every golden file, byte for byte
 make CC=clang test
 ```
 
@@ -30,7 +30,8 @@ needed when the buffer was too small.
 | `mm_bodies` | `mm_bodies.h` | The reduced-profile bodies field for field: `mound_sync`, `action_record`, `ack`, `stop`, `charter` | `canonical-envelopes.txt`, `canonical-bodies.txt` |
 | `mm_json_read` | `mm_json_read.h` | A bounded pull parser: full escape grammar, strict UTF-8, JSON number grammar, depth-capped, skips unknown members, hands values on as raw slices | `test_json_read.c` |
 | `mm_time` | `mm_time.h` | `yyyy-MM-ddTHH:mm:ssZ` ↔ epoch seconds; accepts the offset/fractional forms §2 asks readers to tolerate | `test_time.c` |
-| `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's closed refusal set, views to re-encode | `canonical-signed.txt` |
+| `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's reason lines character for character, views to re-encode | `canonical-signed.txt` |
+| `mm_kernel` | `mm_kernel.h` | **The capability kernel**: compiled capability/routine tables, `KernelAuthority` (charter, lease, stop, quiesce, device limits), the thirteen authorization checks in the host's order, hardware ∩ device ∩ charter, duty cycle and rate, clamping, execution through a function pointer, the evidence gate; the host's refusal reasons and detail text | `kernel-decisions.txt` |
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
 A constrained controller runs compiled routines selected by charter; it never plans.
@@ -121,7 +122,7 @@ firmware/micromound-c/
   include/            the public headers (one per module)
   src/                the modules
   third_party/tweetnacl/   TweetNaCl, verbatim, with a provenance README
-  tests/              mm_test.h harness; one test file per module; test_golden.c reads the five fixtures
+  tests/              mm_test.h harness; one test file per module; test_golden.c and test_kernel.c read the six fixtures
   Makefile
 ```
 
@@ -130,11 +131,44 @@ arithmetic for the detached functions and the seed keypair. TweetNaCl's own `ran
 is satisfied by a stub that aborts — reaching it is a programming error, since nothing here makes
 keys.
 
+## The kernel
+
+`mm_kernel` is `Micromound.Capabilities` with the tables compiled in:
+
+```c
+static const char *const RELAY_PARAMS[] = { "on_s" };
+static const mm_param_range RELAY_RANGES[] = { { "on_s", 1, 3600 } };
+static const mm_capability_desc CAPS[] = {
+    { "sense.temp",  0, { {0,0},{0,0},{0,0},{0,0},{0,0} }, NULL, 0, NULL, 0, NULL, 0, NULL, NULL },
+    { "act.relay_1", 1, { {1,60},{1,120},{0,0},{0,0},{1,4} },      /* hw: max_on_s 60, min_off_s 120, 4/h */
+      RELAY_PARAMS, 1, RELAY_PARAMS, 1, RELAY_RANGES, 1, "on_s", NULL },
+};
+
+mm_kernel k;
+char err[256];
+if (mm_kernel_init(&k, my_mound_id, CAPS, 2, NULL, 0, err, sizeof err) != 0) halt(err);
+mm_kernel_bind_executor(&k, &relay_executor);          /* { "act.relay_1", drive_relay, &relay, 1 } */
+
+/* a charter arrived and verified (mm_decode) */
+mm_refusal why;
+if (mm_kernel_accept_charter(&k, &charter, now, &why) != 0) audit(mm_refusal_join(&why, line, sizeof line));
+
+/* a routine wants the relay for 50 s */
+mm_param on_s = { "on_s", 50 };
+mm_request req = { "act.relay_1", &on_s, 1, "", "", -1 };
+mm_action_record_in record;
+mm_kernel_execute(&k, &req, now, action_id, &record);  /* refused, clamped, succeeded, failed, unverified — as the host would */
+```
+
+The record is an `mm_action_record_in`; `mm_action_record_bind` + `mm_body_action_record` put it in an
+envelope. `tests/test_kernel.c` runs the 42-step script in `kernel-decisions.txt` against exactly this
+API and matches every line the C# kernel wrote.
+
 ## What this is not, yet
 
-- **Not the kernel.** The capability kernel in C — same check order, the same three-tier limit
-  intersection, the same closed set of refusal reasons — is the next M5 slice, followed by compiled
-  routines and the device loop (accept a charter → run a routine → emit the record → ack).
+- **Not the device loop.** Downlink in → stop/charter/ack handled → the beat, the records and the
+  acks out, chained and signed — the glue over `mm_decode`, `mm_kernel` and `mm_envelope` — is the
+  next M5 slice, with compiled routines as executors.
 - **Not fast.** TweetNaCl signs in tens of milliseconds on an ESP32-class core; adequate for a sync
   beat, not for anything hotter. The backend sits behind `mm_ed25519.h` and the tests prove a swap
   did not change the bytes.

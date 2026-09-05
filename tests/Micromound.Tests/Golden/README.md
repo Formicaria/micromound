@@ -1,7 +1,8 @@
 # Golden files
 
-`files/` holds frozen copies of the exact bytes MICROMOUND puts on the wire: canonical envelope
-serializations, their sha256 digests, and the JSON shape of every typed body.
+`files/` holds frozen copies of the exact bytes MICROMOUND puts on the wire — canonical envelope
+serializations, their sha256 digests, the JSON shape of every typed body, real signatures under fixed
+test seeds — and, since `v0.9.20`, the capability kernel's decisions over a scripted session.
 
 They exist for one reason. M5 ships a C protocol mirror for the ESP32 — `firmware/micromound-c`,
 consumed by `firmware/esp32` — and two independent implementations of the same wire format drift
@@ -45,6 +46,7 @@ test — it means the bytes a deployed mound would send no longer match what a d
 | `canonical-strings.txt` | the §2 escaping rule: `<utf-8 hex> TAB <literal>` | every row through `mm_json_escape` |
 | `canonical-doubles.txt` | .NET's number layout: `<IEEE bits> TAB <text>` | every row through `mm_format_double` |
 | `canonical-signed.txt` | four REAL signed wire envelopes (fixed test seeds): a device beat and a controller's charter/stop/ack chain | each verified from the bytes as received, decoded, re-encoded to the same body, re-signed to the same wire |
+| `kernel-decisions.txt` | the capability kernel's decisions: a fixed device, a fixed clock, 42 scripted steps — reason, detail, effective parameters, limits, state, record | `mm_kernel` replays the script and must match every line |
 
 The fixtures are **current** — they were regenerated when the v0 contracts were last amended
 (`routines` on charters; `mission_id` / `routine_id` / `requested_parameters` / `evidence_required`

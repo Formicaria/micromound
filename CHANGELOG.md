@@ -12,6 +12,78 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.20 — M5: the kernel in C — the same authority boundary, decision for decision
+
+`Micromound.Capabilities` in C. Not a simplified kernel for a small device: the same thirteen checks
+in the same order, the same three-tier limit intersection, the same closed set of refusal reasons with
+the same detail text, the same records. A constrained controller that refused differently from a Pi
+would make "the mound refused" mean two different things — from this release that is a test failure.
+No wire change; no new refusal reason.
+
+### Added
+
+- **`mm_kernel`** (`firmware/micromound-c/include/mm_kernel.h`, `src/mm_kernel.c`):
+  - **Compiled tables.** `mm_capability_desc` / `mm_routine_desc` are `static const` in the firmware
+    image — the id, class, hardware limits, parameter names, required parameters, driver ranges, the
+    duration and magnitude parameters, and for a routine the capabilities it drives. `mm_kernel_init`
+    validates them with the registries' rules (well-formed ids; `sense.` is observe, `act.` is above
+    observe, no `hazardous`; required ⊆ parameters; ranges/duration/magnitude name parameters; a routine
+    drives ≥ 1 registered capability of no higher class) and reports the registry's own message.
+  - **`mm_authority`** = `KernelAuthority`: the active charter (a complete replacement, never a diff),
+    lease, stopped/quiesced, the manifest's device-limits tier and safe state; `accept_charter`
+    (CharterValidator against the device's own tables, then "a stop order outranks a charter"),
+    `renew_lease`, `quiesce_if_expired`, `stop`, `clear_stop`, `effective_ceiling`, and the four state
+    names. `mm_kernel_review_charter` reports widening attempts as the host does ("the hardware bound
+    stands"), never as a refusal.
+  - **`mm_kernel_authorize`** = `CapabilityKernel.Authorize`: 1 stop precedes everything but observation,
+    decided from the namespace before anything resolves; 2–3 resolve, with a routine only as available
+    and as permissive as the capabilities it drives; 4 hazardous never; 5 no charter / lease expired /
+    class above the ceiling; 6 granted by this charter; 7 the worker's own ceiling; 8 unknown parameters
+    refused (not dropped), required present; 9 hardware ∩ device ∩ charter; 10–11 duty cycle and rate
+    across every capability the request would move (a routine cannot run a relay inside the relay's
+    own cooldown); 12 clamp — driver range, then `max_on_s` on the duration parameter, then `[min, max]`
+    on the magnitude parameter — and say what narrowed; 13 an executor must be bound.
+  - **`mm_kernel_execute`** = `Execute`: the record built from the decision (refusals carry
+    `"<reason>: <detail>"`, a stop refusal's outcome is `stopped`), the executor run through a function
+    pointer (a non-zero return is the C# "driver threw" backstop), `ended_at` from the executor or
+    `now + duration`, the duty cycle recorded for every history key whether the driver succeeded or
+    faulted, `failed` with `driver_fault:` on a fault, `clamped` or `succeeded`, then the **evidence gate**
+    ("commands are not evidence": no evidence referenced, missing, unparseable, captured in the future,
+    or stale outside the policy window → `unverified`, the reason appended to the clamp note so neither
+    fact hides the other).
+  - `mm_history` = `ActuationHistory` (last end and starts per key; starts remembered up to 16 per key,
+    pruned to the trailing hour as the host does); `mm_limits_intersect` / `mm_limits_attempts_to_widen`;
+    `mm_capability_is_well_formed`; the refusal-reason and action-class wire names.
+- **Golden fixture `kernel-decisions.txt`**, frozen by the new `KernelDecisionsTests` (C#): a fixed device
+  (`sense.temp`; `act.relay_1` benign with hardware `max_on_s` 60 / `min_off_s` 120 / `max_rate_per_h` 4,
+  `on_s` required in `[1, 3600]`; `act.dimmer` controlled with `level` magnitude; `act.fan` with no
+  executor; `routine.cool` driving the relay under its own `max_on_s` 45), device limit `max_on_s` 40,
+  a fixed clock, and **42 scripted steps**: observe-only, a benign charter that tries to widen the
+  hardware rate, the clamp to the narrowest tier, duty cycle, class exceeded, unknown/missing parameter,
+  executor missing, unknown and malformed ids, an unregistered routine, a worker ceiling, sensing spending
+  no duty cycle, a routine clamped by its own bound and refused under the relay's key, driver
+  unavailable, the fourth start in an hour and the fifth refused, a lease renewed and run out, actuation
+  refused and sensing continuing after expiry, a fresh charter out of quiesce, stop refusing an
+  unresolvable id before anything resolves, a charter unable to clear a stop, an explicit clear, an
+  observe-ceiling charter, an expired charter and one naming hardware the device lacks, plus the
+  evidence gate demoting for no evidence, for stale evidence, and a driver fault that still spends
+  the cooldown. Every step records the reason, detail, effective parameters, effective limits, mound
+  state and the action record body (`action_id` normalized). **The C kernel replays the script from the
+  fixture's own `at:` and `request:` lines and reproduces every line.**
+- Tests: 1,690 checks (from 1,273): the registry rules a compiled table could break, `LimitClamp` on its
+  own, and the whole script. gcc, clang, gcc+ASan/UBSan (findings fatal).
+
+### Notes
+
+- Two host behaviours the fixture made visible and the C kernel now shares: a refusal decision carries
+  no effective limits (they are computed but not reported — `KernelDecision.Refuse` drops them), and a
+  driver fault's record still ends at `now + duration` and still spends the duty cycle.
+- `MM_DETAIL_CAP` grew from 160 to 320 so a clamp note and an evidence-gate reason fit together in a
+  record's `detail`, as they do on the host.
+- Capacities of this kernel, all compile-time: 16 capabilities, 8 routines, 4 capabilities per routine,
+  16 remembered starts per history key (a `max_rate_per_h` above 16 saturates at 16 — a limit worth
+  raising before a device ever needs it, not silently).
+
 ## v0.9.19 — M5: the C reader — a device can now receive a charter, a stop and an ack
 
 The other half of `v0.9.18`. The mirror could write every byte a device sends; now it can read every

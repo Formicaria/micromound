@@ -26,6 +26,7 @@ int main(int argc, char **argv)
     run("json reader: grammar, escapes, bounds, skipping", test_json_read);
     run("time: protocol timestamps to and from epoch seconds", test_time);
     run("decode: frames, charter/stop/ack/action_record bodies, validators", test_decode);
+    run("kernel: registries, limits, and the whole kernel-decisions.txt script", test_kernel);
     run("golden fixtures: byte-for-byte against tests/Micromound.Tests/Golden/files", test_golden);
 
     printf("\n%d checks, %d failed\n", mm_test_checks, mm_test_failures);

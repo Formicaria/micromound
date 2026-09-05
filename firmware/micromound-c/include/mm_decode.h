@@ -38,7 +38,7 @@ extern "C" {
 #define MM_ID_CAP 64                /* UUID 36; "mm-<uuid>" 39 */
 #define MM_KIND_CAP 24
 #define MM_NAME_CAP 48              /* capability, routine, state and ceiling names */
-#define MM_DETAIL_CAP 160
+#define MM_DETAIL_CAP 320           /* a clamp note plus an evidence-gate reason fits */
 #define MM_MAX_CAPABILITIES 16
 #define MM_MAX_ROUTINES 8
 #define MM_MAX_LIMITS 16
@@ -71,14 +71,24 @@ int mm_envelope_parse(const char *json, size_t n, mm_envelope_in *out, int *erro
  */
 int mm_envelope_verify_wire(const char *wire, size_t n, const uint8_t pk[32], char digest_out[MM_DIGEST_TEXT_LEN + 1]);
 
-/* ---- refusals: the closed set, as fixed strings ---- */
+/* ---- refusals: the host's reason lines, character for character ---- */
 
 #define MM_REFUSAL_MAX 8
+#define MM_REASON_CAP 192            /* "mound_id mismatch: charter is for '<63>', this mound is '<63>'" fits */
 
+/*
+ * The reasons a validator produced, as the SAME text Micromound.Protocol produces (values
+ * interpolated the same way), so an audit line on a controller reads exactly like one on a Pi
+ * and the golden fixture can compare them. Bounded: past MM_REFUSAL_MAX the count keeps rising
+ * but the text is dropped.
+ */
 typedef struct mm_refusal {
-    int count;                       /* may exceed MM_REFUSAL_MAX; only the first MM_REFUSAL_MAX are kept */
-    const char *reasons[MM_REFUSAL_MAX];
+    int count;
+    char reasons[MM_REFUSAL_MAX][MM_REASON_CAP];
 } mm_refusal;
+
+/* The reasons joined by "; " into out (NUL-terminated, truncated to cap). Returns out. */
+const char *mm_refusal_join(const mm_refusal *r, char *out, size_t cap);
 
 /* EnvelopeValidator.Validate(envelope, reducedProfile: true). Returns the refusal count (0 = valid). */
 int mm_envelope_validate(const mm_envelope_in *e, mm_refusal *out);

@@ -61,7 +61,7 @@ void test_decode(void)
         CHECK(mm_charter_validate(&c, MOUND, NOW, NULL, 0, NULL, 0, &why) == 0);
         CHECK(mm_charter_validate(&c, MOUND, NOW, caps, 3, routines, 1, &why) == 0);
         CHECK(mm_charter_validate(&c, MOUND, NOW, caps, 1, routines, 1, &why) == 1);
-        CHECK(has_reason(&why, "capability is not physically present on this device"));
+        CHECK(has_reason(&why, "capability 'act.relay_1' is not physically present on this device"));
     }
 
     /* Decode → re-encode is byte-identical: the cross-implementation property, on the receive side. */
@@ -113,7 +113,7 @@ void test_decode(void)
         mm_charter_in bad;
         CHECK(charter_from(GOLDEN_CHARTER, &bad) == 0);
         CHECK(mm_charter_validate(&bad, "mm-other", NOW, NULL, 0, NULL, 0, &why) == 1);
-        CHECK(has_reason(&why, "mound_id mismatch"));
+        CHECK(has_reason(&why, "mound_id mismatch: charter is for 'mm-7f3a0000-0000-4000-8000-000000000001', this mound is 'mm-other'"));
 
         CHECK(mm_charter_validate(&bad, MOUND, 1786745051LL, NULL, 0, NULL, 0, &why) == 1);       /* now == expires_at */
         CHECK(has_reason(&why, "charter already expired"));
@@ -124,7 +124,7 @@ void test_decode(void)
         CHECK(has_reason(&why, "action_ceiling 'hazardous' is never a legal charter ceiling"));
         strcpy(bad.action_ceiling, "extreme");
         CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 1);
-        CHECK(has_reason(&why, "action_ceiling unknown"));
+        CHECK(has_reason(&why, "action_ceiling unknown: 'extreme'"));
         strcpy(bad.action_ceiling, "controlled");
         CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 0);
 
@@ -133,30 +133,35 @@ void test_decode(void)
         CHECK(has_reason(&why, "charter already expired") && has_reason(&why, "expires_at precedes issued_at"));
         strcpy(bad.expires_at, "soon");
         CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 1);
-        CHECK(has_reason(&why, "expires_at unparseable"));
+        CHECK(has_reason(&why, "expires_at unparseable: 'soon'"));
         strcpy(bad.expires_at, "2026-08-14T22:04:11Z");
         strcpy(bad.issued_at, "");
         CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 1);
-        CHECK(has_reason(&why, "issued_at unparseable"));
+        CHECK(has_reason(&why, "issued_at unparseable: ''"));
         strcpy(bad.issued_at, "2026-08-14T21:04:11Z");
 
         bad.lease_ttl_s = 0; bad.sync_interval_s = -1; bad.safe_state[0] = '\0'; bad.charter_id[0] = '\0'; bad.mound_id[0] = '\0';
         CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 5);
+        {
+            char joined[1024];
+            CHECK_STR_EQ("charter_id missing; mound_id missing; lease_ttl_s must be positive; sync_interval_s must be positive; safe_state missing",
+                         mm_refusal_join(&why, joined, sizeof joined));
+        }
         CHECK(has_reason(&why, "lease_ttl_s must be positive") && has_reason(&why, "sync_interval_s must be positive") &&
               has_reason(&why, "safe_state missing") && has_reason(&why, "charter_id missing") && has_reason(&why, "mound_id missing"));
 
         CHECK(charter_from(GOLDEN_CHARTER, &bad) == 0);
         strcpy(bad.capabilities[1], "routine.cool");
         CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 2);
-        CHECK(has_reason(&why, "a routine belongs in 'routines', not 'capabilities'"));
-        CHECK(has_reason(&why, "limits key matches no granted capability or routine"));     /* act.relay_1 no longer granted */
+        CHECK(has_reason(&why, "'routine.cool' is a routine and belongs in 'routines', not 'capabilities'"));
+        CHECK(has_reason(&why, "limits key 'act.relay_1' matches no granted capability or routine"));     /* act.relay_1 no longer granted */
 
         CHECK(charter_from(GOLDEN_CHARTER, &bad) == 0);
         strcpy(bad.routines[0], "routine.unknown"); bad.n_routines = 1;
         {
             static const char *const routines[] = { "routine.cool" };
             CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, routines, 1, &why) == 1);
-            CHECK(has_reason(&why, "routine is not registered on this device"));
+            CHECK(has_reason(&why, "routine 'routine.unknown' is not registered on this device"));
             CHECK(mm_charter_validate(&bad, MOUND, NOW, NULL, 0, NULL, 0, &why) == 0);   /* no registry: not checked, as in C# */
         }
         /* a limit keyed to a routine is legal */
@@ -242,13 +247,13 @@ void test_decode(void)
         CHECK_STR_EQ("ed25519:00", e.sig);
         CHECK(mm_envelope_validate(&e, &why) == 0);
 
-        e.v = 1; CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "unsupported protocol version")); e.v = 0;
+        e.v = 1; CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "unsupported protocol version 1")); e.v = 0;
         e.seq = -1; CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "seq negative")); e.seq = 0;
-        strcpy(e.kind, "mission"); CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "refused_unknown_kind"));
+        strcpy(e.kind, "mission"); CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "refused_unknown_kind: 'mission'"));
         strcpy(e.kind, "evidence_bundle"); CHECK(mm_envelope_validate(&e, &why) == 1);        /* legal for a Pi, not here (§8) */
         strcpy(e.kind, "config"); CHECK(mm_envelope_validate(&e, &why) == 1);
         strcpy(e.kind, "stop"); CHECK(mm_envelope_validate(&e, &why) == 0);
-        strcpy(e.sent_at, "yesterday"); CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "sent_at unparseable"));
+        strcpy(e.sent_at, "yesterday"); CHECK(mm_envelope_validate(&e, &why) == 1 && has_reason(&why, "sent_at unparseable: 'yesterday'"));
         strcpy(e.sent_at, "2026-08-14T21:04:11Z");
         strcpy(e.id, "   "); e.mound_id[0] = '\0';
         CHECK(mm_envelope_validate(&e, &why) == 2 && has_reason(&why, "id missing") && has_reason(&why, "mound_id missing"));

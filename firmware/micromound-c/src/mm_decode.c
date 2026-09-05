@@ -3,6 +3,7 @@
 #include "mm_json_read.h"
 #include "mm_sha256.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* ---- helpers ------------------------------------------------------------------------------ */
@@ -143,8 +144,37 @@ int mm_envelope_verify_wire(const char *wire, size_t n, const uint8_t pk[32], ch
 
 static void refuse(mm_refusal *out, const char *reason)
 {
-    if (out->count < MM_REFUSAL_MAX) out->reasons[out->count] = reason;
+    if (out->count < MM_REFUSAL_MAX) set_str(out->reasons[out->count], MM_REASON_CAP, reason);
     out->count++;
+}
+
+/* printf-style reason with one or two string arguments — the shapes the validators use. */
+static void refuse1(mm_refusal *out, const char *fmt, const char *a)
+{
+    if (out->count < MM_REFUSAL_MAX) snprintf(out->reasons[out->count], MM_REASON_CAP, fmt, a);
+    out->count++;
+}
+
+static void refuse2(mm_refusal *out, const char *fmt, const char *a, const char *b)
+{
+    if (out->count < MM_REFUSAL_MAX) snprintf(out->reasons[out->count], MM_REASON_CAP, fmt, a, b);
+    out->count++;
+}
+
+const char *mm_refusal_join(const mm_refusal *r, char *out, size_t cap)
+{
+    size_t len = 0;
+    int i;
+    if (cap == 0) return out;
+    out[0] = '\0';
+    for (i = 0; i < r->count && i < MM_REFUSAL_MAX; i++) {
+        size_t n = strlen(r->reasons[i]);
+        if (i > 0) { if (len + 2 < cap) { memcpy(out + len, "; ", 2); } len += 2; }
+        if (len < cap) { size_t room = cap - 1 - len; memcpy(out + len, r->reasons[i], n < room ? n : room); }
+        len += n;
+    }
+    out[len < cap ? len : cap - 1] = '\0';
+    return out;
 }
 
 static int is_blank(const char *s)
@@ -162,14 +192,18 @@ int mm_envelope_validate(const mm_envelope_in *e, mm_refusal *out)
     int64_t t;
 
     memset(out, 0, sizeof *out);
-    if (e->v != MM_PROTOCOL_VERSION) refuse(out, "unsupported protocol version");
+    if (e->v != MM_PROTOCOL_VERSION) {
+        char v[24];
+        snprintf(v, sizeof v, "%lld", e->v);
+        refuse1(out, "unsupported protocol version %s", v);
+    }
     if (is_blank(e->id)) refuse(out, "id missing");
     if (is_blank(e->mound_id)) refuse(out, "mound_id missing");
     if (e->seq < 0) refuse(out, "seq negative");
     for (i = 0; i < sizeof REDUCED / sizeof REDUCED[0]; i++)
         if (strcmp(REDUCED[i], e->kind) == 0) known = 1;
-    if (!known) refuse(out, "refused_unknown_kind");
-    if (mm_time_parse(e->sent_at, &t) != 0) refuse(out, "sent_at unparseable");
+    if (!known) refuse1(out, "refused_unknown_kind: '%s'", e->kind);
+    if (mm_time_parse(e->sent_at, &t) != 0) refuse1(out, "sent_at unparseable: '%s'", e->sent_at);
     return out->count;
 }
 
@@ -382,18 +416,19 @@ int mm_charter_validate(const mm_charter_in *c, const char *expected_mound_id, i
 
     if (is_blank(c->charter_id)) refuse(out, "charter_id missing");
     if (is_blank(c->mound_id)) refuse(out, "mound_id missing");
-    else if (strcmp(c->mound_id, expected_mound_id) != 0) refuse(out, "mound_id mismatch");
+    else if (strcmp(c->mound_id, expected_mound_id) != 0)
+        refuse2(out, "mound_id mismatch: charter is for '%s', this mound is '%s'", c->mound_id, expected_mound_id);
 
     ceiling = mm_action_class_parse(c->action_ceiling);
-    if (ceiling < 0) refuse(out, "action_ceiling unknown");
+    if (ceiling < 0) refuse1(out, "action_ceiling unknown: '%s'", c->action_ceiling);
     else if (ceiling == 3) refuse(out, "action_ceiling 'hazardous' is never a legal charter ceiling");
 
     expires_ok = mm_time_parse(c->expires_at, &expires) == 0;
-    if (!expires_ok) refuse(out, "expires_at unparseable");
+    if (!expires_ok) refuse1(out, "expires_at unparseable: '%s'", c->expires_at);
     else if (expires <= now) refuse(out, "charter already expired");
 
     issued_ok = mm_time_parse(c->issued_at, &issued) == 0;
-    if (!issued_ok) refuse(out, "issued_at unparseable");
+    if (!issued_ok) refuse1(out, "issued_at unparseable: '%s'", c->issued_at);
     else if (expires_ok && expires <= issued) refuse(out, "expires_at precedes issued_at");
 
     if (c->lease_ttl_s <= 0) refuse(out, "lease_ttl_s must be positive");
@@ -402,20 +437,20 @@ int mm_charter_validate(const mm_charter_in *c, const char *expected_mound_id, i
 
     for (i = 0; i < c->n_capabilities; i++) {
         if (mm_capability_is_routine(c->capabilities[i]))
-            refuse(out, "a routine belongs in 'routines', not 'capabilities'");
+            refuse1(out, "'%s' is a routine and belongs in 'routines', not 'capabilities'", c->capabilities[i]);
         else if (device_capabilities != NULL && !in_list(c->capabilities[i], device_capabilities, n_device_capabilities))
-            refuse(out, "capability is not physically present on this device");
+            refuse1(out, "capability '%s' is not physically present on this device", c->capabilities[i]);
     }
 
     if (device_routines != NULL)
         for (i = 0; i < c->n_routines; i++)
             if (!in_list(c->routines[i], device_routines, n_device_routines))
-                refuse(out, "routine is not registered on this device");
+                refuse1(out, "routine '%s' is not registered on this device", c->routines[i]);
 
     for (i = 0; i < c->n_limits; i++)
         if (!in_table(c->limits[i].capability, c->capabilities[0], MM_NAME_CAP, c->n_capabilities) &&
             !in_table(c->limits[i].capability, c->routines[0], MM_NAME_CAP, c->n_routines))
-            refuse(out, "limits key matches no granted capability or routine");
+            refuse1(out, "limits key '%s' matches no granted capability or routine", c->limits[i].capability);
 
     return out->count;
 }
