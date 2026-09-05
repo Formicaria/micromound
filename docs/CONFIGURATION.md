@@ -125,6 +125,14 @@ A real backing reads in **volts** before calibration. A malformed or missing set
 needs, or a chip that does not answer at its address, refuses the whole manifest at bring-up — the
 daemon never comes up with a phantom sensor or an unbacked line.
 
+This table is also **machine-readable**: `Micromound.Protocol.DriverSchemaCatalog` carries the same
+settings with labels, help text, kinds, defaults, bounds, and an `advanced` flag, per driver type.
+The daemon prints it with `micromound --describe-drivers`, and sends it to the controller at
+enrollment (`driver_schemas`, PROTOCOL.md §3), so a controller can generate its hardware form from
+the device's own description instead of hand-matching setting names. A test pins the catalog to the
+drivers: every setting a driver reads is described, and every default in the catalog is the
+driver's real default.
+
 ## `device_limits` is the middle tier
 
 This is the operator's own bound, and it is the reason there are three tiers rather than two:

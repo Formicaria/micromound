@@ -25,7 +25,10 @@ namespace Micromound.Host;
 /// one of <see cref="ControllerTiers"/> — the controller refuses an unknown tier. <c>protocol_version</c>
 /// is sent explicitly so a version skew is caught at the door rather than assumed away by a default.
 /// <c>capabilities</c> is the structured list (the fleet view is built from it); <c>hardware_profile</c>
-/// is the older flat summary, kept for controllers that read only that.</para>
+/// is the older flat summary, kept for controllers that read only that. <c>driver_schemas</c> (v0.9.15)
+/// describes every driver type THIS build can instantiate and the settings each reads, so the
+/// controller can offer a plain-language hardware form for exactly this device instead of a raw
+/// settings console; a controller that does not know the field ignores it.</para>
 ///
 /// <para>Failure is two different things, kept distinct. A refusal is a DEFINITE answer (4xx) —
 /// retrying will never help, so it returns false with the controller's own reason and the caller
@@ -45,14 +48,17 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
     private readonly string _hardwareProfile;
     private readonly string _tier;
     private readonly IReadOnlyList<string> _capabilities;
+    private readonly IReadOnlyList<DriverTypeSchema> _driverSchemas;
 
     /// <param name="moundId">This device's manifest mound id, sent as the cross-check described above. Empty skips the check.</param>
     /// <param name="hardwareProfile">A flat summary of the mound's hardware, sent per PROTOCOL.md §3.2.</param>
     /// <param name="tier">The mound's tier — one of <see cref="ControllerTiers"/>. Defaults to <see cref="ControllerTiers.EdgeQueen"/>.</param>
     /// <param name="capabilities">The mound's declared capability ids, sent as a structured list.</param>
+    /// <param name="driverSchemas">The driver types this build ships, described (<see cref="DriverSchemaCatalog"/>);
+    /// null sends the full shipped catalog, an empty list sends none.</param>
     public HttpEnrollmentClient(Uri controllerBaseUrl, HttpClient? http = null, TimeSpan? timeout = null,
         string hardwareProfile = "", string tier = ControllerTiers.EdgeQueen, string moundId = "",
-        IReadOnlyList<string>? capabilities = null)
+        IReadOnlyList<string>? capabilities = null, IReadOnlyList<DriverTypeSchema>? driverSchemas = null)
     {
         ArgumentNullException.ThrowIfNull(controllerBaseUrl);
         if (!ControllerTiers.IsKnown(tier))
@@ -69,6 +75,7 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
         _hardwareProfile = hardwareProfile;
         _tier = tier;
         _capabilities = capabilities ?? [];
+        _driverSchemas = driverSchemas ?? DriverSchemaCatalog.Shipped;
     }
 
     public bool TryEnroll(string token, byte[] devicePublicKey, out ControllerEnrollment? enrollment, out string detail)
@@ -86,7 +93,8 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
                 _hardwareProfile,
                 _tier,
                 _capabilities,
-                ProtocolVersion.Current);
+                ProtocolVersion.Current,
+                _driverSchemas);
             var json = JsonSerializer.Serialize(request, EnrollJson);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var cts = new CancellationTokenSource(_timeout);
@@ -198,7 +206,8 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
         [property: JsonPropertyName("hardware_profile")] string HardwareProfile,
         [property: JsonPropertyName("tier")] string Tier,
         [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
-        [property: JsonPropertyName("protocol_version")] int ProtocolVersion);
+        [property: JsonPropertyName("protocol_version")] int ProtocolVersion,
+        [property: JsonPropertyName("driver_schemas")] IReadOnlyList<DriverTypeSchema> DriverSchemas);
 
     private sealed record EnrollResponse(
         [property: JsonPropertyName("controller_public_key")] string ControllerPublicKey,

@@ -47,6 +47,17 @@ mound status · worker status · health · telemetry · firmware and runtime upd
 The controller generates the manifest; the mound validates, stores, and executes it. See
 [`CONFIGURATION.md`](CONFIGURATION.md).
 
+**The device describes its own hardware vocabulary so the controller need not hard-code it.** At
+enrollment a mound sends `driver_schemas` (PROTOCOL.md §3): every driver type its build can bind and,
+per setting, a label, help text, a kind, whether it is required, its default, bounds, choices, and
+whether it only matters on real hardware. The same catalog is `Micromound.Protocol.DriverSchemaCatalog`
+for a controller compiled against this library, and `micromound --describe-drivers` for anyone else.
+A controller that renders its "attached devices / driver configuration" surface from it shows a
+person *"GPIO pin"*, *"Longest single run (s)"*, *"ADC input (0–3)"* with sensible defaults and an
+Advanced fold — not a raw settings console — and stays correct when a new port ships. The schema is
+descriptive only: the mound's drivers still validate every setting and fail closed, and authority
+comes only from a charter.
+
 ## ANTHILL as the reference integration
 
 [ANTHILL](https://github.com/Formicaria/Anthill) is the reference implementation of this contract,

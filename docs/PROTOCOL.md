@@ -105,7 +105,8 @@ those files.
      "tier": "edge_queen",
      "hardware_profile": "sense.soil_moisture,act.water_valve",
      "capabilities": ["sense.soil_moisture", "act.water_valve"],
-     "protocol_version": 0
+     "protocol_version": 0,
+     "driver_schemas": [ { "driver_type": "digital_actuator", "label": "…", "settings": [ … ] }, … ]
    }
    ```
 
@@ -116,7 +117,14 @@ those files.
    unattributable. `tier` is from the vocabulary below. `capabilities` is the structured list the
    fleet view is built from; `hardware_profile` is the older flat summary, kept for controllers that
    read only that. `protocol_version` is sent explicitly so a skew is refused rather than defaulted
-   away.
+   away. `driver_schemas` (additive, `v0.9.15`) describes every driver type **this build** can bind
+   in a manifest and the settings each reads — name, label, help text, kind, required, default,
+   bounds, choices, whether it matters only on real hardware — so the controller can offer a
+   plain-language hardware form for exactly this device rather than a raw settings console. It is
+   `Micromound.Protocol.DriverSchemaCatalog` serialized; a controller compiled against the library
+   has the same catalog at build time, and one that does not know the field ignores it. It
+   **describes, never grants**: the device's drivers still validate every setting and fail closed,
+   and authority comes only from a charter.
 3. The controller binds the public key to the mound record, burns the token, and returns:
 
    ```json

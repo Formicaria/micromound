@@ -16,6 +16,13 @@ public interface IDriverFactory
 
     /// <summary>A fresh, not-yet-configured driver instance.</summary>
     IDriver Create();
+
+    /// <summary>
+    /// What this driver type is and which settings it reads, for a controller building a hardware
+    /// form (<see cref="DriverSchemaCatalog"/>). Descriptive only — the driver still validates every
+    /// setting itself and fails closed.
+    /// </summary>
+    DriverTypeSchema Schema { get; }
 }
 
 /// <summary>
@@ -35,6 +42,11 @@ public sealed class DriverFactoryRegistry
 
     public bool TryGet(string driverType, out IDriverFactory factory) =>
         _factories.TryGetValue(driverType, out factory!);
+
+    /// <summary>The schema of every driver type registered here, in driver-type order — what a device
+    /// sends at enrollment so its controller can describe exactly the hardware THIS build supports.</summary>
+    public IReadOnlyList<DriverTypeSchema> Describe() =>
+        _factories.OrderBy(f => f.Key, StringComparer.Ordinal).Select(f => f.Value.Schema).ToList();
 }
 
 /// <summary>The configured drivers a manifest resolved to, or the errors that stopped it.</summary>

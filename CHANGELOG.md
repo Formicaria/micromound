@@ -12,6 +12,71 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.15 — the device describes its own hardware vocabulary (driver-settings schema)
+
+A slice for the operator, prompted by what the reference controller's Micromound page looks like today:
+every charter, manifest, and mission field at once, in protocol vocabulary, with workers, limits, and
+steps typed as pipe-delimited lines. The *documents* are MicroMound's and stay; the *form* is the
+controller's to simplify — and the one thing the controller could not do on its own was know, without
+hard-coding it, which settings each driver type reads. Now the device tells it. No canonical-bytes
+change, no new refusal reason, no authority widened: this is description, not permission.
+
+### Added
+
+- **`DriverTypeSchema` / `DriverSettingSchema` / `SettingKinds` / `DriverRoles`** (`Micromound.Protocol`):
+  the machine-readable form of CONFIGURATION.md's driver-settings table. Per driver type: its manifest
+  name, a label and summary for a person, its role (actuator/sensor) and capability prefix, what backs it
+  on real hardware, and its settings in form order. Per setting: name, label, help text, kind (`text`,
+  `integer`, `number`, `boolean`, `choice`, `capability`), required, default (as the string a manifest
+  carries), min/max, choices, unit, `hardware_only` (read only by the real backing — a simulator
+  manifest may omit it), and `advanced` (fold it away by default).
+- **`DriverSchemaCatalog.Shipped`**: the catalog for the two shipped types, `digital_actuator` (7
+  settings) and `analog_sensor` (8). It lives in the protocol library so the reference controller —
+  which compiles against `Micromound.Protocol` — has it at build time, and so the copy a device sends is
+  the same data by construction.
+- **`IDriverFactory.Schema`** and **`DriverFactoryRegistry.Describe()`**: every factory names its schema
+  (the in-memory and hardware factories of one type share the same catalog entry — one manifest serves
+  both), and a registry describes exactly the types THIS build registered.
+- **Enrollment carries `driver_schemas`** (PROTOCOL.md §3.2, additive): `HttpEnrollmentClient` sends the
+  registry's description with the token, key, tier, and capabilities. The reference controller's enroll
+  handler ignores fields it does not know, so nothing changes for it until it chooses to read them.
+- **Daemon `--describe-drivers [--hardware]`**: prints the catalog as indented JSON and exits — for a
+  controller developer, a script, or a person, with no device or manifest needed.
+- **The catalog is pinned to the drivers by test**, not by discipline. `DriverSchemaTests` configures
+  every driver — in-memory and hardware-backed (fake sysfs tree, fake chip) — through a *recording*
+  settings dictionary and asserts that the set of keys the driver asked for equals the set the catalog
+  describes (non-hardware keys for the in-memory backing); that with only the `required` settings each
+  hardware driver configures and dropping any one of them refuses; that every stated default is the
+  driver's real default (scale 1, offset 0, active-high true → safe level low, bus 1, address 0x48,
+  gain 4.096, the PGA choices are `Ads1115AnalogInput.FullScaleRanges`, channel 0..3, class choices
+  exclude `hazardous`); that both host registries describe the same shipped catalog; and that the
+  enroll body carries it (and an empty list sends none).
+
+### Authority / safety
+
+- **Describes, never grants.** A form built from the schema can only help a person write a manifest
+  the drivers will accept; the drivers still parse and validate every string and fail closed, the kernel
+  still intersects the three limit tiers, and a mound still acts only under a charter. A controller
+  that trusted the schema instead of the device's ack would be wrong in exactly the way PROTOCOL.md
+  already forbids ("refusal arrives as an ack, never inferred").
+- **It is sent unauthenticated, like `capabilities`**, in the pre-key enroll body. It carries no secret
+  and grants nothing, so that is fine; a controller should treat it as the device's *description of
+  itself*, not as a claim about the world.
+
+### Notes
+
+- Suggested controller-side changes this enables (ANTHILL, no MicroMound change needed): render the
+  "Manifest → hardware" section from `driver_schemas` (a card per device: pick a type, fill labelled
+  fields, Advanced folded); pre-fill the charter's capability list and the mission's dropdowns from
+  the enrolled device's `capabilities`; hide routines, evidence patterns, reasoning mode, and the
+  worker table under Advanced with today's defaults (they are already right); replace the pipe-delimited
+  mission steps with rows and dropdowns; offer templates ("Watering station").
+- `UPSTREAM.md` and `CONFIGURATION.md` describe the mechanism; PROTOCOL.md §3.2 has the field.
+- Remaining before `v0.10.0`: on-board verification of the sysfs writes and the I2C transfers, and
+  optionally a libgpiod (chardev) backing.
+
+---
+
 ## v0.9.14 — the analog port is real (ADS1115 over I2C), and the daemon can reach its hardware
 
 The second real driver port, the counterpart of `v0.9.8`'s GPIO line under the actuator: the generic

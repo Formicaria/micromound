@@ -22,11 +22,22 @@ using System.Text.Json;
 using Micromound.Host;
 using Micromound.Protocol;
 
+// `--describe-drivers`: print the driver-type catalog this build ships — what a manifest may bind and
+// the settings each type reads — as JSON, for a controller or a person building a hardware form. The
+// same data goes to the controller at enrollment (`driver_schemas`). Then exit; no mound comes up.
+if (args.Length > 0 && args.Contains("--describe-drivers", StringComparer.Ordinal))
+{
+    var registry = args.Contains("--hardware", StringComparer.Ordinal) ? MoundHost.HardwareDriverFactories() : MoundHost.DefaultDriverFactories();
+    Console.WriteLine(JsonSerializer.Serialize(registry.Describe(), new JsonSerializerOptions(ProtocolJson.Options) { WriteIndented = true }));
+    return 0;
+}
+
 var options = HostArgs.Parse(args);
 if (options is null)
 {
     Console.Error.WriteLine(
         "usage: micromound --manifest <path> [--hardware] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
+        "       micromound --describe-drivers [--hardware]   print the driver types this build ships and their settings (JSON), then exit\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
         "  --hardware     drive REAL ports: digital actuators on sysfs GPIO (setting 'pin'), analog sensors\n" +
         "                 on an ADS1115 over I2C (settings 'channel', 'bus', 'address', 'gain'). Without it\n" +
@@ -78,6 +89,9 @@ try
     // Enrollment (PROTOCOL.md §3): with a controller configured, load the controller key from a prior
     // enrollment or present the one-time token now. Without it, downlink stays unverifiable — the safe
     // direction — and the mound only uplinks.
+    // Real ports only when asked for: a manifest naming a pin or an I2C address opens it fail-closed.
+    var factories = options.Hardware ? MoundHost.HardwareDriverFactories() : MoundHost.DefaultDriverFactories();
+
     IPublicKeyDirectory controllerKeys = new InMemoryPublicKeyDirectory();
     double? controllerSyncInterval = null;
     if (options.ControllerUrl is not null)
@@ -90,7 +104,8 @@ try
             hardwareProfile: string.Join(",", manifest.Capabilities),
             tier: options.Tier,
             moundId: manifest.MoundId,
-            capabilities: manifest.Capabilities);
+            capabilities: manifest.Capabilities,
+            driverSchemas: factories.Describe());
         var link = MoundHost.ResolveControllerLink(options.StateDirectory, enroller, keys.PublicKey, options.EnrollToken);
         controllerKeys = link.Keys;
         controllerSyncInterval = link.SyncIntervalSeconds;
@@ -102,8 +117,7 @@ try
         Keys = keys,
         Manifest = manifest,
         StateDirectory = options.StateDirectory,
-        // Real ports only when asked for: a manifest naming a pin or an I2C address opens it fail-closed.
-        Drivers = options.Hardware ? MoundHost.HardwareDriverFactories() : MoundHost.DefaultDriverFactories(),
+        Drivers = factories,
         GuardHeartbeatTimeoutSeconds = options.HeartbeatTimeoutSeconds,
         ControllerKeys = controllerKeys,
         Transport = options.ControllerUrl is null ? null : new HttpSyncTransport(new Uri(options.ControllerUrl))

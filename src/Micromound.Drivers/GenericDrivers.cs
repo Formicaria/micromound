@@ -514,6 +514,7 @@ public sealed class DigitalActuatorFactory(Func<IReadOnlyDictionary<string, stri
 
     public string DriverType => "digital_actuator";
     public IDriver Create() => new DigitalActuatorDriver(portBuilder);
+    public DriverTypeSchema Schema => DriverSchemaCatalog.DigitalActuator;
 }
 
 /// <summary>
@@ -540,6 +541,7 @@ public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/g
 
     public string DriverType => _inner.DriverType;
     public IDriver Create() => _inner.Create();
+    public DriverTypeSchema Schema => _inner.Schema;
 }
 
 /// <summary>
@@ -558,6 +560,7 @@ public sealed class AnalogSensorFactory(Func<IReadOnlyDictionary<string, string>
 
     public string DriverType => "analog_sensor";
     public IDriver Create() => new AnalogSensorDriver(channelBuilder);
+    public DriverTypeSchema Schema => DriverSchemaCatalog.AnalogSensor;
 }
 
 /// <summary>
@@ -614,6 +617,7 @@ public sealed class Ads1115AnalogSensorFactory : IDriverFactory
 
     public string DriverType => _inner.DriverType;
     public IDriver Create() => _inner.Create();
+    public DriverTypeSchema Schema => _inner.Schema;
 
     private static int RequiredInt(IReadOnlyDictionary<string, string> settings, string key)
     {
