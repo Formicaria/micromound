@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.16
+**Current version:** v0.9.17
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.16`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -103,8 +103,11 @@ instead of a raw settings console, pinned to the drivers by test, and — new in
 the character device** (`GpioChardevOutput`, `/dev/gpiochipN`, the libgpiod interface, encoded against
 `linux/gpio.h` and pinned to the header's numbers; daemon `--gpio chardev|sysfs`, chardev default), with
 **both GPIO backings bringing a line up already at its safe level** so an active-low relay is never
-pulsed at bring-up. What's still ahead is only the board: the GPIO writes, the I2C transfers, and a live
-enroll + sync against ANTHILL verified on real hardware. End-to-end simulator missions run against an in-process
+pulsed at bring-up, and — new in `v0.9.17` — **ready for the board**: `--check-hardware` claims every
+port a manifest names and reads each sensor once without actuating anything, a manifest naming physical
+ports is refused in memory unless `--simulate` is said, the I2C bus is testable through the same syscall
+seam as GPIO, and a deployment kit (systemd unit, installer, [`docs/DEPLOY.md`](docs/DEPLOY.md)) walks
+a Pi from bench to the M4 boundary. What's still ahead is only the board itself. End-to-end simulator missions run against an in-process
 controller that verifies every byte. The v0 canonical bytes will not change again inside v0. The host
 now has both a real digital line and a real analog channel available, but has not yet been run on a
 device against real hardware — that boundary finishes M4; real firmware is M5. See

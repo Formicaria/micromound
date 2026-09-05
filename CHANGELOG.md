@@ -12,6 +12,76 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.17 — ready for the board: check the wiring, refuse to pretend, deploy as a service
+
+Three passes that turn the substrate of `v0.9.14`–`v0.9.16` into something an operator can carry to a
+Raspberry Pi and bring up in an afternoon, with every step checkable before the next. No wire change,
+no new refusal reason, no authority widened. `v0.10.0` is still the board's to award — but
+[`docs/DEPLOY.md`](docs/DEPLOY.md) now says exactly what it must show.
+
+### Added
+
+- **`micromound --manifest m.json --check-hardware`** (`HardwareCheck` in `Micromound.Host`): opens
+  every device the manifest binds through the same factories bring-up uses — fail-closed, the port
+  opened last, the line requested at its SAFE level — takes ONE reading from each sensor, prints a
+  per-device report (`OK`/`FAIL`, the capability, the driver's own reason or the first reading in the
+  manifest's unit) and exits 0 only if every device was claimed. It actuates nothing and composes no
+  mound: no authority, no mission, no evidence — just the ports. It exists because the alternative on
+  a board is "start the daemon, read the refusal, edit, repeat", and because the first reading from a
+  probe is the moment you learn the channel number was wrong. Exercised: a relay declared active-low
+  is requested HIGH and never driven; a chip that answers the probe but not the read is reported as
+  that, distinctly; an unknown driver type is reported with the types this build has.
+- **`--simulate`**, and a refusal without it. A manifest that names physical ports (`pin`, `chip`,
+  `channel`, `bus`, `address`) run without `--hardware` used to WARN and then run on in-memory
+  ports, producing readings and "actuations" that look real and are neither. It is now **refused**
+  (exit 2) unless the operator says `--simulate` in so many words — a development machine can, a
+  device cannot by accident. `--hardware --simulate` together is a usage error.
+- **`LinuxI2cBus` over the `ILinuxIo` seam** (open / value-argument ioctl / write / read / close). The
+  seam gained `write`, `read` and an integer-argument `ioctl` — `I2C_SLAVE` takes the address as the
+  argument, not a pointer, and the type now says so. The whole open-select-transfer sequence and every
+  error path (missing node, refused address closes the node, short read says how short, unacknowledged
+  write carries `errno 121`) are exercised against a fake kernel in `LinuxI2cBusTests`, including the
+  ADS1115 driver over the real bus class issuing the datasheet transfers. Before this the bus's libc
+  calls were unreachable from any test.
+- **sysfs export settles.** `SysfsDigitalOutput` waits up to 200 ms for `gpioN/` to appear after
+  `export` — the kernel creates it asynchronously — and refuses with a reason (`did not appear …
+  is this a valid pin on this board, and is sysfs GPIO enabled?`) instead of the
+  `DirectoryNotFoundException` the next write used to throw. The follow-up `v0.9.8` named.
+- **Deployment kit** — `deploy/micromound.service`, `deploy/micromound.env`, `deploy/install.sh`, and
+  [`docs/DEPLOY.md`](docs/DEPLOY.md). The unit runs the daemon as an unprivileged user in the `gpio`
+  and `i2c` groups with `Restart=always` (SAFETY.md's named supervision backstop), a clean-stop
+  timeout so SIGTERM has time to de-energize and persist, `StateDirectory`, and hardening that allows
+  exactly the GPIO and I2C character devices and nothing else. The installer is idempotent (user,
+  groups, `/opt`, `/etc`, `/var/lib`, unit; a note if I2C is not enabled in firmware) and starts
+  nothing. DEPLOY.md walks from bench to the M4 boundary in six steps — buses, install, manifest,
+  `--check-hardware` with the relay NOT clicking, enroll and start, charter and one mission — and
+  says what each must show, including the SIGKILL-during-a-hold test. Linux release archives now
+  carry `deploy/` and `DEPLOY.md`.
+
+### Authority / safety
+
+- **The in-memory refusal closes the last "fake evidence" path.** An operator who forgot
+  `--hardware` on a device — or ran the wrong binary — could previously produce a mound whose
+  sensors read zero and whose valve "actuated" nothing, with a warning scrolling past. Now the
+  daemon does not come up. SAFETY.md notes it under Layer 1.
+- **The check is safe by construction.** It requests outputs at `!active_high` and never executes
+  an `act.` capability; a sensor read is the one observation that changes nothing. The report is the
+  daemon's own view and proves nothing to the controller.
+- **Supervision is now a file, not a sentence.** `Restart=always` with `RestartSec=3` is what the
+  watchdog's residual case (a loop wedged inside a driver op) has relied on since `v0.9.10`; the
+  unit ships it, and DEPLOY.md's step 6 tests it with `SIGKILL` during a hold.
+
+### Notes
+
+- `--check-hardware` always uses the real-port factories (`--gpio` selects the GPIO backing); it has
+  no in-memory mode, because checking fake wiring answers nothing.
+- The reference controller's console (ANTHILL `v0.3.8.122`) now generates its hardware form from this
+  device's `driver_schemas`, keeps the copy each device sent, offers `device_limits` and charter
+  limits as rows, and has a watering-station template — the operator-facing half of this release.
+- Remaining before `v0.10.0`: DEPLOY.md, on a board, to the end.
+
+---
+
 ## v0.9.16 — GPIO over the character device, and a line that comes up safe
 
 The last MicroMound-side hardware item before the board: the digital actuator can now drive a real

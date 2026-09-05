@@ -63,6 +63,12 @@ Also at this layer:
   op holding the gate: the watchdog records the trip it can and logs loudly, and process supervision
   (systemd `Restart=`, whose restart de-energizes at configure time) is the backstop. Set the timeout
   generously so an ordinary GC or scheduling pause never trips it.
+- **A device never fakes its hardware by accident.** A manifest that names physical ports (a pin, a
+  channel, a bus address) is refused by a daemon running on in-memory ports unless the operator says
+  `--simulate` in so many words (`v0.9.17`): in-memory readings and actuations look real and are
+  neither, and a warning scrolling past a log is not consent. `--check-hardware` claims every port
+  the manifest names and reads each sensor once — at the safe level, never actuating — so the wiring
+  is checked before any authority exists.
 - **A line comes up at its safe level, and stays there only while the daemon holds it.** Both GPIO
   backings now request a line already at `!active_high` — the character device carries the initial
   value in the line request, sysfs writes `high`/`low` as the direction — so an active-low relay is
