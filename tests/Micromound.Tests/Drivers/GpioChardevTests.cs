@@ -76,6 +76,10 @@ public sealed class GpioChardevTests
             }
         }
 
+        public int Ioctl(int fd, uint request, ulong argument) { Errno = 25; return -1; }   // no value ioctls on a GPIO chip
+        public nint Write(int fd, byte[] buffer, int count) { Errno = 25; return -1; }
+        public nint Read(int fd, byte[] buffer, int count) { Errno = 25; return -1; }
+
         public int Close(int fd)
         {
             Closed.Add(fd);

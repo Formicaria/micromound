@@ -3,9 +3,11 @@ using System.Runtime.InteropServices;
 namespace Micromound.Drivers;
 
 /// <summary>
-/// The three Linux system calls a character-device driver needs — open, ioctl with a buffer, close —
-/// behind an interface, so a driver's request-struct encoding can be exercised against a fake that
-/// decodes what it was handed, with no device node. On a device it is <see cref="LibcIo"/>.
+/// The Linux system calls a character-device driver needs — open, ioctl with a buffer, write, read,
+/// close — behind an interface, so a driver's encoding and error handling can be exercised against a
+/// fake kernel that decodes what it was handed, with no device node. Both real ports use it: the GPIO
+/// character device (<see cref="GpioChardevOutput"/>) and the I2C bus (<see cref="LinuxI2cBus"/>). On
+/// a device it is <see cref="LibcIo"/>.
 /// </summary>
 public interface ILinuxIo
 {
@@ -14,6 +16,15 @@ public interface ILinuxIo
 
     /// <summary>ioctl(2) with a pointer argument. The kernel may write back into <paramref name="buffer"/>. Returns -1 on failure.</summary>
     int Ioctl(int fd, uint request, byte[] buffer);
+
+    /// <summary>ioctl(2) with an integer argument (<c>I2C_SLAVE</c> takes the address as a value, not a pointer). Returns -1 on failure.</summary>
+    int Ioctl(int fd, uint request, ulong argument);
+
+    /// <summary>write(2). Returns the bytes written, or -1.</summary>
+    nint Write(int fd, byte[] buffer, int count);
+
+    /// <summary>read(2) into <paramref name="buffer"/>. Returns the bytes read, or -1.</summary>
+    nint Read(int fd, byte[] buffer, int count);
 
     /// <summary>close(2).</summary>
     int Close(int fd);
@@ -32,6 +43,9 @@ public sealed class LibcIo : ILinuxIo
 
     public int Open(string path, int flags) => open(path, flags);
     public int Ioctl(int fd, uint request, byte[] buffer) => ioctl(fd, request, buffer);
+    public int Ioctl(int fd, uint request, ulong argument) => ioctl(fd, request, (nuint)argument);
+    public nint Write(int fd, byte[] buffer, int count) => write(fd, buffer, (nuint)count);
+    public nint Read(int fd, byte[] buffer, int count) => read(fd, buffer, (nuint)count);
     public int Close(int fd) => close(fd);
     public int LastErrno() => Marshal.GetLastWin32Error();
 
@@ -40,6 +54,15 @@ public sealed class LibcIo : ILinuxIo
 
     [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
     private static extern int ioctl(int fd, nuint request, [In, Out] byte[] arg);
+
+    [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+    private static extern int ioctl(int fd, nuint request, nuint arg);
+
+    [DllImport("libc", EntryPoint = "write", SetLastError = true)]
+    private static extern nint write(int fd, byte[] buffer, nuint count);
+
+    [DllImport("libc", EntryPoint = "read", SetLastError = true)]
+    private static extern nint read(int fd, [Out] byte[] buffer, nuint count);
 
     [DllImport("libc", EntryPoint = "close", SetLastError = true)]
     private static extern int close(int fd);

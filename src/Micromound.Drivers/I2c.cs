@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-
 namespace Micromound.Drivers;
 
 /// <summary>
@@ -21,7 +19,8 @@ public interface II2cBus
 /// <summary>
 /// A real Linux I2C device over the kernel's <c>i2c-dev</c> interface: open <c>/dev/i2c-N</c>, select the
 /// slave with the <c>I2C_SLAVE</c> ioctl, then plain <c>write(2)</c>/<c>read(2)</c> carry the transfers.
-/// No library, no NuGet — three libc calls, like the directory fsync in the state store.
+/// No library, no NuGet — a handful of libc calls through the <see cref="ILinuxIo"/> seam, so the
+/// open/select/transfer sequence and every error path are exercised against a fake kernel.
 ///
 /// <para><b>Failures are I/O errors, not silence.</b> A bus that is not enabled (no <c>/dev/i2c-N</c>),
 /// a chip that does not acknowledge its address (<c>EREMOTEIO</c>/<c>ENXIO</c>), or a permission
@@ -35,9 +34,10 @@ public interface II2cBus
 /// </summary>
 public sealed class LinuxI2cBus : II2cBus, IDisposable
 {
-    private const int O_RDWR = 2;
-    private const ulong I2C_SLAVE = 0x0703;
+    /// <summary>The <c>I2C_SLAVE</c> ioctl: select the 7-bit slave address for this descriptor.</summary>
+    public const uint I2cSlaveIoctl = 0x0703;
 
+    private readonly ILinuxIo _io;
     private readonly int _fd;
     private readonly string _device;
     private readonly int _address;
@@ -45,21 +45,25 @@ public sealed class LinuxI2cBus : II2cBus, IDisposable
 
     /// <param name="bus">The bus number: <c>/dev/i2c-{bus}</c>. The Pi's header bus is 1.</param>
     /// <param name="address">The 7-bit slave address, e.g. 0x48.</param>
-    public LinuxI2cBus(int bus, int address)
+    /// <param name="io">The system-call seam; libc on a device, a fake kernel in tests.</param>
+    public LinuxI2cBus(int bus, int address, ILinuxIo? io = null)
     {
         if (bus < 0) throw new ArgumentOutOfRangeException(nameof(bus), bus, "an I2C bus number cannot be negative");
         if (address is < 0x03 or > 0x77) throw new ArgumentOutOfRangeException(nameof(address), address, "a 7-bit I2C address is 0x03..0x77");
 
+        _io = io ?? LibcIo.Instance;
         _device = $"/dev/i2c-{bus}";
         _address = address;
-        _fd = Open(_device, O_RDWR);
+        _fd = _io.Open(_device, LibcIo.O_RDWR | LibcIo.O_CLOEXEC);
         if (_fd < 0)
-            throw new IOException($"cannot open {_device} (errno {Marshal.GetLastWin32Error()}); is the I2C bus enabled and is this user in the i2c group?");
+            throw new IOException($"cannot open {_device} (errno {_io.LastErrno()}); is the I2C bus enabled and is this user in the i2c group?");
 
-        if (Ioctl(_fd, I2C_SLAVE, (ulong)address) < 0)
+        // I2C_SLAVE takes the address as the ioctl's integer ARGUMENT, not a pointer to one — the
+        // seam has a value overload for exactly this; handing it a buffer would select garbage.
+        if (_io.Ioctl(_fd, I2cSlaveIoctl, (ulong)address) < 0)
         {
-            var errno = Marshal.GetLastWin32Error();
-            Close(_fd);
+            var errno = _io.LastErrno();
+            _io.Close(_fd);
             throw new IOException($"cannot select I2C address 0x{address:X2} on {_device} (errno {errno})");
         }
     }
@@ -68,18 +72,18 @@ public sealed class LinuxI2cBus : II2cBus, IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var bytes = data.ToArray();   // register transfers are 1–3 bytes; a copy is nothing
-        var written = WriteFd(_fd, bytes, (nuint)bytes.Length);
+        var written = _io.Write(_fd, bytes, bytes.Length);
         if (written != bytes.Length)
-            throw new IOException($"I2C write to 0x{_address:X2} on {_device} failed (errno {Marshal.GetLastWin32Error()}); no acknowledge from the device?");
+            throw new IOException($"I2C write to 0x{_address:X2} on {_device} failed (errno {_io.LastErrno()}); no acknowledge from the device?");
     }
 
     public void Read(Span<byte> buffer)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var bytes = new byte[buffer.Length];
-        var read = ReadFd(_fd, bytes, (nuint)bytes.Length);
+        var read = _io.Read(_fd, bytes, bytes.Length);
         if (read != bytes.Length)
-            throw new IOException($"I2C read from 0x{_address:X2} on {_device} returned {read} of {buffer.Length} bytes (errno {Marshal.GetLastWin32Error()})");
+            throw new IOException($"I2C read from 0x{_address:X2} on {_device} returned {read} of {buffer.Length} bytes (errno {_io.LastErrno()})");
         bytes.CopyTo(buffer);
     }
 
@@ -87,21 +91,6 @@ public sealed class LinuxI2cBus : II2cBus, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        Close(_fd);
+        _io.Close(_fd);
     }
-
-    [DllImport("libc", EntryPoint = "open", SetLastError = true, CharSet = CharSet.Ansi)]
-    private static extern int Open(string path, int flags);
-
-    [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
-    private static extern int Ioctl(int fd, ulong request, ulong arg);
-
-    [DllImport("libc", EntryPoint = "write", SetLastError = true)]
-    private static extern nint WriteFd(int fd, byte[] buffer, nuint count);
-
-    [DllImport("libc", EntryPoint = "read", SetLastError = true)]
-    private static extern nint ReadFd(int fd, [Out] byte[] buffer, nuint count);
-
-    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
-    private static extern int Close(int fd);
 }

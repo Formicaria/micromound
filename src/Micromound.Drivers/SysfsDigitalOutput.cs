@@ -20,11 +20,16 @@ namespace Micromound.Drivers;
 /// <para><b>On-device note:</b> sysfs GPIO is deprecated in favour of the GPIO character device —
 /// <see cref="GpioChardevOutput"/> is the preferred backing (daemon <c>--gpio chardev</c>, the default);
 /// this one remains for kernels built with <c>CONFIG_GPIO_SYSFS</c>. The kernel creates a pin's
-/// directory asynchronously after <c>export</c>; export-settle retries are still a follow-up, and the
-/// value writes here must be verified on real hardware.</para>
+/// directory asynchronously after <c>export</c>, so the constructor waits briefly for it (up to
+/// 200 ms) and refuses with a reason if it never appears. The value writes here must be verified on
+/// real hardware.</para>
 /// </summary>
 public sealed class SysfsDigitalOutput : IDigitalOutput, IDisposable
 {
+    /// <summary>How long to wait for the kernel to create <c>gpioN/</c> after <c>export</c>: 20 × 10 ms.</summary>
+    public const int ExportSettlePolls = 20;
+    public const int ExportSettlePollMs = 10;
+
     private readonly int _pin;
     private readonly string _root;
     private readonly string _pinDirectory;
@@ -46,7 +51,16 @@ public sealed class SysfsDigitalOutput : IDigitalOutput, IDisposable
         // Claim the pin. If its directory already exists it is already exported (a prior run that
         // did not release it, or a shared line) — re-use it rather than failing.
         if (!Directory.Exists(_pinDirectory))
+        {
             TryWrite(Path.Combine(_root, "export"), pin.ToString());
+            // The kernel creates gpioN/ ASYNCHRONOUSLY after export (udev then fixes its ownership).
+            // Wait briefly for it; a pin that never appears is a refusal with a reason, not a
+            // DirectoryNotFoundException from the next write.
+            for (var i = 0; i < ExportSettlePolls && !Directory.Exists(_pinDirectory); i++)
+                Thread.Sleep(ExportSettlePollMs);
+            if (!Directory.Exists(_pinDirectory))
+                throw new IOException($"GPIO {pin} did not appear under {_root} within {ExportSettlePolls * ExportSettlePollMs} ms of export; is this a valid pin on this board, and is sysfs GPIO enabled?");
+        }
 
         // Declare it an output ALREADY AT its initial (safe) level: "high"/"low" set direction and
         // value in one write, so the pin never sits at the wrong level between the two.

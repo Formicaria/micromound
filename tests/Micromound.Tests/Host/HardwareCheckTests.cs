@@ -34,6 +34,9 @@ public sealed class HardwareCheckTests
             if (request == GpioChardevOutput.SetValuesIoctl) { Sets.Add(GpioChardevOutput.DecodeLineValues(buffer)); return 0; }
             return -1;
         }
+        public int Ioctl(int fd, uint request, ulong argument) => -1;
+        public nint Write(int fd, byte[] buffer, int count) => -1;
+        public nint Read(int fd, byte[] buffer, int count) => -1;
         public int Close(int fd) => 0;
         public int LastErrno() => 2;
     }
