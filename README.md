@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.13
+**Current version:** v0.9.14
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.13`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.14`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -92,12 +92,16 @@ hardcoded `mound_major` was refused), sends its `mound_id` as a cross-check plus
 uplinked afterwards instead of evaporating with the heap (`v0.9.12`), and — new in `v0.9.13` — the
 Guard's heartbeat evidence **rate-limited to what is informative** (the first reading, every
 fresh↔stale transition, and a per-minute liveness record) so a durable mound writes ~12× less, with the
-refusal logic untouched. What's still ahead: the analog/ADC real port and a libgpiod backing — the two
-pieces that need real hardware — and the GPIO writes themselves verified on a physical board. End-to-end
-simulator missions run against an in-process controller that verifies every byte. The v0 canonical
-bytes will not change again inside v0. The host still runs against generic driver primitives, now
-with a real GPIO line available for digital actuation, not yet a device against real hardware — that
-boundary finishes M4; real firmware is M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+refusal logic untouched, and — new in `v0.9.14` — **the analog port is real**: the generic analog sensor
+samples one channel of an ADS1115 over I2C (`LinuxI2cBus` + `Ads1115AnalogInput`, single-shot, in volts,
+with optional `scale`/`offset` calibration), a missing chip refuses bring-up and a failed read is a fault
+with no reading, and the daemon's new **`--hardware`** flag finally composes the real GPIO and ADC ports
+instead of in-memory ones. What's still ahead: a libgpiod backing, and the GPIO writes and I2C transfers
+themselves verified on a physical board. End-to-end simulator missions run against an in-process
+controller that verifies every byte. The v0 canonical bytes will not change again inside v0. The host
+now has both a real digital line and a real analog channel available, but has not yet been run on a
+device against real hardware — that boundary finishes M4; real firmware is M5. See
+[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real
@@ -110,6 +114,12 @@ dotnet test Micromound.sln                  # just the tests
 ```
 
 On Windows without bash on PATH, `.\scripts\validate.ps1` runs the same steps.
+
+On a Raspberry Pi with real hardware, run the daemon with `--hardware`: digital actuators then open
+sysfs GPIO lines (manifest `pin`) and analog sensors open ADS1115 channels over I2C (manifest
+`channel`, `bus`, `address`, `gain`). Enable I2C (`raspi-config` → Interfaces), run as a user in the
+`i2c` and `gpio` groups, and keep every ADC input below VDD + 0.3 V — the gain setting is resolution,
+not protection. Without `--hardware` every port is in-memory and the daemon says so at start-up.
 Releases are cut with `scripts/release.sh` (or `scripts/release.ps1`) from a synced `main`.
 
 Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).

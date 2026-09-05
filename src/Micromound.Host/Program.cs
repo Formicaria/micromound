@@ -26,8 +26,11 @@ var options = HostArgs.Parse(args);
 if (options is null)
 {
     Console.Error.WriteLine(
-        "usage: micromound --manifest <path> [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
+        "usage: micromound --manifest <path> [--hardware] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
+        "  --hardware     drive REAL ports: digital actuators on sysfs GPIO (setting 'pin'), analog sensors\n" +
+        "                 on an ADS1115 over I2C (settings 'channel', 'bus', 'address', 'gain'). Without it\n" +
+        "                 every port is in-memory — nothing physical moves and readings are zero.\n" +
         "  --state        state root (identity + durable state). default: /var/lib/micromound\n" +
         "  --controller   controller base URL, e.g. https://anthill.example. default: offline\n" +
         "  --enroll-token one-time enrollment token; used once if not already enrolled (PROTOCOL.md §3)\n" +
@@ -53,6 +56,17 @@ catch (Exception ex)
 {
     Console.Error.WriteLine($"micromound: cannot read manifest '{options.ManifestPath}': {ex.Message}");
     return 2;
+}
+
+// A manifest that names PHYSICAL ports (a pin, an I2C channel) while the daemon runs in-memory would
+// produce readings and "actuations" that look real and are not. Say so loudly; the banner repeats it.
+if (!options.Hardware)
+{
+    var physical = manifest.Hardware
+        .Where(h => h.Value.Settings.Keys.Any(k => k is "pin" or "channel" or "bus" or "address"))
+        .Select(h => h.Key).ToList();
+    if (physical.Count > 0)
+        Console.Error.WriteLine($"micromound: WARNING: manifest names physical ports for {string.Join(", ", physical)} but --hardware is not set; every port is IN-MEMORY and nothing physical is driven or measured.");
 }
 
 MoundHost host;
@@ -88,6 +102,8 @@ try
         Keys = keys,
         Manifest = manifest,
         StateDirectory = options.StateDirectory,
+        // Real ports only when asked for: a manifest naming a pin or an I2C address opens it fail-closed.
+        Drivers = options.Hardware ? MoundHost.HardwareDriverFactories() : MoundHost.DefaultDriverFactories(),
         GuardHeartbeatTimeoutSeconds = options.HeartbeatTimeoutSeconds,
         ControllerKeys = controllerKeys,
         Transport = options.ControllerUrl is null ? null : new HttpSyncTransport(new Uri(options.ControllerUrl))
@@ -115,6 +131,7 @@ var watchdogSeconds = options.WatchdogSeconds
 
 Console.WriteLine(
     $"micromound: {host.MoundId} up, state={host.State}. " +
+    (options.Hardware ? "Ports: REAL hardware (sysfs GPIO, ADS1115/I2C). " : "Ports: IN-MEMORY (no --hardware; nothing physical is driven). ") +
     (options.ControllerUrl is null ? "Running offline (no --controller); " : $"Controller {options.ControllerUrl}; ") +
     "Ctrl-C / SIGTERM to stop safely." +
     (watchdogSeconds > 0 ? $" Independent watchdog armed at {watchdogSeconds:0.#}s." : " Independent watchdog disabled."));
@@ -154,11 +171,12 @@ finally
 return 0;
 
 /// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
-file sealed record HostArgs(string ManifestPath, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
+file sealed record HostArgs(string ManifestPath, bool Hardware, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
 {
     public static HostArgs? Parse(string[] args)
     {
         string? manifest = null;
+        var hardware = false;   // in-memory ports unless the operator asks for the real ones
         var state = Environment.GetEnvironmentVariable("MICROMOUND_STATE") ?? "/var/lib/micromound";
         string? controller = null;
         string? enrollToken = null;
@@ -172,6 +190,7 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
             switch (args[i])
             {
                 case "--manifest" when i + 1 < args.Length: manifest = args[++i]; break;
+                case "--hardware": hardware = true; break;
                 case "--state" when i + 1 < args.Length: state = args[++i]; break;
                 // PROTOCOL.md §1: device-initiated HTTPS only. A non-https (or malformed) URL is a
                 // usage error, never a cleartext or undialable transport handed to the daemon.
@@ -187,6 +206,6 @@ file sealed record HostArgs(string ManifestPath, string StateDirectory, string? 
             }
         }
 
-        return manifest is null ? null : new HostArgs(manifest, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
+        return manifest is null ? null : new HostArgs(manifest, hardware, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
     }
 }

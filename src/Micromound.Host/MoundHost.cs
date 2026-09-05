@@ -289,12 +289,30 @@ public sealed class MoundHost
         }
     }
 
-    /// <summary>The generic driver primitives every build ships. Real hardware ports register more.</summary>
+    /// <summary>
+    /// The generic driver primitives every build ships, over IN-MEMORY ports — the simulator's world.
+    /// A daemon on a device uses <see cref="HardwareDriverFactories"/> instead; the driver kinds,
+    /// capabilities, and limits are identical, only the port backing differs.
+    /// </summary>
     public static DriverFactoryRegistry DefaultDriverFactories()
     {
         var factories = new DriverFactoryRegistry();
         factories.Register(new AnalogSensorFactory());
         factories.Register(new DigitalActuatorFactory());
+        return factories;
+    }
+
+    /// <summary>
+    /// The same driver kinds over REAL Linux ports: the digital actuator on a sysfs GPIO line (manifest
+    /// <c>pin</c>), the analog sensor on an ADS1115 channel over I2C (manifest <c>bus</c>/<c>address</c>/
+    /// <c>channel</c>/<c>gain</c>). Every port opens fail-closed from the manifest at configure time, so
+    /// a slice that names hardware this host does not have refuses bring-up rather than pretending.
+    /// </summary>
+    public static DriverFactoryRegistry HardwareDriverFactories()
+    {
+        var factories = new DriverFactoryRegistry();
+        factories.Register(new Ads1115AnalogSensorFactory());
+        factories.Register(new SysfsDigitalActuatorFactory());
         return factories;
     }
 

@@ -39,19 +39,25 @@ issued_at: 2026-08-14T21:04:11Z
 
 hardware:
   soil:
-    driver: ads1115
+    driver: analog_sensor            # an ADS1115 channel when the daemon runs with --hardware
     settings:
+      capability: sense.soil_moisture
       channel: "0"
+      gain: "4.096"
+      scale: "50"                    # 0..2 V probe → 0..100 %
+      unit: pct
   temperature:
-    driver: bme280
+    driver: bme280                   # illustrative: a chip-specific driver a future port would add
     settings:
-      bus: "i2c"
+      bus: "1"
       address: "0x76"
   irrigation:
-    driver: gpio_relay
+    driver: digital_actuator         # a sysfs GPIO line when the daemon runs with --hardware
     settings:
+      capability: act.water_valve
       pin: "17"
-      normally_open: "false"
+      active_high: "false"
+      max_on_s: "20"
 
 capabilities:
   - sense.soil_moisture
@@ -93,6 +99,31 @@ Every value under `settings` is a string, and each driver parses and validates i
 the manifest decoder one fixed shape — which matters on a constrained device — and puts the
 knowledge of what a legal pin, bus address, or channel is in the driver, where it belongs. A
 driver that cannot make sense of its settings fails to initialize rather than initializing wrong.
+
+## The shipped driver types and their settings
+
+Two generic primitives ship today. Each is one driver type whatever backs it: in-memory in the
+simulator and tests, real Linux ports when the daemon runs with `--hardware`. The settings a real
+port needs are simply ignored by the in-memory backing, so one manifest serves both.
+
+| Driver type | Setting | Required | Meaning |
+|---|---|---|---|
+| `digital_actuator` | `capability` | yes | The `act.` capability this line is (`act.water_valve`) |
+| | `active_high` | no (`true`) | Whether the active level is high; the safe level is the opposite |
+| | `class` | no (`benign`) | Action class; never `observe` or `hazardous` |
+| | `max_on_s`, `min_off_s`, `max_rate_per_h` | no | The hardware limit tier for this line |
+| | `pin` | with `--hardware` | The sysfs GPIO number (BCM numbering on a Pi) |
+| `analog_sensor` | `capability` | yes | The `sense.` capability this channel is (`sense.soil_moisture`) |
+| | `unit` | no | Unit recorded on every reading (`pct`, `V`, `C`) |
+| | `scale`, `offset` | no (`1`, `0`) | Linear calibration, `value = raw × scale + offset`; both must be finite |
+| | `channel` | with `--hardware` | ADS1115 input, `0`..`3` (single-ended against GND) |
+| | `bus` | no (`1`) | I2C bus number: `/dev/i2c-<bus>`; the Pi's header bus is 1 |
+| | `address` | no (`0x48`) | 7-bit I2C address, decimal or `0x` hex; the ADS1115 offers `0x48`..`0x4B` by its ADDR pin |
+| | `gain` | no (`4.096`) | PGA full-scale range in volts: `6.144`, `4.096`, `2.048`, `1.024`, `0.512`, `0.256`. Resolution, not protection: inputs must stay below VDD + 0.3 V |
+
+A real backing reads in **volts** before calibration. A malformed or missing setting a backing
+needs, or a chip that does not answer at its address, refuses the whole manifest at bring-up — the
+daemon never comes up with a phantom sensor or an unbacked line.
 
 ## `device_limits` is the middle tier
 

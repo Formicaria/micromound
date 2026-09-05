@@ -12,6 +12,88 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.14 — the analog port is real (ADS1115 over I2C), and the daemon can reach its hardware
+
+The second real driver port, the counterpart of `v0.9.8`'s GPIO line under the actuator: the generic
+analog sensor now has a *real* channel to sample — one input of a TI ADS1115, the 16-bit four-channel
+I2C ADC that is the usual analog front end on a Raspberry Pi — spoken over the kernel's `i2c-dev`
+interface with no library. And the two hardware factories are now **reachable from the command line**:
+until this slice the daemon only ever composed in-memory ports, so a manifest's `pin` was read by
+nothing on a real board. It is still **substrate, not the milestone**: the register protocol is proven
+against a fake chip at the byte level; the I2C transfers themselves must be verified on a physical
+board. `v0.10.0` stays reserved for that.
+
+### Added
+
+- **`II2cBus` / `LinuxI2cBus`** (`Micromound.Drivers`): one I2C slave as the two operations a
+  register-mapped chip needs — write a few bytes, read a few bytes. The Linux backing opens
+  `/dev/i2c-N`, selects the slave with the `I2C_SLAVE` ioctl, and carries transfers with plain
+  `write(2)`/`read(2)` — three libc P/Invokes, no NuGet, no `unsafe`. Every failure — no bus, no
+  acknowledge (a chip that is not there), a permission problem — is an `IOException` with the errno,
+  never a silent zero.
+- **`Ads1115AnalogInput`** (`IAnalogInput`, plus `IDisposable`): one single-ended channel (AIN0..3
+  vs GND) in **single-shot** mode — each read writes the Config register (start, MUX, PGA, single-shot,
+  128 SPS, comparator off), polls until the OS bit reports the conversion complete (paced ≥1 ms, bounded
+  by `maxPolls`), and reads the two's-complement Conversion register. The result is in **volts**,
+  `raw × FSR / 32768`. Full-scale range is one of the PGA's six (default ±4.096 V, the right one for a
+  3.3 V system). **Construction probes the chip**: a missing chip throws, and the driver above refuses
+  to configure. The Config word is exposed (`ConfigWord`) so a test pins the exact encoding — channel 0
+  at ±4.096 V is `0xC383`, the datasheet's value.
+- **`Ads1115AnalogSensorFactory`**: the hardware-backed analog-sensor factory. Same driver kind
+  (`analog_sensor`), same capability/unit/calibration settings as the in-memory default — only the
+  channel backing changes. Settings: `channel` (required, 0..3), `bus` (default 1), `address` (decimal
+  or `0x` hex, default `0x48`), `gain` (a PGA range in volts, default 4.096). Everything is validated
+  **before** the bus is touched, and a device node opened for a chip that then fails its probe is
+  closed again — a refusal never leaks a file descriptor.
+- **The analog sensor opens its channel from the manifest at configure time**, like the actuator opens
+  its line: `AnalogSensorDriver` takes a settings-keyed channel builder (the `IAnalogInput`
+  constructor remains for in-memory/test channels), opens it LAST after the slice validates, and
+  fails closed if the open throws. A dropped channel is disposed on reconfigure.
+- **Optional linear calibration on the analog sensor**: `scale` and `offset` settings map
+  `value = raw × scale + offset` (defaults 1 and 0), so a charter's thresholds can be written in the
+  sensor's own unit rather than volts. Both must be finite — `NaN`/`Infinity` fail closed — and a
+  non-finite *result* is a fault, not a reading.
+- **Daemon `--hardware` flag** and **`MoundHost.HardwareDriverFactories()`**: with the flag, digital
+  actuators open sysfs GPIO lines and analog sensors open ADS1115 channels; without it every port is
+  in-memory, as before. The start-up banner now says which. A manifest that names physical ports
+  (`pin`, `channel`, `bus`, `address`) while the daemon runs in-memory logs a WARNING — readings and
+  actuations in that mode look real and are not.
+
+### Authority / safety
+
+- **A sensor read that fails is a fault with no reading.** The in-memory channel never threw; a real
+  one can (a chip that stopped acknowledging). The executor now reports `sensor read failed: …` and
+  emits **no evidence** — a fabricated number would be worse than a missing one, because it could
+  satisfy a mission's `verify` step. Tested: unplug the fake chip after bring-up → fault, zero items
+  published.
+- **A missing chip refuses bring-up.** Exercised for real in the sandbox: with `--hardware` and no
+  `/dev/i2c-1`, the daemon exits 1 with `bring-up refused (fail-closed): … could not open the
+  sensor's channel: cannot open /dev/i2c-1 (errno 2)` — the first live traversal of the libc path.
+- **Gain is not protection.** The PGA range is a resolution setting; the ADS1115's inputs must never
+  exceed VDD + 0.3 V regardless of range. Stated in the driver docs and README's deployment note.
+- **No wire change, no new refusal reason, no authority widened.** New hardware backing behind an
+  existing seam; canonical bytes, envelopes, and the refusal enum are untouched.
+
+### Notes
+
+- **On a Pi:** enable I2C (`raspi-config` → Interfaces, or `dtparam=i2c_arm=on`), run the daemon as a
+  user in the `i2c` group (and `gpio` for the actuator), wire the ADS1115 to SDA/SCL/3V3/GND with ADDR
+  to GND for `0x48`, and pass `--hardware`. `i2cdetect -y 1` should show `48` before the daemon does.
+- **Tests:** `Ads1115Tests` (38 cases) run against a register-level fake chip — OS bit cleared while
+  converting, two's-complement result — pinning the Config encoding for every channel and range, the
+  volts scaling (including the −FSR..+FSR−1 LSB edge), the conversion wait and its timeout, the probe,
+  fail-closed configuration through the factory for every malformed setting, calibration, and the
+  read-failure fault. The adversarial pass found and fixed two things: a bad `channel` opened the bus
+  before being refused (fd leak per attempt), and back-to-back polls on a fast bus could exhaust the
+  poll budget inside one conversion time — polls are now paced.
+- `docs/CONFIGURATION.md` now documents the **shipped driver types and their settings**, and its
+  example manifest uses them. A machine-readable form of that table — so a controller can generate
+  its hardware form instead of hand-matching setting names — is the natural next protocol addition.
+- Remaining before `v0.10.0`: a libgpiod (chardev) GPIO backing, and the on-board verification of the
+  sysfs writes and the I2C transfers.
+
+---
+
 ## v0.9.13 — heartbeat evidence is rate-limited to what is informative
 
 The follow-up v0.9.12 named. Making the evidence store durable turned every heartbeat reading into an

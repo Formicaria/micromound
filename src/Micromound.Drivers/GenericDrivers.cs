@@ -342,17 +342,47 @@ public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
 /// moisture probe, a thermistor, or any single-number sensor is configured from. It exposes one
 /// <c>sense.</c> capability, and its reading IS the evidence: every execution samples the channel
 /// and emits a numeric reading the Witness Ant can later correlate.
+///
+/// <para><b>The channel is opened from the manifest at configure time</b>, like the actuator's line:
+/// a real ADC channel needs its bus, address, and channel number, which are only known once the
+/// manifest slice is applied. A channel that cannot be opened — no bus, a chip that does not answer
+/// — is a fail-closed configuration refusal, so an empty I2C address never becomes a sensor that
+/// reads zero.</para>
+///
+/// <para><b>Optional linear calibration.</b> A real channel yields <em>volts</em>; a threshold in a
+/// charter is written in the sensor's own unit. Optional <c>scale</c> and <c>offset</c> settings map
+/// <c>value = raw × scale + offset</c> (defaults 1 and 0), both required finite so a bad manifest
+/// cannot turn every reading into NaN. A reading that fails (the chip stopped answering) is a
+/// <b>fault</b>, never a fabricated number: no reading is emitted and the executor reports why.</para>
 /// </summary>
-public sealed class AnalogSensorDriver(IAnalogInput input) : GenericDriverBase
+public sealed class AnalogSensorDriver : GenericDriverBase
 {
-    private readonly IAnalogInput _input = input;
+    private readonly Func<IReadOnlyDictionary<string, string>, IAnalogInput> _channelBuilder;
+    private IAnalogInput? _input;
     private string _capability = "";
     private string _unit = "";
+    private double _scale = 1;
+    private double _offset;
     private CapabilityDescriptor? _descriptor;
     private Executor? _executor;
 
+    /// <summary>
+    /// The channel is built from the manifest's settings at <see cref="OnConfigure"/> time; the
+    /// builder MUST return a fresh channel per call and should THROW if the hardware is not there.
+    /// </summary>
+    public AnalogSensorDriver(Func<IReadOnlyDictionary<string, string>, IAnalogInput> channelBuilder) =>
+        _channelBuilder = channelBuilder;
+
+    /// <summary>Convenience for a channel that needs no settings and owns no device node (the in-memory
+    /// simulator channel, tests) — the same instance is reused across reconfigures.</summary>
+    public AnalogSensorDriver(IAnalogInput input) : this(_ => input) { }
+
     public override string DriverId => "analog_sensor:" + _capability;
     public override string Bus => BusKinds.I2c;
+
+    /// <summary>The calibration in force, for a test or a health view.</summary>
+    public double Scale => _scale;
+    public double Offset => _offset;
 
     public override IReadOnlyList<CapabilityDescriptor> Capabilities =>
         _descriptor is null ? [] : [_descriptor];
@@ -364,8 +394,14 @@ public sealed class AnalogSensorDriver(IAnalogInput input) : GenericDriverBase
     {
         _capability = "";
         _unit = "";
+        _scale = 1;
+        _offset = 0;
         _descriptor = null;
         _executor = null;
+        // Drop any channel a prior configuration opened — and CLOSE it if it owns a device node, so a
+        // reconfigure does not leak a file descriptor per attempt.
+        (_input as IDisposable)?.Dispose();
+        _input = null;
     }
 
     protected override void OnConfigure(IReadOnlyDictionary<string, string> settings, List<string> errors)
@@ -374,9 +410,24 @@ public sealed class AnalogSensorDriver(IAnalogInput input) : GenericDriverBase
         var wellFormed = ValidCapability(capability, "sense.", "an analog sensor", errors);
 
         _unit = settings.TryGetValue("unit", out var unit) ? unit : "";
+        _scale = OptionalFinite(settings, "scale", fallback: 1, errors);
+        _offset = OptionalFinite(settings, "offset", fallback: 0, errors);
 
         if (errors.Count > 0 || !wellFormed)
             return;
+
+        // Open the channel from the manifest settings LAST, once the slice has otherwise validated. A
+        // channel that cannot be opened (no bus, no chip at the address, a bad channel number) is a
+        // fail-closed refusal — the driver stays Absent and the kernel never samples a phantom sensor.
+        try
+        {
+            _input = _channelBuilder(settings);
+        }
+        catch (Exception ex)
+        {
+            errors.Add("could not open the sensor's channel: " + ex.Message);
+            return;
+        }
 
         _capability = capability!;
         _descriptor = new CapabilityDescriptor
@@ -388,6 +439,24 @@ public sealed class AnalogSensorDriver(IAnalogInput input) : GenericDriverBase
         _executor = new Executor(this);
     }
 
+    /// <summary>Parse an optional finite number (any sign); a non-number or NaN/Infinity fails closed.</summary>
+    private static double OptionalFinite(IReadOnlyDictionary<string, string> settings, string key, double fallback, List<string> errors)
+    {
+        if (!settings.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw))
+            return fallback;
+        if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+        {
+            errors.Add($"setting '{key}' is not a number: '{raw}'");
+            return fallback;
+        }
+        if (!double.IsFinite(parsed))
+        {
+            errors.Add($"setting '{key}' must be a finite number, not '{raw}'");
+            return fallback;
+        }
+        return parsed;
+    }
+
     public override void EnterSafeState() { /* a sensor has no output to make safe */ }
 
     private sealed class Executor(AnalogSensorDriver driver) : ICapabilityExecutor
@@ -397,8 +466,25 @@ public sealed class AnalogSensorDriver(IAnalogInput input) : GenericDriverBase
 
         public ExecutionOutcome Execute(CapabilityExecution execution)
         {
+            // The executor exists only while Health is Healthy, which is exactly when _input is set. A
+            // real channel read can THROW (an in-memory one never did): a chip that stopped answering is
+            // a fault with no reading — never a zero that looks like a measurement.
+            double raw;
+            try
+            {
+                raw = driver._input!.Read();
+            }
+            catch (Exception ex)
+            {
+                return ExecutionOutcome.Fault("sensor read failed: " + ex.Message);
+            }
+
+            var value = raw * driver._scale + driver._offset;
+            if (!double.IsFinite(value))
+                return ExecutionOutcome.Fault($"sensor produced a non-finite reading ({raw})");
+
             var item = EvidenceReadings.Create(
-                Guid.NewGuid().ToString(), driver._capability, driver._input.Read(),
+                Guid.NewGuid().ToString(), driver._capability, value,
                 execution.StartedAt, unit: driver._unit, source: driver.DriverId);
 
             driver.Publish?.Invoke(item);
@@ -457,14 +543,97 @@ public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/g
 }
 
 /// <summary>
-/// Builds <see cref="AnalogSensorDriver"/> instances over the injected channel factory, which MUST
-/// return a new channel per call (as the parameterless default does).
+/// Builds <see cref="AnalogSensorDriver"/> instances. Each driver opens its channel from the manifest
+/// settings at configure time via the injected <em>channel builder</em> — an in-memory channel in the
+/// simulator and tests, a real ADC channel (<see cref="Ads1115AnalogInput"/>) on a device. The builder
+/// MUST return a NEW channel per call, for the same reason as the actuator's port builder.
 /// </summary>
-public sealed class AnalogSensorFactory(Func<IAnalogInput> channelFactory) : IDriverFactory
+public sealed class AnalogSensorFactory(Func<IReadOnlyDictionary<string, string>, IAnalogInput> channelBuilder) : IDriverFactory
 {
     /// <summary>Defaults to a fresh in-memory channel per driver, for the simulator and tests.</summary>
-    public AnalogSensorFactory() : this(() => new InMemoryAnalogInput()) { }
+    public AnalogSensorFactory() : this(_ => new InMemoryAnalogInput()) { }
+
+    /// <summary>A settings-free channel factory, adapted to the builder shape.</summary>
+    public AnalogSensorFactory(Func<IAnalogInput> channelFactory) : this(_ => channelFactory()) { }
 
     public string DriverType => "analog_sensor";
-    public IDriver Create() => new AnalogSensorDriver(channelFactory());
+    public IDriver Create() => new AnalogSensorDriver(channelBuilder);
+}
+
+/// <summary>
+/// The hardware-backed analog-sensor factory: it builds each sensor over one channel of a real
+/// ADS1115 on the Linux I2C bus (<see cref="Ads1115AnalogInput"/> over <see cref="LinuxI2cBus"/>),
+/// reading the chip's location from the manifest settings. Same driver kind (<c>analog_sensor</c>),
+/// same capability, unit, and calibration settings as the in-memory default — only the channel
+/// backing changes. A device's registry uses it in place of <see cref="AnalogSensorFactory"/>.
+///
+/// <para>Settings: <c>channel</c> (required, 0..3), <c>bus</c> (default 1, the Pi's header bus),
+/// <c>address</c> (decimal or <c>0x</c> hex, default 0x48), <c>gain</c> (a full-scale range in volts
+/// from <see cref="Ads1115AnalogInput.FullScaleRanges"/>, default 4.096). Anything malformed, and a
+/// chip that does not answer, throws at open time — a fail-closed configuration refusal.</para>
+/// </summary>
+public sealed class Ads1115AnalogSensorFactory : IDriverFactory
+{
+    private readonly AnalogSensorFactory _inner;
+
+    /// <param name="defaultBus">The I2C bus used when a slice does not name one. The Pi's is 1.</param>
+    /// <param name="busFactory">How a bus is opened, injectable so the setting parsing can be tested
+    /// with a fake device; defaults to <see cref="LinuxI2cBus"/>.</param>
+    public Ads1115AnalogSensorFactory(int defaultBus = 1, Func<int, int, II2cBus>? busFactory = null)
+    {
+        var openBus = busFactory ?? ((bus, address) => new LinuxI2cBus(bus, address));
+        _inner = new AnalogSensorFactory(settings =>
+        {
+            // Validate every setting BEFORE touching the bus: a slice with a bad channel or gain is
+            // refused without opening (and then leaking) a device node.
+            var channel = RequiredInt(settings, "channel");
+            if (channel is < 0 or > 3)
+                throw new ArgumentException($"'channel' must be 0..3 on an ADS1115, not {channel}");
+            var bus = OptionalInt(settings, "bus", defaultBus);
+            var address = OptionalInt(settings, "address", Ads1115AnalogInput.DefaultAddress);
+            var gain = 4.096;
+            if (settings.TryGetValue("gain", out var gainRaw) && !string.IsNullOrWhiteSpace(gainRaw))
+            {
+                if (!double.TryParse(gainRaw, NumberStyles.Float, CultureInfo.InvariantCulture, out gain)
+                    || Ads1115AnalogInput.IndexOfRange(gain) < 0)
+                    throw new ArgumentException($"'gain' must be one of {string.Join(", ", Ads1115AnalogInput.FullScaleRanges)} volts, not '{gainRaw}'");
+            }
+
+            var device = openBus(bus, address);
+            try
+            {
+                return new Ads1115AnalogInput(device, channel, gain);   // probes; throws if the chip is absent
+            }
+            catch
+            {
+                (device as IDisposable)?.Dispose();   // never leak the device node behind a refusal
+                throw;
+            }
+        });
+    }
+
+    public string DriverType => _inner.DriverType;
+    public IDriver Create() => _inner.Create();
+
+    private static int RequiredInt(IReadOnlyDictionary<string, string> settings, string key)
+    {
+        if (!settings.TryGetValue(key, out var raw) || string.IsNullOrWhiteSpace(raw))
+            throw new ArgumentException($"an ADS1115 analog sensor requires a '{key}' setting");
+        return ParseInt(key, raw);
+    }
+
+    private static int OptionalInt(IReadOnlyDictionary<string, string> settings, string key, int fallback) =>
+        settings.TryGetValue(key, out var raw) && !string.IsNullOrWhiteSpace(raw) ? ParseInt(key, raw) : fallback;
+
+    /// <summary>Decimal, or hex with a <c>0x</c> prefix — an I2C address is conventionally written as hex.</summary>
+    private static int ParseInt(string key, string raw)
+    {
+        var text = raw.Trim();
+        var ok = text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? int.TryParse(text.AsSpan(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var value)
+            : int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        if (!ok)
+            throw new ArgumentException($"'{key}' is not an integer: '{raw}'");
+        return value;
+    }
 }
