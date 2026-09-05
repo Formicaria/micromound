@@ -43,7 +43,7 @@ no new refusal reason, no authority widened. `v0.10.0` is still the board's to a
   write carries `errno 121`) are exercised against a fake kernel in `LinuxI2cBusTests`, including the
   ADS1115 driver over the real bus class issuing the datasheet transfers. Before this the bus's libc
   calls were unreachable from any test.
-- **sysfs export settles.** `SysfsDigitalOutput` waits up to 200 ms for `gpioN/` to appear after
+- **sysfs export settles.** `SysfsDigitalOutput` waits up to 500 ms for `gpioN/` to appear after
   `export` — the kernel creates it asynchronously — and refuses with a reason (`did not appear …
   is this a valid pin on this board, and is sysfs GPIO enabled?`) instead of the
   `DirectoryNotFoundException` the next write used to throw. The follow-up `v0.9.8` named.

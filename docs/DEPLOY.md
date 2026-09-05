@@ -146,8 +146,13 @@ If all of that held, the host has run on a real device against real hardware: `v
   never logs a secret.
 - **State** is `/var/lib/micromound`: `identity/` (the device key — back it up nowhere, re-enroll
   instead), `state/`, `evidence/`. Use endurance media for a long-lived deployment.
-- **Legacy GPIO.** A kernel without `/dev/gpiochip*` can use `--gpio sysfs`; uncomment the
-  `ReadWritePaths=/sys/class/gpio` line in the unit. Pin numbers are then global sysfs numbers.
+- **Legacy GPIO.** A kernel without `/dev/gpiochip*` can use `--gpio sysfs`; in the unit, uncomment
+  `ReadWritePaths=/sys/class/gpio` and set `ProtectKernelTunables=no`. Pin numbers are then global
+  sysfs numbers, and `chip` must be left unset.
+- **Exit codes.** `0` clean stop; `1` bring-up refused by the hardware or a safety refusal (systemd
+  restarts — a chip powered late is worth retrying); `2` a refused configuration (unreadable manifest,
+  a physical manifest without `--hardware`, bad arguments) — systemd does **not** restart on 2, so
+  `systemctl status` shows the reason instead of a restart loop.
 - **Development machine.** To run a manifest that names physical ports with no hardware, pass
   `--simulate`; the daemon says `SIMULATING` and every port is in memory. Without `--hardware` or
   `--simulate` such a manifest is refused, so a device can never fake its readings by accident.

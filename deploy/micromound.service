@@ -35,6 +35,10 @@ WorkingDirectory=/var/lib/micromound
 # de-energize and persist before SIGKILL; the daemon handles SIGTERM as a safe shutdown.
 Restart=always
 RestartSec=3
+# Exit 2 is a refused configuration (unreadable manifest, a physical manifest without --hardware,
+# bad arguments): restarting cannot fix it, so do not loop on it. Exit 1 (bring-up refused by the
+# hardware) and crashes DO restart — a chip powered late, a transient bus error.
+RestartPreventExitStatus=2
 TimeoutStopSec=20
 KillSignal=SIGTERM
 
@@ -60,7 +64,7 @@ DevicePolicy=closed
 DeviceAllow=char-gpiochip rw
 DeviceAllow=char-i2c rw
 # The legacy sysfs GPIO path needs /sys writable for export/direction/value; the default chardev
-# backing does not. Uncomment ONLY with --gpio sysfs.
+# backing does not. ONLY with --gpio sysfs: uncomment the next line AND set ProtectKernelTunables=no.
 #ReadWritePaths=/sys/class/gpio
 
 [Install]

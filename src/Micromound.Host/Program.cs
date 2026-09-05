@@ -41,8 +41,8 @@ if (options is null)
         "       micromound --manifest <path> --check-hardware [--gpio chardev|sysfs]   claim every port the manifest names, read each sensor once, report, exit (0 = all claimed)\n" +
         "       micromound --describe-drivers [--hardware]   print the driver types this build ships and their settings (JSON), then exit\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
-        "  --hardware     drive REAL ports: digital actuators on sysfs GPIO (setting 'pin'), analog sensors\n" +
-        "                 on an ADS1115 over I2C (settings 'channel', 'bus', 'address', 'gain'). Without it\n" +
+        "  --hardware     drive REAL ports: digital actuators on a GPIO line (settings 'pin', 'chip'), analog\n" +
+        "                 sensors on an ADS1115 over I2C (settings 'channel', 'bus', 'address', 'gain'). Without it\n" +
         "                 every port is in-memory — nothing physical moves and readings are zero.\n" +
         "  --gpio         GPIO backing with --hardware: chardev (/dev/gpiochipN, the libgpiod interface; default)\n" +
         "                 or sysfs (legacy /sys/class/gpio, for kernels that still ship it).\n" +
@@ -110,12 +110,13 @@ try
 {
     var keys = MoundHost.LoadOrCreateIdentity(options.StateDirectory);
 
+    // Real ports only when asked for: a manifest naming a pin or an I2C address opens it fail-closed.
+    // Chosen before enrollment because the device describes THESE factories to the controller.
+    var factories = options.Hardware ? MoundHost.HardwareDriverFactories(options.GpioBacking) : MoundHost.DefaultDriverFactories();
+
     // Enrollment (PROTOCOL.md §3): with a controller configured, load the controller key from a prior
     // enrollment or present the one-time token now. Without it, downlink stays unverifiable — the safe
     // direction — and the mound only uplinks.
-    // Real ports only when asked for: a manifest naming a pin or an I2C address opens it fail-closed.
-    var factories = options.Hardware ? MoundHost.HardwareDriverFactories(options.GpioBacking) : MoundHost.DefaultDriverFactories();
-
     IPublicKeyDirectory controllerKeys = new InMemoryPublicKeyDirectory();
     double? controllerSyncInterval = null;
     if (options.ControllerUrl is not null)

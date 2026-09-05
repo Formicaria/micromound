@@ -21,13 +21,13 @@ namespace Micromound.Drivers;
 /// <see cref="GpioChardevOutput"/> is the preferred backing (daemon <c>--gpio chardev</c>, the default);
 /// this one remains for kernels built with <c>CONFIG_GPIO_SYSFS</c>. The kernel creates a pin's
 /// directory asynchronously after <c>export</c>, so the constructor waits briefly for it (up to
-/// 200 ms) and refuses with a reason if it never appears. The value writes here must be verified on
+/// 500 ms) and refuses with a reason if it never appears. The value writes here must be verified on
 /// real hardware.</para>
 /// </summary>
 public sealed class SysfsDigitalOutput : IDigitalOutput, IDisposable
 {
-    /// <summary>How long to wait for the kernel to create <c>gpioN/</c> after <c>export</c>: 20 × 10 ms.</summary>
-    public const int ExportSettlePolls = 20;
+    /// <summary>How long to wait for the kernel to create <c>gpioN/</c> after <c>export</c>: 50 × 10 ms.</summary>
+    public const int ExportSettlePolls = 50;
     public const int ExportSettlePollMs = 10;
 
     private readonly int _pin;
