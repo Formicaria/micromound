@@ -30,10 +30,24 @@ void mm_ed25519_seed_keypair(uint8_t pk[MM_ED25519_PUBLIC_KEY_LEN],
                              uint8_t sk[MM_ED25519_SECRET_KEY_LEN],
                              const uint8_t seed[MM_ED25519_SEED_LEN]);
 
+/*
+ * A message given as consecutive pieces. Signing and verifying hash the concatenation, so a
+ * device can sign or check bytes that are not contiguous in memory — the wire form of an
+ * envelope with its signature cut out, for instance — without assembling a copy.
+ */
+typedef struct mm_part {
+    const uint8_t *data;
+    size_t n;
+} mm_part;
+
 /* Detached signature over message; the message is read, never copied. */
 void mm_ed25519_sign(uint8_t sig[MM_ED25519_SIGNATURE_LEN],
                      const uint8_t *message, size_t n,
                      const uint8_t sk[MM_ED25519_SECRET_KEY_LEN]);
+
+void mm_ed25519_sign_parts(uint8_t sig[MM_ED25519_SIGNATURE_LEN],
+                           const mm_part *parts, size_t n_parts,
+                           const uint8_t sk[MM_ED25519_SECRET_KEY_LEN]);
 
 /*
  * 0 when sig is a valid signature by pk over message, -1 otherwise. Rejects non-canonical
@@ -43,6 +57,10 @@ void mm_ed25519_sign(uint8_t sig[MM_ED25519_SIGNATURE_LEN],
 int mm_ed25519_verify(const uint8_t sig[MM_ED25519_SIGNATURE_LEN],
                       const uint8_t *message, size_t n,
                       const uint8_t pk[MM_ED25519_PUBLIC_KEY_LEN]);
+
+int mm_ed25519_verify_parts(const uint8_t sig[MM_ED25519_SIGNATURE_LEN],
+                            const mm_part *parts, size_t n_parts,
+                            const uint8_t pk[MM_ED25519_PUBLIC_KEY_LEN]);
 
 #ifdef __cplusplus
 }

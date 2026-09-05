@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Micromound.Crypto;
 using Micromound.Protocol;
 using Xunit;
 
@@ -366,6 +367,61 @@ public class CanonicalBytesTests
         }, ProtocolJson.Options));
 
         GoldenFile.Verify("canonical-doubles.txt", report.ToString());
+    }
+
+    [Fact]
+    public void Signed_wire_envelopes_are_frozen()
+    {
+        // The one fixture that carries real signatures. Ed25519 is deterministic, so a fixed seed
+        // gives a fixed key and a fixed signature over fixed bytes: the host (BouncyCastle) and the
+        // C mirror (TweetNaCl) must produce these exact `wire:` lines, and the mirror must VERIFY
+        // each one under the named public key from the bytes as received — which is how a device
+        // checks a downlink charter or stop without re-serializing it. The seeds are test
+        // identities: 00 01 02 … for the device, 20 21 22 … for the controller. Never real keys.
+        var device = Ed25519KeyPair.FromSeed(Enumerable.Range(0, 32).Select(i => (byte)i).ToArray());
+        var controller = Ed25519KeyPair.FromSeed(Enumerable.Range(0x20, 32).Select(i => (byte)i).ToArray());
+        var deviceSigner = new Ed25519EnvelopeSigner("mm-7f3a0000-0000-4000-8000-000000000001", device);
+        var controllerSigner = new Ed25519EnvelopeSigner(KeyIds.Controller, controller);
+
+        var report = new StringBuilder();
+        report.AppendLine("# MICROMOUND signed wire envelopes — golden fixture");
+        report.AppendLine("#");
+        report.AppendLine("# Frozen by tests/Micromound.Tests/Golden/CanonicalBytesTests.cs with FIXED TEST SEEDS (never real keys).");
+        report.AppendLine("# Each `wire:` line is exactly what goes on the wire: the canonical bytes with the signature in `sig`.");
+        report.AppendLine("# The C mirror must verify every line under the named public key from the bytes as received,");
+        report.AppendLine("# reproduce every `digest:` (over the canonical bytes, sig zeroed), and re-sign to the same `wire:`.");
+        report.AppendLine();
+        report.AppendLine($"device_seed:     {Convert.ToHexStringLower(device.Seed)}");
+        report.AppendLine($"device_pk:       {Convert.ToHexStringLower(device.PublicKey)}");
+        report.AppendLine($"controller_seed: {Convert.ToHexStringLower(controller.Seed)}");
+        report.AppendLine($"controller_pk:   {Convert.ToHexStringLower(controller.PublicKey)}");
+        report.AppendLine();
+
+        // Uplink: the chain's first beat, signed by the device.
+        AppendSigned(report, "device", deviceSigner, Envelope("11111111-1111-4111-8111-111111111111", 0,
+            EnvelopeKinds.MoundSync, new { state = "chartered", uptime_s = 3600 }, ""));
+
+        // Downlink: what a controller sends a reduced-profile device — a charter, a stop, an ack — as
+        // its own chain, signed by the controller key the device received at enrollment.
+        var previous = AppendSigned(report, "controller", controllerSigner, Envelope("77777777-7777-4777-8777-777777777777", 0,
+            EnvelopeKinds.Charter, GoldenCharter(), ""));
+        previous = AppendSigned(report, "controller", controllerSigner, Envelope("88888888-8888-4888-8888-888888888888", 1,
+            EnvelopeKinds.Stop, new { reason = "operator stop" }, previous));
+        AppendSigned(report, "controller", controllerSigner, Envelope("99999999-9999-4999-8999-999999999999", 2,
+            EnvelopeKinds.Ack, new AckBody { RefersTo = "11111111-1111-4111-8111-111111111111", ThroughSeq = 0 }, previous));
+
+        GoldenFile.Verify("canonical-signed.txt", report.ToString());
+        return;
+
+        static string AppendSigned(StringBuilder into, string signerName, IEnvelopeSigner signer, Envelope envelope)
+        {
+            EnvelopeSigning.Sign(envelope, signer);
+            into.AppendLine($"## seq {envelope.Seq} — {envelope.Kind} — signed by {signerName}");
+            into.AppendLine($"digest:      {envelope.Digest()}");
+            into.AppendLine($"wire:        {JsonSerializer.Serialize(envelope, ProtocolJson.Options)}");
+            into.AppendLine();
+            return envelope.Digest();
+        }
     }
 
     private static string Append(StringBuilder report, Envelope envelope)

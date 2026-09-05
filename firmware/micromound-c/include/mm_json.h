@@ -84,6 +84,14 @@ size_t mm_json_finish(mm_json *w);
  */
 size_t mm_json_escape(const char *utf8, size_t n, char *out, size_t cap, int *error);
 
+/*
+ * UTF-8, strictly: decode returns the bytes consumed for one scalar at s[0..n), or 0 for anything
+ * invalid (bad lead or continuation byte, truncation, overlong form, surrogate, above U+10FFFF);
+ * encode writes 1–4 bytes for a scalar and returns the count. Shared by the writer and the reader.
+ */
+size_t mm_utf8_decode(const unsigned char *s, size_t n, unsigned long *scalar);
+size_t mm_utf8_encode(unsigned long scalar, char out[4]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -72,6 +72,16 @@ void mm_body_ack(mm_json *w, const void *ctx)
     mm_json_object_end(w);
 }
 
+/* ---- stop ---- */
+
+void mm_body_stop(mm_json *w, const void *ctx)
+{
+    const mm_stop *b = (const mm_stop *)ctx;
+    mm_json_object_begin(w);
+    mm_json_kv_string(w, "reason", b->reason);
+    mm_json_object_end(w);
+}
+
 /* ---- charter: Micromound.Protocol.Charter ---- */
 
 void mm_write_capability_limits(mm_json *w, const mm_capability_limits *limits)

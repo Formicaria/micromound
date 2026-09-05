@@ -110,7 +110,14 @@ void mm_ed25519_seed_keypair(uint8_t pk[32], uint8_t sk[64], const uint8_t seed[
     memcpy(sk + 32, pk, 32);
 }
 
-void mm_ed25519_sign(uint8_t sig[64], const uint8_t *message, size_t n, const uint8_t sk[64])
+static void sha512_update_parts(sha512_ctx *c, const mm_part *parts, size_t n_parts)
+{
+    size_t i;
+    for (i = 0; i < n_parts; i++)
+        if (parts[i].n) sha512_update(c, parts[i].data, parts[i].n);
+}
+
+void mm_ed25519_sign_parts(uint8_t sig[64], const mm_part *parts, size_t n_parts, const uint8_t sk[64])
 {
     u8 d[64], h[64], r[64];
     i64 i, j, x[64];
@@ -123,7 +130,7 @@ void mm_ed25519_sign(uint8_t sig[64], const uint8_t *message, size_t n, const ui
     /* r = H(prefix || M) */
     sha512_init(&c);
     sha512_update(&c, d + 32, 32);
-    sha512_update(&c, message, n);
+    sha512_update_parts(&c, parts, n_parts);
     sha512_final(&c, r);
     reduce(r);
 
@@ -135,7 +142,7 @@ void mm_ed25519_sign(uint8_t sig[64], const uint8_t *message, size_t n, const ui
     sha512_init(&c);
     sha512_update(&c, sig, 32);
     sha512_update(&c, sk + 32, 32);
-    sha512_update(&c, message, n);
+    sha512_update_parts(&c, parts, n_parts);
     sha512_final(&c, h);
     reduce(h);
 
@@ -144,6 +151,14 @@ void mm_ed25519_sign(uint8_t sig[64], const uint8_t *message, size_t n, const ui
     FOR(i, 32) x[i] = (u64)r[i];
     FOR(i, 32) FOR(j, 32) x[i + j] += h[i] * (u64)d[j];
     modL(sig + 32, x);
+}
+
+void mm_ed25519_sign(uint8_t sig[64], const uint8_t *message, size_t n, const uint8_t sk[64])
+{
+    mm_part one;
+    one.data = message;
+    one.n = n;
+    mm_ed25519_sign_parts(sig, &one, 1, sk);
 }
 
 /* True when the 32-byte little-endian scalar s is below the group order L. */
@@ -157,7 +172,7 @@ static int scalar_is_canonical(const u8 s[32])
     return 0; /* equal to L */
 }
 
-int mm_ed25519_verify(const uint8_t sig[64], const uint8_t *message, size_t n, const uint8_t pk[32])
+int mm_ed25519_verify_parts(const uint8_t sig[64], const mm_part *parts, size_t n_parts, const uint8_t pk[32])
 {
     u8 t[32], h[64];
     gf p[4], q[4];
@@ -169,7 +184,7 @@ int mm_ed25519_verify(const uint8_t sig[64], const uint8_t *message, size_t n, c
     sha512_init(&c);
     sha512_update(&c, sig, 32);
     sha512_update(&c, pk, 32);
-    sha512_update(&c, message, n);
+    sha512_update_parts(&c, parts, n_parts);
     sha512_final(&c, h);
     reduce(h);
 
@@ -179,4 +194,12 @@ int mm_ed25519_verify(const uint8_t sig[64], const uint8_t *message, size_t n, c
     pack(t, p);
 
     return crypto_verify_32(sig, t) ? -1 : 0;
+}
+
+int mm_ed25519_verify(const uint8_t sig[64], const uint8_t *message, size_t n, const uint8_t pk[32])
+{
+    mm_part one;
+    one.data = message;
+    one.n = n;
+    return mm_ed25519_verify_parts(sig, &one, 1, pk);
 }

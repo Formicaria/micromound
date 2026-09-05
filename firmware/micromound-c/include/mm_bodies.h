@@ -73,6 +73,12 @@ typedef struct mm_ack {
 } mm_ack;
 void mm_body_ack(mm_json *w, const void *ctx);
 
+/* ---- stop (downlink; the controller's anonymous { reason } body, PROTOCOL.md §7) ---- */
+typedef struct mm_stop {
+    const char *reason;
+} mm_stop;
+void mm_body_stop(mm_json *w, const void *ctx);
+
 /* ---- charter (downlink; Micromound.Protocol.Charter) ---- */
 typedef struct mm_capability_limits {
     mm_opt_double max_on_s;

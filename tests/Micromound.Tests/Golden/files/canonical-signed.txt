@@ -1,0 +1,27 @@
+# MICROMOUND signed wire envelopes — golden fixture
+#
+# Frozen by tests/Micromound.Tests/Golden/CanonicalBytesTests.cs with FIXED TEST SEEDS (never real keys).
+# Each `wire:` line is exactly what goes on the wire: the canonical bytes with the signature in `sig`.
+# The C mirror must verify every line under the named public key from the bytes as received,
+# reproduce every `digest:` (over the canonical bytes, sig zeroed), and re-sign to the same `wire:`.
+
+device_seed:     000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+device_pk:       03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+controller_seed: 202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f
+controller_pk:   29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7
+
+## seq 0 — mound_sync — signed by device
+digest:      sha256:a7d0bbc72703cdac778eba6545e792992a9234f3c52fdc0cfd5bd214182316e3
+wire:        {"v":0,"id":"11111111-1111-4111-8111-111111111111","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":0,"sent_at":"2026-08-14T21:04:11Z","kind":"mound_sync","body":{"state":"chartered","uptime_s":3600},"prev_digest":"","sig":"ed25519:8eaea02e10a8b4212d155f5943acdd9f9467e86f4e8b6ac30018225c9f952fddf54ecce1e1f36e9e39f63a1a056819bf56e7fd2d27233c9e0e49f9758d34af00"}
+
+## seq 0 — charter — signed by controller
+digest:      sha256:14c9fda36f93621a8dabbda4bd7451d350e4f3a3a065f93fa2fb743ae729da69
+wire:        {"v":0,"id":"77777777-7777-4777-8777-777777777777","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":0,"sent_at":"2026-08-14T21:04:11Z","kind":"charter","body":{"charter_id":"c0000000-0000-4000-8000-000000000001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","mission_ref":"mission-0001","issued_at":"2026-08-14T21:04:11Z","expires_at":"2026-08-14T22:04:11Z","lease_ttl_s":900,"action_ceiling":"benign","capabilities":["sense.temp","act.relay_1"],"routines":[],"limits":{"act.relay_1":{"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":null}},"evidence":{"required_for":["act.*"],"min_interval_s":60},"safe_state":"all_actuators_off","sync_interval_s":15},"prev_digest":"","sig":"ed25519:3a3cac1eff41fa80d66174631335564dcbe728cf39666883f031c570e6db843f2a3e302d4293b67041d0079926ec938c0399ad364fdb88437af25559a9c0240a"}
+
+## seq 1 — stop — signed by controller
+digest:      sha256:f6855e3f46c04fcd33695c193a737c73c795a0745cde2c33dd68512d84b2d7af
+wire:        {"v":0,"id":"88888888-8888-4888-8888-888888888888","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":1,"sent_at":"2026-08-14T21:04:12Z","kind":"stop","body":{"reason":"operator stop"},"prev_digest":"sha256:14c9fda36f93621a8dabbda4bd7451d350e4f3a3a065f93fa2fb743ae729da69","sig":"ed25519:45c17ee80e4dd6ca4ee973c46943d814283cc29d55404aedccbbd455c32694f5c3d60ed5e5ac205ff35bbe23768939e3f268013e07d5b5f321f5172e45e43202"}
+
+## seq 2 — ack — signed by controller
+digest:      sha256:b3bb56fc8d9a4413d99e95ea4e25a2db27753906217aaff9541ecda8587885a5
+wire:        {"v":0,"id":"99999999-9999-4999-8999-999999999999","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","seq":2,"sent_at":"2026-08-14T21:04:13Z","kind":"ack","body":{"status":"ok","refers_to":"11111111-1111-4111-8111-111111111111","through_seq":0,"evidence_ids":[],"detail":""},"prev_digest":"sha256:f6855e3f46c04fcd33695c193a737c73c795a0745cde2c33dd68512d84b2d7af","sig":"ed25519:584ba8047dd39c953ec1dce929dec4d959d91dea8a5b43acc30ca855bd8c3bf684ebe994e6e62110e5e2467c09b098a497bd4a9172d45a1232a439b9d6858004"}

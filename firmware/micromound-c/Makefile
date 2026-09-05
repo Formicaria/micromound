@@ -6,8 +6,14 @@
 #   make clean
 #
 #   make CC=clang test                                  another compiler
-#   make OPT="-O0 -g" EXTRA_CFLAGS="-fsanitize=address,undefined" EXTRA_LDFLAGS="-fsanitize=address,undefined" test
+#   make OPT="-O1 -g" EXTRA_CFLAGS="$(SANITIZE)" EXTRA_LDFLAGS="-fsanitize=address,undefined" test
 #   make EXTRA_CFLAGS=-m32 EXTRA_LDFLAGS=-m32 test      a 32-bit build, when the toolchain has one
+#
+# SANITIZE is the ASan+UBSan flag set CI uses: every finding is fatal (-fno-sanitize-recover=all),
+# except shift-base, which the vendored TweetNaCl trips on purpose — its field arithmetic
+# left-shifts negative limbs (car25519, modL), a well-known property of that code that every
+# two's-complement compiler defines as wrapping. Nothing of MicroMound's own is exempt.
+SANITIZE := -fsanitize=address,undefined -fno-sanitize=shift-base -fno-sanitize-recover=all -fno-omit-frame-pointer
 #
 # Strict by default: C99, every warning an error. The library has no dependencies beyond the C
 # standard library (snprintf/strtod in mm_format, memcpy, abort); the vendored TweetNaCl is

@@ -336,11 +336,21 @@ ESP32-class devices implement a strict subset:
 - Crypto: Ed25519 as above, well within ESP32 capability. A board that cannot sign does not join
   the mesh — there is no unsigned mode.
 
-The encoder half of this profile exists as a portable C library, `firmware/micromound-c`: the
-canonical writer, the number formatter, SHA-256, Ed25519 (seed keypair, detached sign and verify),
-envelopes, and the `mound_sync`, `action_record`, `ack` and `charter` bodies — verified byte for
-byte against the golden fixtures on the host. Decoding (a JSON reader for `charter`, `stop` and
-`ack`) and the kernel in C are what remains before a board runs it; see `docs/ROADMAP.md` M5.
+Both halves of this profile's wire handling exist as a portable C library, `firmware/micromound-c`,
+verified byte for byte against the golden fixtures on the host: the canonical writer, the number
+formatter, SHA-256, Ed25519 (seed keypair, detached sign and verify), envelopes, the `mound_sync`,
+`action_record`, `ack` and `charter` bodies (`v0.9.18`); and a bounded JSON reader with decoders and
+validators for the `charter`, `stop` and `ack` a device receives (`v0.9.19`). The kernel in C and
+compiled routines are what remains before a board runs it; see `docs/ROADMAP.md` M5.
+
+**How a constrained device verifies a downlink envelope.** A signed envelope on the wire is its
+canonical bytes with the signature spliced into the last field, because `sig` is last by declaration
+order and every emitter serializes through the same options. The device therefore verifies the
+signature over the bytes AS RECEIVED with the signature value cut out — no decode, no re-encode,
+no second buffer — and only then decodes. A sender that re-serialized non-canonically (whitespace,
+reordered members, a different escaping) fails that check and is refused. Pi-class mounds and the
+controller verify by re-serializing the decoded envelope instead, which accepts such a sender; both
+accept every envelope this specification's emitters produce. Emitters MUST produce canonical form.
 
 ## 9. Missions (structured work)
 
@@ -464,3 +474,6 @@ As of `v0.9.18` the C mirror exists: `firmware/micromound-c` reproduces the `mou
 byte, checks every envelope's digest and the chain linkage, and signs and verifies with Ed25519
 against RFC 8032 vectors and a cross-implementation signature. It is host-built (gcc/clang,
 C99, no allocation) — the encoder half of the firmware, proven before any board is involved.
+As of `v0.9.19` it also reads: the frame and the `charter`/`stop`/`ack` bodies decode into fixed
+structs, validate with the host's rules and refusal reasons, and `canonical-signed.txt` pins four
+real signed envelopes that BouncyCastle and TweetNaCl produce and verify identically.

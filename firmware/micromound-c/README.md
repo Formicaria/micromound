@@ -9,7 +9,7 @@ run.
 
 ```bash
 make            # build/libmicromound.a
-make test       # 900+ checks, including every golden file, byte for byte
+make test       # 1,200+ checks, including every golden file, byte for byte
 make CC=clang test
 ```
 
@@ -27,7 +27,10 @@ needed when the buffer was too small.
 | `mm_sha256` | `mm_sha256.h` | FIPS 180-4 SHA-256, incremental; hex encode/decode | FIPS vectors; every envelope digest |
 | `mm_ed25519` | `mm_ed25519.h` | Ed25519 over vendored TweetNaCl: keypair from a 32-byte seed (no RNG), **detached** sign and verify (message read in place), non-canonical `S` rejected | RFC 8032 §7.1 vectors 1–3; a cross-implementation signature |
 | `mm_envelope` | `mm_envelope.h` | The envelope: canonical bytes with `"sig":""` present and empty, `sha256:` digest, `ed25519:` signature, strict verify, and an **in-place splice** of the signature into the last field | `canonical-envelopes.txt` |
-| `mm_bodies` | `mm_bodies.h` | The reduced-profile bodies field for field: `mound_sync`, `action_record`, `ack`, `charter` | `canonical-envelopes.txt`, `canonical-bodies.txt` |
+| `mm_bodies` | `mm_bodies.h` | The reduced-profile bodies field for field: `mound_sync`, `action_record`, `ack`, `stop`, `charter` | `canonical-envelopes.txt`, `canonical-bodies.txt` |
+| `mm_json_read` | `mm_json_read.h` | A bounded pull parser: full escape grammar, strict UTF-8, JSON number grammar, depth-capped, skips unknown members, hands values on as raw slices | `test_json_read.c` |
+| `mm_time` | `mm_time.h` | `yyyy-MM-ddTHH:mm:ssZ` ↔ epoch seconds; accepts the offset/fractional forms §2 asks readers to tolerate | `test_time.c` |
+| `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's closed refusal set, views to re-encode | `canonical-signed.txt` |
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
 A constrained controller runs compiled routines selected by charter; it never plans.
@@ -72,6 +75,35 @@ if (mm_envelope_verify(canonical, n, sig_text, controller_pk) != 0) { /* refuse 
 Anything malformed — wrong algorithm prefix, wrong length, a non-hex digit, `S >= L`, a public key
 that is not a curve point — is `-1`, never an exception and never a guess.
 
+Receiving a downlink envelope, in the order the host's `RecordAnts` does it:
+
+```c
+#include "mm_decode.h"
+
+char digest[MM_DIGEST_TEXT_LEN + 1];
+mm_envelope_in frame;
+mm_refusal why;
+int err;
+
+if (mm_envelope_verify_wire(wire, n, controller_pk, digest) != 0) return REFUSE;   /* 1. who sent it */
+if (mm_envelope_parse(wire, n, &frame, &err) != 0) return REFUSE;                   /* 2. the frame  */
+if (strcmp(frame.mound_id, my_mound_id) != 0) return REFUSE;                        /*    addressed to me */
+if (mm_envelope_validate(&frame, &why) != 0) return REFUSE;                         /* 3. shape, kind (§8) */
+if (strcmp(frame.kind, MM_KIND_CHARTER) == 0) {                                     /* 4. the body   */
+    mm_charter_in charter;
+    if (mm_charter_parse(frame.body, frame.body_len, &charter, &err) != 0) return REFUSE;
+    if (mm_charter_validate(&charter, my_mound_id, now, my_caps, n_caps, my_routines, n_routines, &why) != 0)
+        return REFUSE;   /* why.reasons[] holds the host's exact reason strings, for the audit line */
+    /* accept: hand it to the kernel */
+}
+```
+
+Step 1 works on the bytes as received because a signed envelope on the wire *is* its canonical
+bytes with the signature spliced into the last field; the verifier hashes the prefix and the two
+closing bytes as two parts. Nothing is decoded before the signature is known good, and nothing is
+re-serialized after — a sender that did not emit canonical form is refused, which is the fail-closed
+direction (PROTOCOL.md §8).
+
 ## Why the escaping rule had to change first
 
 The C# side used `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`, which leaves most non-ASCII
@@ -89,7 +121,7 @@ firmware/micromound-c/
   include/            the public headers (one per module)
   src/                the modules
   third_party/tweetnacl/   TweetNaCl, verbatim, with a provenance README
-  tests/              mm_test.h harness; one test file per module; test_golden.c reads the fixtures
+  tests/              mm_test.h harness; one test file per module; test_golden.c reads the five fixtures
   Makefile
 ```
 
@@ -100,10 +132,9 @@ keys.
 
 ## What this is not, yet
 
-- **Not a reader.** The device receives `charter`, `stop` and `ack` as JSON; parsing them in C
-  (bounded, no allocation, refusing anything outside the fixed shape) is the next M5 slice.
 - **Not the kernel.** The capability kernel in C — same check order, the same three-tier limit
-  intersection, the same closed set of refusal reasons — follows the reader.
+  intersection, the same closed set of refusal reasons — is the next M5 slice, followed by compiled
+  routines and the device loop (accept a charter → run a routine → emit the record → ack).
 - **Not fast.** TweetNaCl signs in tens of milliseconds on an ESP32-class core; adequate for a sync
   beat, not for anything hotter. The backend sits behind `mm_ed25519.h` and the tests prove a swap
   did not change the bytes.
@@ -115,7 +146,9 @@ keys.
 - Requires a correctly rounded `printf("%.*e")` and `strtod` (glibc, musl, newlib, MSVCRT ≥ 2015).
   `canonical-doubles.txt` is the check for the libc in use; run `make test` on the target toolchain.
 - Integer widths: `long long` for C# `long`, `double` for everything the protocol types as a number.
-  TweetNaCl's `u32` is `unsigned long` and is masked where it matters; the sanitizer build in CI
-  (`-fsanitize=address,undefined`) is clean.
+  TweetNaCl's `u32` is `unsigned long` and is masked where it matters. The sanitizer build in CI
+  (ASan + UBSan, every finding fatal) is clean, with one named exemption: `shift-base`, which
+  TweetNaCl's field arithmetic trips by left-shifting negative limbs — see the `SANITIZE` flag set
+  in the Makefile. Nothing of MicroMound's own is exempt.
 - Endianness: SHA-256 and the hex helpers are byte-oriented; the double fixture is decoded via an
   integer, so it reads correctly on either byte order.

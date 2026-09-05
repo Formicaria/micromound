@@ -88,12 +88,14 @@ jobs:
       - name: Build and test against the golden fixtures
         run: make -C firmware/micromound-c CC=${{ matrix.cc }} test
 
-      - name: Sanitizers (ASan + UBSan)
-        if: matrix.cc == 'clang'
+      # Every sanitizer finding is fatal; the one exemption (TweetNaCl's negative left shifts) is
+      # named in the Makefile next to the SANITIZE flag set this step uses.
+      - name: Sanitizers (ASan + UBSan, findings fatal)
+        if: matrix.cc == 'gcc'
         run: |
           make -C firmware/micromound-c clean
-          make -C firmware/micromound-c CC=clang OPT="-O1 -g" \
-            EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+          make -C firmware/micromound-c CC=gcc OPT="-O1 -g" \
+            EXTRA_CFLAGS="-fsanitize=address,undefined -fno-sanitize=shift-base -fno-sanitize-recover=all -fno-omit-frame-pointer" \
             EXTRA_LDFLAGS="-fsanitize=address,undefined" test
 
   docs-consistency:
@@ -158,7 +160,8 @@ jobs:
           for f in tests/Micromound.Tests/Golden/files/canonical-envelopes.txt \
                    tests/Micromound.Tests/Golden/files/canonical-bodies.txt \
                    tests/Micromound.Tests/Golden/files/canonical-strings.txt \
-                   tests/Micromound.Tests/Golden/files/canonical-doubles.txt; do
+                   tests/Micromound.Tests/Golden/files/canonical-doubles.txt \
+                   tests/Micromound.Tests/Golden/files/canonical-signed.txt; do
             [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
           done
           # validate.sh refuses to run under MICROMOUND_UPDATE_GOLDEN; no workflow may set it either.

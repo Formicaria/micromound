@@ -44,6 +44,7 @@ test — it means the bytes a deployed mound would send no longer match what a d
 | `canonical-bodies.txt` | the bare JSON of every typed body | `charter` and `action_record` rebuilt |
 | `canonical-strings.txt` | the §2 escaping rule: `<utf-8 hex> TAB <literal>` | every row through `mm_json_escape` |
 | `canonical-doubles.txt` | .NET's number layout: `<IEEE bits> TAB <text>` | every row through `mm_format_double` |
+| `canonical-signed.txt` | four REAL signed wire envelopes (fixed test seeds): a device beat and a controller's charter/stop/ack chain | each verified from the bytes as received, decoded, re-encoded to the same body, re-signed to the same wire |
 
 The fixtures are **current** — they were regenerated when the v0 contracts were last amended
 (`routines` on charters; `mission_id` / `routine_id` / `requested_parameters` / `evidence_required`

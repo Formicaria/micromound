@@ -35,6 +35,9 @@ void test_format(void);
 void test_sha256(void);
 void test_ed25519(void);
 void test_envelope(void);
+void test_json_read(void);
+void test_time(void);
+void test_decode(void);
 void test_golden(void);
 
 #endif

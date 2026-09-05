@@ -40,7 +40,7 @@ static size_t put_u16_escape(char *out, unsigned unit)
  * same set every strict decoder rejects, so the C side cannot canonicalize a string the host
  * could not have held.
  */
-static size_t decode_utf8(const unsigned char *s, size_t n, unsigned long *scalar)
+size_t mm_utf8_decode(const unsigned char *s, size_t n, unsigned long *scalar)
 {
     unsigned char b0 = s[0];
     if (b0 < 0x80) { *scalar = b0; return 1; }
@@ -65,6 +65,27 @@ static size_t decode_utf8(const unsigned char *s, size_t n, unsigned long *scala
         return 4;
     }
     return 0;
+}
+
+size_t mm_utf8_encode(unsigned long cp, char out[4])
+{
+    if (cp < 0x80) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800) {
+        out[0] = (char)(0xC0 | (cp >> 6));
+        out[1] = (char)(0x80 | (cp & 0x3F));
+        return 2;
+    }
+    if (cp < 0x10000) {
+        out[0] = (char)(0xE0 | (cp >> 12));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (cp & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (cp >> 18));
+    out[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (cp & 0x3F));
+    return 4;
 }
 
 /* Escapes one scalar into out (at least 12 bytes). Returns the length. */
@@ -98,7 +119,7 @@ static void put_string_literal(mm_json *w, const char *utf8, size_t n)
     put_char(w, '"');
     while (i < n) {
         unsigned long cp;
-        size_t used = decode_utf8(s + i, n - i, &cp);
+        size_t used = mm_utf8_decode(s + i, n - i, &cp);
         if (used == 0) {
             if (w->error == MM_JSON_OK) w->error = MM_JSON_BAD_UTF8;
             return;

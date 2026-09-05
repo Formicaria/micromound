@@ -12,6 +12,73 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.19 — M5: the C reader — a device can now receive a charter, a stop and an ack
+
+The other half of `v0.9.18`. The mirror could write every byte a device sends; now it can read every
+byte a device receives, verify who sent it from the bytes as received, and refuse it for exactly the
+reasons the host would. No wire change, no new refusal reason — the existing closed set, now in C.
+
+### Added
+
+- **`mm_json_read`** — a bounded pull parser over a byte buffer: no allocation, no token table, depth
+  capped at 16, every string decoded with the full escape grammar (`\uXXXX`, surrogate pairs) into a
+  caller buffer and refused when it is not valid UTF-8 or not valid JSON, numbers checked against the
+  JSON grammar before `strtod` (an `int` field refuses `1.0` and `1e2`), `mm_jr_skip` to walk past
+  members it does not know (PROTOCOL.md §11: additive fields are always legal), `mm_jr_raw` to hand a
+  value on as its exact source bytes. Ten distinct error codes with names for audit lines; the first
+  error stops the read.
+- **`mm_decode`** — the receive side of the reduced profile:
+  - `mm_envelope_parse` (the frame into a fixed struct; the body as a slice) and
+    **`mm_envelope_verify_wire`**: a signed envelope on the wire IS its canonical bytes with the
+    signature spliced into the last field, so the signature is verified over the received bytes with
+    the sig cut out — two `mm_part`s, no copy, no re-serialization — and the digest the next
+    envelope's `prev_digest` must carry is computed the same way. A sender that did not emit canonical
+    form fails verification and is refused: the fail-closed direction.
+  - `mm_envelope_validate` = `EnvelopeValidator.Validate(reducedProfile: true)`, and
+    **`mm_charter_validate`** = `CharterValidator.Validate` — the same checks in the same order, the
+    same closed set of refusal reasons as fixed strings (`mm_refusal`), including the ones a Pi checks
+    and a controller must too: `mound_id mismatch`, `action_ceiling 'hazardous' is never a legal
+    charter ceiling`, `charter already expired`, `expires_at precedes issued_at`, `a routine belongs in
+    'routines', not 'capabilities'`, `limits key matches no granted capability or routine`, and the
+    device-presence checks when a capability/routine registry is given.
+  - `mm_charter_parse`, `mm_stop_parse`, `mm_ack_parse`, `mm_action_record_parse` into fixed-capacity
+    structs (16 capabilities, 8 routines, 16 limits, 8 required_for patterns, 16 evidence ids, 8
+    parameters; names 48 bytes, ids 64) with the C# contracts' defaults for absent members (`observe`,
+    `all_actuators_off`, `sync_interval_s` 15, `min_interval_s` 60, ack `through_seq` -1, record outcome
+    `unverified`). Over capacity is `MM_JR_TOO_MANY`, over length `MM_JR_OVERFLOW` — refusals, never
+    truncations. `*_bind` views re-encode a parsed body through `mm_bodies`, and the golden bodies
+    decode → re-encode byte for byte.
+  - `mm_capability_pattern_matches` (`*`, `prefix.*`, exact — the whole glob language), `mm_capability_is_routine`, `mm_action_class_parse`.
+- **`mm_time`** — `yyyy-MM-ddTHH:mm:ssZ` ↔ epoch seconds (Hinnant's civil-date arithmetic, the same
+  proleptic Gregorian/no-leap-second model as `DateTimeOffset`), accepting the offset and fractional
+  forms §2 asks readers to tolerate and nothing else; round-trips every day of two leap cycles.
+- **`mm_body_stop`** and **`mm_ed25519_sign_parts` / `mm_ed25519_verify_parts`** (a message as
+  consecutive pieces; the single-buffer functions are now wrappers).
+- **Golden fixture `canonical-signed.txt`** — the one fixture with REAL signatures: fixed test seeds
+  (`00 01 02 …` device, `20 21 22 …` controller; never real keys), the device's `mound_sync` beat and a
+  controller's `charter` → `stop` → `ack` chain, each as its `wire:` line and `digest:`. Frozen by
+  `CanonicalBytesTests.Signed_wire_envelopes_are_frozen` through BouncyCastle; the C tests verify every
+  line under the named key from the bytes as received, decode the frame and the body, re-encode the
+  body to the identical slice, and re-sign from the seed to the identical wire — TweetNaCl and
+  BouncyCastle agreeing on every byte. Every signature was additionally confirmed with a third,
+  independent Ed25519 implementation before the file was committed. The CI golden guard covers it.
+- Tests: 1,273 checks (from 917) — the reader's grammar case by case (lone surrogates in both
+  positions, raw controls, overlong and truncated UTF-8, trailing commas, a 17-deep nesting bomb,
+  `9223372036854775808`), the time parser's edges (`0001-01-01`, `9999-12-31`, leap days, `+HH:MM`),
+  each validator reason provoked on its own, capacities at the boundary on both sides, and the signed
+  fixture end to end. gcc, clang, and gcc+ASan/UBSan with **findings fatal** (`-fno-sanitize-recover=all`).
+
+### Notes
+
+- The UBSan run now fails on any finding. The one exemption is `shift-base`, which TweetNaCl trips on
+  purpose (`car25519`, `modL` left-shift negative limbs — a well-known property of that code that every
+  two's-complement compiler defines as wrapping); it is named in the Makefile beside the flag set, and
+  nothing of MicroMound's own is exempt. The `v0.9.18` sanitizer step reported those two lines and
+  passed anyway; it no longer can.
+- What a device does with a decoded charter — accept it into authority, clamp against compiled limits,
+  run a routine — is the kernel in C: the next slice. `firmware/micromound-c/README.md` says what is
+  still missing.
+
 ## v0.9.18 — M5 groundwork: the C mirror, host-verified
 
 The first piece of the constrained-controller firmware, built where it can be proven: a portable C

@@ -6,6 +6,8 @@
  */
 #include "mm_test.h"
 #include "mm_bodies.h"
+#include "mm_decode.h"
+#include "mm_ed25519.h"
 #include "mm_envelope.h"
 #include "mm_format.h"
 #include "mm_json.h"
@@ -128,6 +130,13 @@ static mm_charter golden_charter(mm_limit_entry limits[1])
     c.safe_state = "all_actuators_off";
     c.sync_interval_s = 15;
     return c;
+}
+
+/* Writes a parsed frame's body slice verbatim — what a relay or a re-signer does with a body it need not understand. */
+static void mm_body_raw_writer(mm_json *w, const void *ctx)
+{
+    const mm_envelope_in *e = (const mm_envelope_in *)ctx;
+    mm_json_raw(w, e->body, e->body_len);
 }
 
 /* ---- canonical-envelopes.txt ------------------------------------------------------------- */
@@ -359,10 +368,125 @@ static void check_doubles(void)
     CHECK(saw_body_case);
 }
 
+/* ---- canonical-signed.txt ---------------------------------------------------------------- */
+
+/*
+ * The receive path end to end, on real signatures: every `wire:` line must verify under its
+ * signer's public key from the bytes as received, its digest must match, the frame and body must
+ * decode, the body must re-encode to the exact slice inside the wire, and re-signing the canonical
+ * bytes with the fixture's seed must reproduce the wire — BouncyCastle and TweetNaCl agreeing.
+ */
+static void check_signed(void)
+{
+    FILE *f = open_golden("canonical-signed.txt");
+    char line[LINE_MAX_LEN];
+    uint8_t seeds[2][32], pks[2][32];
+    int have[4] = { 0, 0, 0, 0 };
+    char signer[16] = "", digest[MM_DIGEST_TEXT_LEN + 1] = "";
+    int envelopes = 0, kinds_seen = 0;
+
+    CHECK(f != NULL);
+    if (!f) return;
+
+    while (read_line(f, line, sizeof line)) {
+        const char *v;
+        if ((v = after_prefix(line, "device_seed:")) != NULL) { have[0] = mm_hex_parse(v, 32, seeds[0]) == 0; continue; }
+        if ((v = after_prefix(line, "device_pk:")) != NULL) { have[1] = mm_hex_parse(v, 32, pks[0]) == 0; continue; }
+        if ((v = after_prefix(line, "controller_seed:")) != NULL) { have[2] = mm_hex_parse(v, 32, seeds[1]) == 0; continue; }
+        if ((v = after_prefix(line, "controller_pk:")) != NULL) { have[3] = mm_hex_parse(v, 32, pks[1]) == 0; continue; }
+        if ((v = after_prefix(line, "## seq ")) != NULL) {
+            const char *by = strstr(v, "signed by ");
+            copy_str(signer, sizeof signer, by ? by + 10 : "");
+            continue;
+        }
+        if ((v = after_prefix(line, "digest:")) != NULL) { copy_str(digest, sizeof digest, v); continue; }
+        if ((v = after_prefix(line, "wire:")) != NULL) {
+            int who = strcmp(signer, "device") == 0 ? 0 : 1;
+            size_t n = strlen(v);
+            char computed[MM_DIGEST_TEXT_LEN + 1];
+            mm_envelope_in e;
+            mm_refusal why;
+            int err;
+            uint8_t pk[32], sk[64];
+            char rebuilt[LINE_MAX_LEN], body[LINE_MAX_LEN];
+            mm_json w;
+
+            envelopes++;
+            CHECK(have[0] && have[1] && have[2] && have[3]);
+
+            /* 1. verified from the bytes as received, under the right key only */
+            CHECK(mm_envelope_verify_wire(v, n, pks[who], computed) == 0);
+            CHECK_STR_EQ(digest, computed);
+            CHECK(mm_envelope_verify_wire(v, n, pks[1 - who], NULL) == -1);
+
+            /* 2. the frame */
+            CHECK(mm_envelope_parse(v, n, &e, &err) == 0);
+            CHECK_STR_EQ(MOUND_ID, e.mound_id);
+            CHECK(strncmp(e.sig, "ed25519:", 8) == 0 && strlen(e.sig) == MM_SIG_TEXT_LEN);
+
+            /* 3. reduced-profile validation */
+            CHECK(mm_envelope_validate(&e, &why) == 0);
+
+            /* 4. the body, decoded and re-encoded to the exact slice */
+            mm_json_init(&w, body, sizeof body);
+            if (strcmp(e.kind, "charter") == 0) {
+                mm_charter_in c; mm_charter_view cv;
+                CHECK(mm_charter_parse(e.body, e.body_len, &c, &err) == 0);
+                CHECK(mm_charter_validate(&c, MOUND_ID, 1786741451LL, NULL, 0, NULL, 0, &why) == 0);
+                mm_charter_bind(&c, &cv);
+                mm_body_charter(&w, &cv.charter);
+                kinds_seen |= 1;
+            } else if (strcmp(e.kind, "stop") == 0) {
+                mm_stop_in st; mm_stop sv;
+                CHECK(mm_stop_parse(e.body, e.body_len, &st, &err) == 0);
+                CHECK_STR_EQ("operator stop", st.reason);
+                sv.reason = st.reason;
+                mm_body_stop(&w, &sv);
+                kinds_seen |= 2;
+            } else if (strcmp(e.kind, "ack") == 0) {
+                mm_ack_in a; mm_ack_view av;
+                CHECK(mm_ack_parse(e.body, e.body_len, &a, &err) == 0);
+                CHECK(a.through_seq == 0);
+                mm_ack_bind(&a, &av);
+                mm_body_ack(&w, &av.ack);
+                kinds_seen |= 4;
+            } else if (strcmp(e.kind, "mound_sync") == 0) {
+                golden_sync_body(&w, NULL);
+                kinds_seen |= 8;
+            } else {
+                CHECK(!"an unexpected kind in canonical-signed.txt");
+                continue;
+            }
+            CHECK(mm_json_finish(&w) == e.body_len);
+            CHECK(strncmp(body, e.body, e.body_len) == 0);
+
+            /* 5. re-signed from the seed: the same wire bytes, byte for byte */
+            {
+                mm_envelope out;
+                size_t len;
+                memset(&out, 0, sizeof out);
+                out.id = e.id; out.mound_id = e.mound_id; out.seq = e.seq; out.sent_at = e.sent_at;
+                out.kind = e.kind; out.prev_digest = e.prev_digest;
+                out.body = mm_body_raw_writer; out.body_ctx = &e;
+                mm_ed25519_seed_keypair(pk, sk, seeds[who]);
+                CHECK_MEM_EQ(pks[who], pk, 32);
+                len = mm_envelope_write_signed(&out, sk, rebuilt, sizeof rebuilt, computed);
+                CHECK(len == n);
+                CHECK_STR_EQ(v, rebuilt);
+                CHECK_STR_EQ(digest, computed);
+            }
+        }
+    }
+    fclose(f);
+    CHECK(envelopes == 4);
+    CHECK(kinds_seen == 15);
+}
+
 void test_golden(void)
 {
     check_envelopes();
     check_bodies();
     check_strings();
     check_doubles();
+    check_signed();
 }
