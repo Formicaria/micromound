@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.17
+**Current version:** v0.9.18
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.17`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`); M5 groundwork landed (`v0.9.18`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -107,11 +107,17 @@ pulsed at bring-up, and — new in `v0.9.17` — **ready for the board**: `--che
 port a manifest names and reads each sensor once without actuating anything, a manifest naming physical
 ports is refused in memory unless `--simulate` is said, the I2C bus is testable through the same syscall
 seam as GPIO, and a deployment kit (systemd unit, installer, [`docs/DEPLOY.md`](docs/DEPLOY.md)) walks
-a Pi from bench to the M4 boundary. What's still ahead is only the board itself. End-to-end simulator missions run against an in-process
-controller that verifies every byte. The v0 canonical bytes will not change again inside v0. The host
-now has both a real digital line and a real analog channel available, but has not yet been run on a
-device against real hardware — that boundary finishes M4; real firmware is M5. See
-[`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+a Pi from bench to the M4 boundary, and — new in `v0.9.18` — **the C mirror**: `firmware/micromound-c`,
+a portable C99 library (canonical JSON writer, .NET-exact number layout, SHA-256, Ed25519 over vendored
+TweetNaCl with detached sign/verify, envelopes, the reduced-profile bodies) that reproduces the golden
+wire bytes byte for byte under gcc and clang on the host — the encoder-and-signer half of the ESP32
+firmware, proven before any board is involved, and the change that made the protocol's string escaping
+a written rule (PROTOCOL.md §2) instead of a runtime behaviour. What's still ahead for M4 is only the
+board itself. End-to-end simulator missions run against an in-process controller that verifies every
+byte. The v0 canonical bytes of every existing fixture are unchanged. The host has both a real digital
+line and a real analog channel available, but has not yet been run on a device against real hardware —
+that boundary finishes M4; the rest of the firmware (a C reader, the kernel in C, the ESP-IDF project)
+is M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real
@@ -119,8 +125,9 @@ disk and drivers — not the automatic successor to `v0.9.x`.
 
 ```bash
 bash scripts/validate.sh                    # guards + restore + build + test
-bash scripts/validate.sh --full             # and the simulator smoke run
+bash scripts/validate.sh --full             # and the simulator smoke run, and the C mirror's tests
 dotnet test Micromound.sln                  # just the tests
+make -C firmware/micromound-c test          # just the C mirror against the golden fixtures (gcc or clang)
 ```
 
 On Windows without bash on PATH, `.\scripts\validate.ps1` runs the same steps.
@@ -153,7 +160,8 @@ src/Micromound.Reasoning/      optional reasoning provider, and the null default
 src/Micromound.Host/           the headless Linux/Pi daemon
 src/Micromound.Sim/            simulated mounds — the real kernel over fake hardware
 deploy/                        systemd unit, environment template, installer for a Pi
-firmware/esp32/                reduced deterministic controller (ESP-IDF)
+firmware/micromound-c/         the C mirror: canonical bytes, digests, Ed25519, reduced-profile bodies (C99, host-tested)
+firmware/esp32/                reduced deterministic controller (ESP-IDF; placeholder that will consume micromound-c)
 tests/Micromound.Tests/        contract, authority, kernel, evidence, and golden-byte tests
 ```
 

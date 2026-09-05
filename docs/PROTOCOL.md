@@ -80,14 +80,32 @@ and the disagreement surfaces as an unverifiable device in the field. So:
   no numeric offset. Twenty fixed bytes, formattable with one `snprintf`. Emitters must produce
   this form; readers should also accept an offset form, because a mound built against an older
   library is better read than bricked.
-- **Escaping is minimal**: `+` is a literal `+`, a quote inside a string is `\"`. No hand-written
-  C encoder emits the HTML-safe forms, and the C# side must not either.
+- **String escaping is ASCII-only, and needs no Unicode table.** Inside a string literal:
+  `"` is `\"` and `\` is `\\`; U+0008, U+0009, U+000A, U+000C and U+000D are `\b \t \n \f \r`;
+  every other code point below U+0020, and **every code point from U+007F up**, is `\uXXXX`
+  with four **uppercase** hex digits, code points above U+FFFF as a UTF-16 surrogate pair
+  (`😀` is `\uD83D\uDE00`); everything else — the printable ASCII range including `+ < > & ' /` —
+  is literal. So the canonical bytes of any document are pure ASCII. Two encoders were rejected
+  to arrive here: the HTML-safe default (`+` as `\u002B`) that no hand-written C encoder emits,
+  and the "relaxed" one that leaves most non-ASCII literal but escapes a runtime-specific,
+  Unicode-version-dependent set — under which two mounds on different runtimes would sign
+  different bytes for the same device name. `CanonicalJsonEncoder` in `Micromound.Protocol` is
+  the C# side of this rule; `mm_json.c` in `firmware/micromound-c` is the C side.
+- **Numbers are C# doubles, written as .NET writes them**: the shortest digit string that
+  round-trips, laid out plain while the decimal point sits within `-3 <= digPos <= max(digits, 17)`
+  of the first significant digit (`digPos` = decimal exponent + 1), otherwise `d.dddE+XX` /
+  `d.dddE-XX` — uppercase `E`, explicit sign, at least two exponent digits. `1e16` is
+  `10000000000000000`, `1e17` is `1E+17`, `0.0001` is `0.0001`, `0.00001` is `1E-05`, negative
+  zero is `-0`. Integer-typed fields (`v`, `seq`, `lease_ttl_s`, `through_seq`, …) are plain
+  decimal. NaN and the infinities have no canonical form and are refused by every encoder.
 - **Every field is always present**, including nulls for unset optional limits. A fixed shape
   means a firmware encoder never branches on whether an optional field is set.
 - **Field order is declaration order**, and it is part of the contract.
 
-`tests/Micromound.Tests/Golden/` freezes the resulting bytes; the C mirror is verified against
-those files.
+`tests/Micromound.Tests/Golden/` freezes the resulting bytes — whole envelopes and bodies in
+`canonical-envelopes.txt` and `canonical-bodies.txt`, the escaping rule in `canonical-strings.txt`,
+the number layout in `canonical-doubles.txt` — and `firmware/micromound-c` is verified against all
+four, byte for byte, by `make test`.
 
 ## 3. Enrollment
 
@@ -318,6 +336,12 @@ ESP32-class devices implement a strict subset:
 - Crypto: Ed25519 as above, well within ESP32 capability. A board that cannot sign does not join
   the mesh — there is no unsigned mode.
 
+The encoder half of this profile exists as a portable C library, `firmware/micromound-c`: the
+canonical writer, the number formatter, SHA-256, Ed25519 (seed keypair, detached sign and verify),
+envelopes, and the `mound_sync`, `action_record`, `ack` and `charter` bodies — verified byte for
+byte against the golden fixtures on the host. Decoding (a JSON reader for `charter`, `stop` and
+`ack`) and the kernel in C are what remains before a board runs it; see `docs/ROADMAP.md` M5.
+
 ## 9. Missions (structured work)
 
 The controller sends structured work packets, not natural-language prompts. The authoritative
@@ -421,14 +445,22 @@ previous one in force and the refusal is reported.
 enroll and sync; the lowest common wins; a mismatch refuses loudly. Additive fields are always
 legal.
 
-**v0 is fluid until the first firmware ships.** No physical device is deployed and no C mirror
-exists yet, so v0 has been amended in place rather than superseded — most recently to add
-`mission_id`, `routine_id`, and `requested_parameters` to action records, `routines` to charters,
-and the `config` and `mission_report` kinds. Once a firmware build is in the field this stops:
-from that point a change to these bytes is a version bump, and the golden fixtures are the record
-of what each version was.
+**v0 is fluid until the first firmware ships.** No physical device is deployed and no firmware
+is in the field, so v0 has been amended in place rather than superseded — to add `mission_id`,
+`routine_id`, and `requested_parameters` to action records, `routines` to charters, the `config`
+and `mission_report` kinds, and (v0.9.18) to fix the string escaping rule above. That last one
+changed no golden byte — every fixture was ASCII — but it changed what a non-ASCII string
+canonicalizes to, from "whatever this runtime's relaxed encoder does" to a rule a C encoder can
+hold. Once a firmware build is in the field this stops: from that point a change to these bytes
+is a version bump, and the golden fixtures are the record of what each version was.
 
 As of `v0.7.0` the golden fixtures pin `charter`, `action_record`, `evidence_bundle`, **`mission`,
 and `mission_report`** — the last two added because a Pi-class mound and a full controller both
 encode them even though a reduced controller (§8) never decodes a mission, so the M5 C mirror is
 verified against a fixture rather than against an agreement nobody checked.
+
+As of `v0.9.18` the C mirror exists: `firmware/micromound-c` reproduces the `mound_sync`,
+`action_record` and `charter` envelopes of the chain and both reduced-profile bodies byte for
+byte, checks every envelope's digest and the chain linkage, and signs and verifies with Ed25519
+against RFC 8032 vectors and a cross-implementation signature. It is host-built (gcc/clang,
+C99, no allocation) — the encoder half of the firmware, proven before any board is involved.

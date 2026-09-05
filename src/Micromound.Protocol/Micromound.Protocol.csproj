@@ -3,6 +3,8 @@
   <PropertyGroup>
     <RootNamespace>Micromound.Protocol</RootNamespace>
     <Description>Shared MICROMOUND wire contracts: envelopes, charters, evidence, validation. Normative source: docs/PROTOCOL.md.</Description>
+    <!-- CanonicalJsonEncoder overrides JavaScriptEncoder's char* members; the only unsafe code in the repository. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
 </Project>

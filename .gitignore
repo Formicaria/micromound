@@ -7,6 +7,7 @@ micromound-*.zip
 .vs/
 .idea/
 firmware/esp32/build/
+firmware/micromound-c/build/
 firmware/esp32/sdkconfig
 
 # dotnet pack output — packages are published, never committed

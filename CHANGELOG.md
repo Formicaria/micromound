@@ -12,6 +12,89 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.18 — M5 groundwork: the C mirror, host-verified
+
+The first piece of the constrained-controller firmware, built where it can be proven: a portable C
+library that produces the exact canonical bytes the C# runtime produces, digests and signs them the
+same way, and is checked byte for byte against the golden fixtures by `gcc` and `clang` on the
+host. No board yet — that is the point of doing it now. **One canonical-wire-bytes change**, called
+out below, with no golden byte affected.
+
+### Added
+
+- **`firmware/micromound-c`** — C99, no dynamic allocation, `-Wall -Wextra -Werror -pedantic`,
+  builds as a static library with `make`, dependencies: the C standard library.
+  - `mm_json`: the canonical writer — a fixed buffer, comma/nesting tracking, every value type, the
+    PROTOCOL.md §2 escaping rule from UTF-8 input (invalid UTF-8 is refused, never guessed), overflow
+    reported with the length that was needed.
+  - `mm_format`: .NET's `double` text — shortest round-trip digits, plain while
+    `-3 <= digPos <= max(digits, 17)`, otherwise `d.dddE±XX`; `-0` for negative zero; NaN and the
+    infinities refused.
+  - `mm_sha256`: FIPS 180-4, incremental; hex helpers.
+  - `mm_ed25519`: over vendored **TweetNaCl** (public domain, byte-identical copy, provenance and
+    hashes in `third_party/tweetnacl/README.md`), included rather than linked so it could gain what
+    a device needs and TweetNaCl lacks — a keypair from a stored seed with no RNG, and *detached* sign
+    and verify that read the message in place (an incremental SHA-512 over TweetNaCl's block
+    function). Verify rejects non-canonical `S >= L`, as BouncyCastle and libsodium do. The `randombytes`
+    symbol TweetNaCl's own generators need is a stub that aborts: this library never makes a key.
+  - `mm_envelope`: canonical bytes with `"sig":""` present and empty, `sha256:` digest, `ed25519:`
+    signature, a **strict** verify (wrong algorithm, wrong length, bad hex, bad signature all `-1`),
+    and an **in-place splice** of the signature into the last field — one buffer, no re-serialization,
+    which is what §2 promised a constrained device.
+  - `mm_bodies`: `mound_sync` (the runtime's real `{state, queue_depth}` shape), `action_record`,
+    `ack`, and `charter` (with `CapabilityLimits` nulls and the `limits` table), field for field.
+    `mission`, `mission_report`, `evidence_bundle`, `config`: deliberately absent (§8).
+  - `make test` (917 checks): the escaping rule case by case, invalid UTF-8, the layout rule at both
+    boundaries, FIPS SHA-256 vectors incl. the million-`a` and every-split incremental check, RFC 8032
+    §7.1 vectors 1–3 (seed → key, signature, verify), tamper cases, the malleated-`S` twin, an invalid
+    public key; then the **golden files**: every envelope in `canonical-envelopes.txt` digested and
+    chain-linked, the `mound_sync`/`action_record`/`charter` envelopes and both `canonical-bodies.txt`
+    bodies rebuilt from their inputs and compared byte for byte, every row of `canonical-strings.txt`
+    and `canonical-doubles.txt`, and a **cross-implementation signature**: the `sig` an independent
+    RFC 8032 implementation produced over the golden `seq 0` envelope with a fixed seed.
+  - Wired into CI as its own job (gcc, clang, clang+ASan/UBSan) and into `validate.sh --full` /
+    `validate.ps1 -Full` after the .NET tests, skipped with a notice where there is no C toolchain.
+- **Two new golden fixtures**, frozen by `CanonicalBytesTests`: `canonical-strings.txt` (22 escaping
+  vectors — quotes, backslash, all 32 controls, DEL, Latin-1, CJK, emoji, U+2028, NBSP, BOM,
+  noncharacters, astral endpoints, mixed scripts — plus escaping in a property name) and
+  `canonical-doubles.txt` (~300 IEEE bit patterns with .NET's text, including the plain/scientific
+  boundary walked on both sides, subnormals, `E+308`, and 200 random patterns; the bit patterns are
+  literal in the test so the fixture cannot drift with arithmetic). The CI golden guard covers both.
+
+### Canonical wire bytes
+
+- **String escaping is now a rule, not a runtime behaviour.** `ProtocolJson.Options` used
+  `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`, which leaves most non-ASCII literal but escapes a
+  Unicode-version-dependent set — measured at 7,886 BMP code points on one runtime, a different set
+  on the next. Two mounds on different runtimes would have signed **different canonical bytes for the
+  same device name**, and no C encoder can mirror a table it cannot see. `CanonicalJsonEncoder`
+  replaces it: printable ASCII literal (`+ < > & ' /` included), `\"` and `\\`, the five short
+  escapes, `\uXXXX` with **uppercase** hex for every other code point below U+0020 and every code
+  point from U+007F up, surrogate pairs above the BMP. Canonical bytes are therefore pure ASCII.
+  **No existing golden byte changed** — every fixture was ASCII already; what changed is what a
+  non-ASCII string canonicalizes to, from unspecified to specified. Applied under PROTOCOL.md §11's
+  "v0 is fluid until the first firmware ships" — this is the change that makes a first firmware
+  possible. `Micromound.Protocol` now compiles with `AllowUnsafeBlocks` for the encoder's `char*`
+  overrides, the only unsafe code in the repository.
+- The number layout rule was never written down; it is now (PROTOCOL.md §2), derived from the
+  runtime and pinned by the fixture — including the correction that the plain/scientific threshold
+  is 17 significant positions (`1e16` plain, `1e17` → `1E+17`), not the 15 of the pre-Core-3.0 `G`
+  formatter.
+
+### Notes
+
+- The C library is the encoder, digest and signature half of the reduced profile. A JSON *reader*
+  for `charter`/`stop`/`ack`, the kernel in C, and the ESP-IDF project are the rest of M5;
+  `firmware/esp32/README.md` is updated to say which parts now exist.
+- TweetNaCl is slow (tens of ms per signature on an MCU-class core) and chosen for auditability; the
+  backend sits behind `mm_ed25519.h` and the tests are the proof a swap did not change the bytes.
+- Windows developers without `make`/`cc` see the C step skipped by `validate.ps1`; CI runs it.
+- The reference controller (ANTHILL) serializes through the same `Micromound.Protocol`, so when it
+  bumps its pin its canonical bytes for non-ASCII strings change in step — the two sides stay
+  consistent by construction, which is the whole point of sharing the library. Until then a
+  device on `v0.9.18` and a controller on an older pin would disagree only on strings containing
+  non-ASCII characters; every fixture and every identifier the runtime generates is ASCII.
+
 ## v0.9.17 — ready for the board: check the wiring, refuse to pretend, deploy as a service
 
 Three passes that turn the substrate of `v0.9.14`–`v0.9.16` into something an operator can carry to a

@@ -1,0 +1,31 @@
+# MICROMOUND canonical string escaping — golden fixture
+#
+# Frozen by tests/Micromound.Tests/Golden/CanonicalBytesTests.cs (CanonicalJsonEncoder).
+# Format: <lowercase hex of the string's UTF-8 bytes> TAB <canonical JSON string literal>.
+# An empty first column is the empty string.
+
+	""
+706c61696e	"plain"
+612262	"a\"b"
+6261636b5c736c617368	"back\\slash"
+736c6173682f6f6b	"slash/ok"
+2b3c3e2627	"+<>&'"
+3d3f607e21402324255e2a28295b5d7b7d7c3b3a2c2e	"=?`~!@#$%^*()[]{}|;:,."
+746162096e6c0a63720d66660c627308	"tab\tnl\ncr\rff\fbs\b"
+000102030405060708090a0b0c0d0e0f	"\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000B\f\r\u000E\u000F"
+101112131415161718191a1b1c1d1e1f	"\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001A\u001B\u001C\u001D\u001E\u001F"
+207e	" ~"
+7f	"\u007F"
+c280c2a0c3bf	"\u0080\u00A0\u00FF"
+756e69636f646520c3a920c3bc20e6bca2e5ad9720f09f9880	"unicode \u00E9 \u00FC \u6F22\u5B57 \uD83D\uDE00"
+6d697865642022712220616e64205c20616e6420e280a8206c696e6520736570	"mixed \"q\" and \\ and \u2028 line sep"
+c2a0e28083e2808befbbbf	"\u00A0\u2003\u200B\uFEFF"
+efbfbdefbfbeefbfbf	"\uFFFD\uFFFE\uFFFF"
+f0908080f09f8cb1f48fbfbf	"\uD800\uDC00\uD83C\uDF31\uDBFF\uDFFF"
+656d6f6a6920f09f988020656e64	"emoji \uD83D\uDE00 end"
+7b226265666f7265223a302c226166746572223a317d	"{\"before\":0,\"after\":1}"
+6d6f756e6420223766336122205c20656e636c6f73757265c2b043	"mound \"7f3a\" \\ enclosure\u00B0C"
+d094d0b5d0b2d0b0d0b9d18120d8a7d984d8acd987d8a7d8b220e38387e38390e382a4e382b9	"\u0414\u0435\u0432\u0430\u0439\u0441 \u0627\u0644\u062C\u0647\u0627\u0632 \u30C7\u30D0\u30A4\u30B9"
+
+## as a property name and value
+{"k\u00E9y\"q":"v\\al\u2028"}

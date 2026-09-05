@@ -110,6 +110,17 @@ if [[ "${1:-}" == "--full" ]]; then
   assert "same backlog under a wrong key -> valid=False"
 
   echo "==> simulator lifecycle intact (10 claims)"
+
+  # The C mirror (firmware/micromound-c) must reproduce the golden bytes the C# tests just
+  # verified. It needs only a C compiler and make; when neither is present (a Windows shell
+  # without a toolchain) this step is skipped with a notice, and CI runs it unconditionally.
+  if command -v make >/dev/null 2>&1 && { command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; }; then
+    echo "==> C mirror: make -C firmware/micromound-c test (byte-for-byte against the golden files)"
+    make -C firmware/micromound-c clean >/dev/null
+    make -C firmware/micromound-c test
+  else
+    echo "==> C mirror skipped: no C toolchain on PATH (CI runs it; see firmware/micromound-c/README.md)"
+  fi
 fi
 
 echo "==> ALL VALIDATIONS PASSED (v$ver)"

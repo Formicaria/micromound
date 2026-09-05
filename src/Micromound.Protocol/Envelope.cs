@@ -105,9 +105,12 @@ public static class ProtocolJson
         // System.Text.Json's default encoder escapes conservatively for HTML contexts: '+' becomes
         // +, '"' inside a string becomes ". Legal JSON, and a trap here — no hand-written
         // C encoder emits those forms, so the mirror's digests would differ for identical data.
-        // Relaxed escaping produces the minimal, natural encoding: literal '+', and \" for quotes.
-        // "Unsafe" refers only to embedding output in HTML, which a signed wire format never does.
-        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        // The relaxed encoder is a different trap: it leaves most non-ASCII literal but escapes a
+        // runtime-specific, Unicode-table-dependent set, so two runtimes could sign different bytes
+        // for one string. CanonicalJsonEncoder is the rule the C mirror can implement without any
+        // table: printable ASCII literal, \" and \\, the five short escapes, and \uXXXX (uppercase
+        // hex, surrogate pairs above the BMP) for every other code point.
+        Encoder = CanonicalJsonEncoder.Instance,
 
         WriteIndented = false
     };

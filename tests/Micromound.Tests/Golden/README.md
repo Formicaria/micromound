@@ -3,10 +3,10 @@
 `files/` holds frozen copies of the exact bytes MICROMOUND puts on the wire: canonical envelope
 serializations, their sha256 digests, and the JSON shape of every typed body.
 
-They exist for one reason. M3 ships a C protocol mirror on the ESP32 (`firmware/esp32`), and two
-independent implementations of the same wire format drift silently unless something pins them
-together. These files are that pin: the C mirror's host tests feed the same fixed inputs and must
-produce byte-identical output.
+They exist for one reason. M5 ships a C protocol mirror for the ESP32 — `firmware/micromound-c`,
+consumed by `firmware/esp32` — and two independent implementations of the same wire format drift
+silently unless something pins them together. These files are that pin: the C mirror's host tests
+feed the same fixed inputs and must produce byte-identical output.
 
 ## Working with them
 
@@ -36,11 +36,19 @@ test — it means the bytes a deployed mound would send no longer match what a d
 (or an ESP32 in the field) expects. Fixing the golden file to match new code is only correct once
 `docs/PROTOCOL.md` says so and the version rule in §11 has been applied.
 
-> **These fixtures are currently stale, on purpose.** The v0 contracts were amended — `routines`
-> on charters, `mission_id` / `routine_id` / `requested_parameters` / `evidence_required` on
-> action records — while no device is deployed and no C mirror exists, so v0 was amended in place
-> rather than superseded (`docs/PROTOCOL.md` §11). Run the regeneration above once, read the diff,
-> and commit it. After the first firmware ships this stops being an option.
+## The files
+
+| File | What it pins | C mirror test |
+|---|---|---|
+| `canonical-envelopes.txt` | six chained envelopes: canonical bytes, `prev_digest` linkage, digests | every digest and link; `mound_sync`, `action_record`, `charter` rebuilt byte for byte |
+| `canonical-bodies.txt` | the bare JSON of every typed body | `charter` and `action_record` rebuilt |
+| `canonical-strings.txt` | the §2 escaping rule: `<utf-8 hex> TAB <literal>` | every row through `mm_json_escape` |
+| `canonical-doubles.txt` | .NET's number layout: `<IEEE bits> TAB <text>` | every row through `mm_format_double` |
+
+The fixtures are **current** — they were regenerated when the v0 contracts were last amended
+(`routines` on charters; `mission_id` / `routine_id` / `requested_parameters` / `evidence_required`
+on action records) and `v0.9.18`'s escaping change left every existing byte untouched (all were
+ASCII). `firmware/micromound-c`'s `make test` reads these four files and is the other half of the pin.
 
 ## What `sig` actually does here
 

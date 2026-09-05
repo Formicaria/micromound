@@ -70,6 +70,32 @@ jobs:
           path: test-results/*.trx
           if-no-files-found: ignore
 
+  c-mirror:
+    name: C mirror (firmware/micromound-c, ${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      # The M5 groundwork: a C99 library that must reproduce the golden wire bytes the C# tests
+      # freeze, byte for byte, under -Wall -Wextra -Werror -pedantic with two compilers. The
+      # fixtures are read from the repository, never regenerated; validate.sh --full runs the
+      # same make target after the .NET tests so both implementations are checked together.
+      - name: Build and test against the golden fixtures
+        run: make -C firmware/micromound-c CC=${{ matrix.cc }} test
+
+      - name: Sanitizers (ASan + UBSan)
+        if: matrix.cc == 'clang'
+        run: |
+          make -C firmware/micromound-c clean
+          make -C firmware/micromound-c CC=clang OPT="-O1 -g" \
+            EXTRA_CFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            EXTRA_LDFLAGS="-fsanitize=address,undefined" test
+
   docs-consistency:
     name: Docs consistency
     runs-on: ubuntu-latest
@@ -130,7 +156,9 @@ jobs:
       - name: Frozen wire bytes are pinned, never CI-regenerated
         run: |
           for f in tests/Micromound.Tests/Golden/files/canonical-envelopes.txt \
-                   tests/Micromound.Tests/Golden/files/canonical-bodies.txt; do
+                   tests/Micromound.Tests/Golden/files/canonical-bodies.txt \
+                   tests/Micromound.Tests/Golden/files/canonical-strings.txt \
+                   tests/Micromound.Tests/Golden/files/canonical-doubles.txt; do
             [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
           done
           # validate.sh refuses to run under MICROMOUND_UPDATE_GOLDEN; no workflow may set it either.

@@ -107,6 +107,20 @@ if ($Full) {
         }
     }
     Write-Host "==> simulator lifecycle intact ($($claims.Count) claims)" -ForegroundColor Cyan
+
+    # The C mirror (firmware/micromound-c) must reproduce the golden bytes the C# tests just
+    # verified. It needs make and a C compiler; a Windows machine without them skips this step
+    # with a notice (CI runs it unconditionally on Linux).
+    $make = Get-Command make -ErrorAction SilentlyContinue
+    $cc = (Get-Command cc -ErrorAction SilentlyContinue), (Get-Command gcc -ErrorAction SilentlyContinue) | Where-Object { $_ } | Select-Object -First 1
+    if ($make -and $cc) {
+        Write-Host "==> C mirror: make -C firmware/micromound-c test (byte-for-byte against the golden files)" -ForegroundColor Cyan
+        & make -C firmware/micromound-c clean | Out-Null
+        & make -C firmware/micromound-c test
+        if ($LASTEXITCODE -ne 0) { Write-Host "x C mirror tests failed" -ForegroundColor Red; exit 1 }
+    } else {
+        Write-Host "==> C mirror skipped: no make + C compiler on PATH (CI runs it; see firmware/micromound-c/README.md)" -ForegroundColor Yellow
+    }
 }
 
 Write-Host "==> ALL VALIDATIONS PASSED (v$ver)" -ForegroundColor Green

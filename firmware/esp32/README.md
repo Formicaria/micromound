@@ -1,8 +1,12 @@
 # Constrained controller firmware (ESP32) — M5
 
-Placeholder. Nothing here compiles yet, by design: the firmware starts only once the protocol
-contracts are frozen and the Pi-class runtime has proven them. See
-[`docs/ROADMAP.md`](../../docs/ROADMAP.md).
+Placeholder for the ESP-IDF project. Nothing in *this* directory compiles yet, by design: the
+firmware starts only once the protocol contracts are frozen and the Pi-class runtime has proven
+them. But its protocol half already exists and is host-tested —
+[`firmware/micromound-c`](../micromound-c/README.md) (`v0.9.18`): the canonical writer, .NET's
+number layout, SHA-256, Ed25519 with detached sign/verify, envelopes and the reduced-profile bodies,
+verified byte for byte against the golden fixtures. When this project lands, that library is its
+`mm_protocol` component. See [`docs/ROADMAP.md`](../../docs/ROADMAP.md).
 
 ## What this firmware will be
 
@@ -13,8 +17,9 @@ An ESP-IDF (C) project implementing the reduced protocol profile from
   Absent, and why: `mission` and `mission_report` (a controller runs compiled routines selected by
   charter, not open work packets), `evidence_bundle` (fixed-shape readings ride on the action
   record), and `config` (the hardware map is compiled in).
-- **Ed25519 signing** (libsodium or monocypher — well within ESP32 capability). No unsigned mode
-  exists; a board that cannot sign does not join the mesh.
+- **Ed25519 signing** — today over TweetNaCl in `micromound-c` (auditable, slow); libsodium or
+  monocypher behind the same `mm_ed25519.h` if the beat needs it. No unsigned mode exists; a board
+  that cannot sign does not join the mesh.
 - **The same capability kernel, in C.** Not a simplified one: the same check order, the same
   three-tier limit intersection, the same closed set of refusal reasons. A controller that
   refused differently from a Pi would make "the mound refused" mean two different things.
@@ -34,7 +39,8 @@ compile into one image, so a controller mound renders in a colony view like any 
 firmware/esp32/
   main/            app_main, sync beat task, watchdog task
   components/
-    mm_protocol/   reduced-envelope encode/decode + signing (C mirror of Micromound.Protocol)
+    mm_protocol/   ../micromound-c — reduced-envelope encode + signing (C mirror of Micromound.Protocol; exists);
+                   the decode half (charter/stop/ack reader) is the next slice
     mm_kernel/     capability kernel: limits, action classes, duty cycle, refusal reasons
     mm_routines/   compiled routine table + clamped parameter ranges
     mm_drivers/    GPIO, I2C, ADC
@@ -43,9 +49,10 @@ firmware/esp32/
 
 ## The fixtures already exist
 
-`mm_protocol`'s host tests read the same golden files the C# tests do, and must reproduce every
-`canonical:` and `digest:` line byte for byte — see
-[`tests/Micromound.Tests/Golden/`](../../tests/Micromound.Tests/Golden/README.md).
+`micromound-c`'s host tests read the same golden files the C# tests do, and reproduce every
+`digest:` line and every reduced-profile `canonical:` line byte for byte — see
+[`tests/Micromound.Tests/Golden/`](../../tests/Micromound.Tests/Golden/README.md). Run them with
+`make -C firmware/micromound-c test`.
 
 Two properties of the wire format exist specifically to make this practical:
 
