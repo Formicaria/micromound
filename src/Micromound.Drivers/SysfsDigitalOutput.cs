@@ -12,10 +12,16 @@ namespace Micromound.Drivers;
 /// (a prior run that did not release it) is not an error, it is re-used. This port is polarity-
 /// agnostic — it writes the logical level it is given; the driver above it owns active-high/low.</para>
 ///
-/// <para><b>On-device note:</b> sysfs GPIO is deprecated in favour of the libgpiod character device,
-/// and the kernel creates a pin's directory asynchronously after <c>export</c>. This implementation
-/// keeps the file protocol simple and testable; a libgpiod (chardev) backing and export-settle
-/// retries are a follow-up, and the value writes here must be verified on real hardware.</para>
+/// <para><b>Initial level is set atomically.</b> sysfs accepts <c>high</c>/<c>low</c> as a direction,
+/// which makes the pin an output already at that level; writing <c>out</c> (low) and then the safe
+/// level would energize an active-low load for the instant in between. The factory passes the safe
+/// level (<c>!active_high</c>) as <paramref name="initialHigh"/>.</para>
+///
+/// <para><b>On-device note:</b> sysfs GPIO is deprecated in favour of the GPIO character device —
+/// <see cref="GpioChardevOutput"/> is the preferred backing (daemon <c>--gpio chardev</c>, the default);
+/// this one remains for kernels built with <c>CONFIG_GPIO_SYSFS</c>. The kernel creates a pin's
+/// directory asynchronously after <c>export</c>; export-settle retries are still a follow-up, and the
+/// value writes here must be verified on real hardware.</para>
 /// </summary>
 public sealed class SysfsDigitalOutput : IDigitalOutput, IDisposable
 {
@@ -24,7 +30,10 @@ public sealed class SysfsDigitalOutput : IDigitalOutput, IDisposable
     private readonly string _pinDirectory;
     private bool _released;
 
-    public SysfsDigitalOutput(int pin, string sysfsRoot = "/sys/class/gpio")
+    /// <param name="pin">The global sysfs GPIO number (a BCM number on a Raspberry Pi with chip base 0).</param>
+    /// <param name="sysfsRoot">Injectable for tests; <c>/sys/class/gpio</c> on a device.</param>
+    /// <param name="initialHigh">The level the pin is driven to as it becomes an output — the SAFE level.</param>
+    public SysfsDigitalOutput(int pin, string sysfsRoot = "/sys/class/gpio", bool initialHigh = false)
     {
         if (pin < 0)
             throw new ArgumentOutOfRangeException(nameof(pin), pin, "a GPIO pin number cannot be negative");
@@ -39,8 +48,10 @@ public sealed class SysfsDigitalOutput : IDigitalOutput, IDisposable
         if (!Directory.Exists(_pinDirectory))
             TryWrite(Path.Combine(_root, "export"), pin.ToString());
 
-        // Drive it low as its initial safe level, then declare it an output.
-        Write(Path.Combine(_pinDirectory, "direction"), "out");
+        // Declare it an output ALREADY AT its initial (safe) level: "high"/"low" set direction and
+        // value in one write, so the pin never sits at the wrong level between the two.
+        Write(Path.Combine(_pinDirectory, "direction"), initialHigh ? "high" : "low");
+        State = initialHigh;
     }
 
     public bool State { get; private set; }

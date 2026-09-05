@@ -303,16 +303,22 @@ public sealed class MoundHost
     }
 
     /// <summary>
-    /// The same driver kinds over REAL Linux ports: the digital actuator on a sysfs GPIO line (manifest
-    /// <c>pin</c>), the analog sensor on an ADS1115 channel over I2C (manifest <c>bus</c>/<c>address</c>/
+    /// The same driver kinds over REAL Linux ports: the digital actuator on a GPIO line — the GPIO
+    /// character device by default (<c>/dev/gpiochipN</c>, manifest <c>pin</c>/<c>chip</c>), or legacy
+    /// sysfs — and the analog sensor on an ADS1115 channel over I2C (manifest <c>bus</c>/<c>address</c>/
     /// <c>channel</c>/<c>gain</c>). Every port opens fail-closed from the manifest at configure time, so
     /// a slice that names hardware this host does not have refuses bring-up rather than pretending.
     /// </summary>
-    public static DriverFactoryRegistry HardwareDriverFactories()
+    /// <param name="gpioBacking">One of <see cref="GpioBackings"/>; the daemon's <c>--gpio</c>.</param>
+    public static DriverFactoryRegistry HardwareDriverFactories(string gpioBacking = GpioBackings.Chardev)
     {
+        if (!GpioBackings.IsKnown(gpioBacking))
+            throw new ArgumentException($"'{gpioBacking}' is not a GPIO backing; use {GpioBackings.Chardev} or {GpioBackings.Sysfs}", nameof(gpioBacking));
         var factories = new DriverFactoryRegistry();
         factories.Register(new Ads1115AnalogSensorFactory());
-        factories.Register(new SysfsDigitalActuatorFactory());
+        factories.Register(gpioBacking == GpioBackings.Sysfs
+            ? new SysfsDigitalActuatorFactory()
+            : new GpioChardevActuatorFactory());
         return factories;
     }
 

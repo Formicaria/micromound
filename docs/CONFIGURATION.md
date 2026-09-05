@@ -52,7 +52,7 @@ hardware:
       bus: "1"
       address: "0x76"
   irrigation:
-    driver: digital_actuator         # a sysfs GPIO line when the daemon runs with --hardware
+    driver: digital_actuator         # a GPIO line (/dev/gpiochip0) when the daemon runs with --hardware
     settings:
       capability: act.water_valve
       pin: "17"
@@ -112,7 +112,8 @@ port needs are simply ignored by the in-memory backing, so one manifest serves b
 | | `active_high` | no (`true`) | Whether the active level is high; the safe level is the opposite |
 | | `class` | no (`benign`) | Action class; never `observe` or `hazardous` |
 | | `max_on_s`, `min_off_s`, `max_rate_per_h` | no | The hardware limit tier for this line |
-| | `pin` | with `--hardware` | The sysfs GPIO number (BCM numbering on a Pi) |
+| | `pin` | with `--hardware` | The GPIO line (BCM numbering on a Pi): a chip line offset on the character device, the global number on sysfs |
+| | `chip` | no (`0`) | `/dev/gpiochip<chip>` (character device only; the Pi header is chip 0, chip 4 on a Pi 5 with an older kernel). The sysfs backing refuses a non-zero chip |
 | `analog_sensor` | `capability` | yes | The `sense.` capability this channel is (`sense.soil_moisture`) |
 | | `unit` | no | Unit recorded on every reading (`pct`, `V`, `C`) |
 | | `scale`, `offset` | no (`1`, `0`) | Linear calibration, `value = raw × scale + offset`; both must be finite |

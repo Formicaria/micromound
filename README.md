@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.15
+**Current version:** v0.9.16
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.15`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.16`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -99,8 +99,12 @@ with no reading, and the daemon's new **`--hardware`** flag finally composes the
 instead of in-memory ones, and — new in `v0.9.15` — **the device describes its own hardware vocabulary**:
 a machine-readable driver-settings schema (`DriverSchemaCatalog`, sent at enrollment as `driver_schemas`,
 printed by `micromound --describe-drivers`) so the controller can offer a plain-language hardware form
-instead of a raw settings console, pinned to the drivers by test. What's still ahead: a libgpiod
-backing, and the GPIO writes and I2C transfers themselves verified on a physical board. End-to-end simulator missions run against an in-process
+instead of a raw settings console, pinned to the drivers by test, and — new in `v0.9.16` — **GPIO over
+the character device** (`GpioChardevOutput`, `/dev/gpiochipN`, the libgpiod interface, encoded against
+`linux/gpio.h` and pinned to the header's numbers; daemon `--gpio chardev|sysfs`, chardev default), with
+**both GPIO backings bringing a line up already at its safe level** so an active-low relay is never
+pulsed at bring-up. What's still ahead is only the board: the GPIO writes, the I2C transfers, and a live
+enroll + sync against ANTHILL verified on real hardware. End-to-end simulator missions run against an in-process
 controller that verifies every byte. The v0 canonical bytes will not change again inside v0. The host
 now has both a real digital line and a real analog channel available, but has not yet been run on a
 device against real hardware — that boundary finishes M4; real firmware is M5. See
@@ -118,11 +122,13 @@ dotnet test Micromound.sln                  # just the tests
 
 On Windows without bash on PATH, `.\scripts\validate.ps1` runs the same steps.
 
-On a Raspberry Pi with real hardware, run the daemon with `--hardware`: digital actuators then open
-sysfs GPIO lines (manifest `pin`) and analog sensors open ADS1115 channels over I2C (manifest
-`channel`, `bus`, `address`, `gain`). Enable I2C (`raspi-config` → Interfaces), run as a user in the
-`i2c` and `gpio` groups, and keep every ADC input below VDD + 0.3 V — the gain setting is resolution,
-not protection. Without `--hardware` every port is in-memory and the daemon says so at start-up.
+On a Raspberry Pi with real hardware, run the daemon with `--hardware`: digital actuators then claim
+GPIO lines on the character device (`/dev/gpiochipN`; manifest `pin`, optional `chip`; `--gpio sysfs`
+for a legacy kernel) and analog sensors open ADS1115 channels over I2C (manifest `channel`, `bus`,
+`address`, `gain`). Enable I2C (`raspi-config` → Interfaces), run as a user in the `i2c` and `gpio`
+groups, and keep every ADC input below VDD + 0.3 V — the gain setting is resolution, not protection.
+`micromound --describe-drivers` prints every setting. Without `--hardware` every port is in-memory and
+the daemon says so at start-up.
 Releases are cut with `scripts/release.sh` (or `scripts/release.ps1`) from a synced `main`.
 
 Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).

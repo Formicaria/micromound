@@ -18,7 +18,7 @@
       to it, and never just because it is the numeric successor to v0.9.x. The release scripts read
       this value literally and never assume the next release; bump it here by hand per slice.
     -->
-    <MicromoundVersion>0.9.15</MicromoundVersion>
+    <MicromoundVersion>0.9.16</MicromoundVersion>
     <Version>$(MicromoundVersion)</Version>
     <Authors>ANTHILL Project</Authors>
     <Product>MICROMOUND</Product>

@@ -63,6 +63,15 @@ Also at this layer:
   op holding the gate: the watchdog records the trip it can and logs loudly, and process supervision
   (systemd `Restart=`, whose restart de-energizes at configure time) is the backstop. Set the timeout
   generously so an ordinary GC or scheduling pause never trips it.
+- **A line comes up at its safe level, and stays there only while the daemon holds it.** Both GPIO
+  backings now request a line already at `!active_high` — the character device carries the initial
+  value in the line request, sysfs writes `high`/`low` as the direction — so an active-low relay is
+  never energized for the instant between "becomes an output" and "is written safe" (`v0.9.16`). The
+  flip side is stated plainly: when the daemon exits, crashes, or releases a line, the kernel returns
+  it to its default state (usually an input, floating or with the board's pull), and the level is no
+  longer held by anything. Whether that idle state is safe is a property of the board — a relay input
+  with a pull-up idles off; one without may not — and it is exactly the case Layer 0 exists for.
+  Process supervision restarts the daemon, which requests the line at the safe level again.
 - **Clamp, don't lie.** Where a limit narrows a request, the work proceeds and the outcome is
   `clamped`, carrying both the requested and the effective parameters plus the limit responsible.
   A silent clamp is a false statement about what the mound did.

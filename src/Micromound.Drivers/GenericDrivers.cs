@@ -163,7 +163,8 @@ public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
     public DigitalActuatorDriver(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder) =>
         _portBuilder = portBuilder;
 
-    /// <summary>Convenience for a port that needs no settings (the in-memory simulator line, tests).</summary>
+    /// <summary>Convenience for a port that needs no settings and owns no line (the in-memory simulator
+    /// line, tests) — the same instance is reused across reconfigures.</summary>
     public DigitalActuatorDriver(IDigitalOutput output) : this(_ => output) { }
 
     public override string DriverId => "digital_actuator:" + _capability;
@@ -190,7 +191,11 @@ public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
         _activeHigh = true;
         _descriptor = null;
         _executor = null;
-        _output = null;      // drop any port a prior configuration opened, so a failed reconfigure holds no line
+        // Drop any port a prior configuration opened — and RELEASE it if it owns a line (a chardev line
+        // stays claimed until its descriptor closes; re-requesting the same pin would be EBUSY). The
+        // convenience ctor's fixed in-memory line is not disposable, so it is simply reused.
+        (_output as IDisposable)?.Dispose();
+        _output = null;      // so a failed reconfigure holds no line
         _heldUntil = null;   // a reconfigure ends any hold; the port drops with it
     }
 
@@ -532,16 +537,83 @@ public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/g
 {
     private readonly DigitalActuatorFactory _inner = new(settings =>
     {
-        if (!settings.TryGetValue("pin", out var raw) || string.IsNullOrWhiteSpace(raw))
-            throw new ArgumentException("a sysfs digital actuator requires a 'pin' setting");
-        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pin))
-            throw new ArgumentException($"'pin' is not an integer: '{raw}'");
-        return new SysfsDigitalOutput(pin, sysfsRoot);
+        var pin = GpioSettings.Pin(settings, "a sysfs digital actuator");
+        // sysfs numbering is global (chip base + offset), so a manifest written for the character
+        // device with a non-default chip means a DIFFERENT pin here — refuse rather than guess.
+        var chip = GpioSettings.Chip(settings, fallback: 0);
+        if (chip != 0)
+            throw new ArgumentException($"the sysfs GPIO backing has no chip selection ('chip' = {chip}); use --gpio chardev, or the global sysfs pin number with no 'chip'");
+        return new SysfsDigitalOutput(pin, sysfsRoot, initialHigh: GpioSettings.SafeLevel(settings));
     });
 
     public string DriverType => _inner.DriverType;
     public IDriver Create() => _inner.Create();
     public DriverTypeSchema Schema => _inner.Schema;
+}
+
+/// <summary>
+/// The preferred hardware-backed digital-actuator factory: each actuator over a real GPIO line on the
+/// Linux GPIO character device (<see cref="GpioChardevOutput"/>, <c>/dev/gpiochipN</c>) — the interface
+/// libgpiod uses and the one the kernel supports going forward. Reads the line's <c>pin</c> (offset)
+/// and <c>chip</c> (default 0) from the manifest, and requests the line already at the SAFE level
+/// (<c>!active_high</c>) so an active-low load is never energized for an instant at bring-up. Same
+/// driver kind, capabilities, limits and polarity as the in-memory default — only the port backing
+/// changes. The system-call seam is injectable so the request encoding is tested against a fake.
+/// </summary>
+public sealed class GpioChardevActuatorFactory(int defaultChip = 0, ILinuxIo? io = null) : IDriverFactory
+{
+    private readonly DigitalActuatorFactory _inner = new(settings =>
+    {
+        var line = GpioSettings.Pin(settings, "a GPIO character-device actuator");
+        var chip = GpioSettings.Chip(settings, defaultChip);
+        return new GpioChardevOutput(line, initialHigh: GpioSettings.SafeLevel(settings), chip, io);
+    });
+
+    public string DriverType => _inner.DriverType;
+    public IDriver Create() => _inner.Create();
+    public DriverTypeSchema Schema => _inner.Schema;
+}
+
+/// <summary>The GPIO backings the daemon can compose (<c>--gpio</c>).</summary>
+public static class GpioBackings
+{
+    /// <summary>The GPIO character device, <c>/dev/gpiochipN</c> — the default and the supported path.</summary>
+    public const string Chardev = "chardev";
+    /// <summary>Legacy <c>/sys/class/gpio</c>, for kernels that still ship it.</summary>
+    public const string Sysfs = "sysfs";
+
+    public static bool IsKnown(string? backing) => backing is Chardev or Sysfs;
+}
+
+/// <summary>The manifest settings the two GPIO backings share, parsed the same way by both.</summary>
+internal static class GpioSettings
+{
+    public static int Pin(IReadOnlyDictionary<string, string> settings, string what)
+    {
+        if (!settings.TryGetValue("pin", out var raw) || string.IsNullOrWhiteSpace(raw))
+            throw new ArgumentException($"{what} requires a 'pin' setting");
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pin))
+            throw new ArgumentException($"'pin' is not an integer: '{raw}'");
+        return pin;
+    }
+
+    public static int Chip(IReadOnlyDictionary<string, string> settings, int fallback)
+    {
+        if (!settings.TryGetValue("chip", out var raw) || string.IsNullOrWhiteSpace(raw))
+            return fallback;
+        if (!int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var chip))
+            throw new ArgumentException($"'chip' is not an integer: '{raw}'");
+        return chip;
+    }
+
+    /// <summary>The SAFE level of the line — the opposite of its active level. Parsed exactly as the
+    /// driver parses <c>active_high</c> (default true); an unparseable value is left to the driver to refuse.</summary>
+    public static bool SafeLevel(IReadOnlyDictionary<string, string> settings)
+    {
+        var activeHigh = !settings.TryGetValue("active_high", out var raw) || string.IsNullOrWhiteSpace(raw)
+                         || !bool.TryParse(raw, out var parsed) || parsed;
+        return !activeHigh;
+    }
 }
 
 /// <summary>

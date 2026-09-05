@@ -19,6 +19,7 @@
 
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using Micromound.Drivers;
 using Micromound.Host;
 using Micromound.Protocol;
 
@@ -27,7 +28,7 @@ using Micromound.Protocol;
 // same data goes to the controller at enrollment (`driver_schemas`). Then exit; no mound comes up.
 if (args.Length > 0 && args.Contains("--describe-drivers", StringComparer.Ordinal))
 {
-    var registry = args.Contains("--hardware", StringComparer.Ordinal) ? MoundHost.HardwareDriverFactories() : MoundHost.DefaultDriverFactories();
+    var registry = args.Contains("--hardware", StringComparer.Ordinal) ? MoundHost.HardwareDriverFactories(HostArgs.GpioBackingOf(args)) : MoundHost.DefaultDriverFactories();
     Console.WriteLine(JsonSerializer.Serialize(registry.Describe(), new JsonSerializerOptions(ProtocolJson.Options) { WriteIndented = true }));
     return 0;
 }
@@ -36,12 +37,14 @@ var options = HostArgs.Parse(args);
 if (options is null)
 {
     Console.Error.WriteLine(
-        "usage: micromound --manifest <path> [--hardware] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
+        "usage: micromound --manifest <path> [--hardware [--gpio chardev|sysfs]] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
         "       micromound --describe-drivers [--hardware]   print the driver types this build ships and their settings (JSON), then exit\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
         "  --hardware     drive REAL ports: digital actuators on sysfs GPIO (setting 'pin'), analog sensors\n" +
         "                 on an ADS1115 over I2C (settings 'channel', 'bus', 'address', 'gain'). Without it\n" +
         "                 every port is in-memory — nothing physical moves and readings are zero.\n" +
+        "  --gpio         GPIO backing with --hardware: chardev (/dev/gpiochipN, the libgpiod interface; default)\n" +
+        "                 or sysfs (legacy /sys/class/gpio, for kernels that still ship it).\n" +
         "  --state        state root (identity + durable state). default: /var/lib/micromound\n" +
         "  --controller   controller base URL, e.g. https://anthill.example. default: offline\n" +
         "  --enroll-token one-time enrollment token; used once if not already enrolled (PROTOCOL.md §3)\n" +
@@ -90,7 +93,7 @@ try
     // enrollment or present the one-time token now. Without it, downlink stays unverifiable — the safe
     // direction — and the mound only uplinks.
     // Real ports only when asked for: a manifest naming a pin or an I2C address opens it fail-closed.
-    var factories = options.Hardware ? MoundHost.HardwareDriverFactories() : MoundHost.DefaultDriverFactories();
+    var factories = options.Hardware ? MoundHost.HardwareDriverFactories(options.GpioBacking) : MoundHost.DefaultDriverFactories();
 
     IPublicKeyDirectory controllerKeys = new InMemoryPublicKeyDirectory();
     double? controllerSyncInterval = null;
@@ -145,7 +148,7 @@ var watchdogSeconds = options.WatchdogSeconds
 
 Console.WriteLine(
     $"micromound: {host.MoundId} up, state={host.State}. " +
-    (options.Hardware ? "Ports: REAL hardware (sysfs GPIO, ADS1115/I2C). " : "Ports: IN-MEMORY (no --hardware; nothing physical is driven). ") +
+    (options.Hardware ? $"Ports: REAL hardware (GPIO via {options.GpioBacking}, ADS1115/I2C). " : "Ports: IN-MEMORY (no --hardware; nothing physical is driven). ") +
     (options.ControllerUrl is null ? "Running offline (no --controller); " : $"Controller {options.ControllerUrl}; ") +
     "Ctrl-C / SIGTERM to stop safely." +
     (watchdogSeconds > 0 ? $" Independent watchdog armed at {watchdogSeconds:0.#}s." : " Independent watchdog disabled."));
@@ -185,12 +188,20 @@ finally
 return 0;
 
 /// <summary>Parsed daemon arguments. Null from <see cref="Parse"/> means "print usage and exit".</summary>
-file sealed record HostArgs(string ManifestPath, bool Hardware, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
+file sealed record HostArgs(string ManifestPath, bool Hardware, string GpioBacking, string StateDirectory, string? ControllerUrl, string? EnrollToken, string Tier, double IntervalSeconds, double HeartbeatTimeoutSeconds, double? WatchdogSeconds)
 {
+    /// <summary>The <c>--gpio</c> value in a raw argument list, or the default; used before full parsing.</summary>
+    public static string GpioBackingOf(string[] args)
+    {
+        var i = Array.IndexOf(args, "--gpio");
+        return i >= 0 && i + 1 < args.Length && GpioBackings.IsKnown(args[i + 1]) ? args[i + 1] : GpioBackings.Chardev;
+    }
+
     public static HostArgs? Parse(string[] args)
     {
         string? manifest = null;
         var hardware = false;   // in-memory ports unless the operator asks for the real ones
+        var gpio = GpioBackings.Chardev;
         var state = Environment.GetEnvironmentVariable("MICROMOUND_STATE") ?? "/var/lib/micromound";
         string? controller = null;
         string? enrollToken = null;
@@ -205,6 +216,7 @@ file sealed record HostArgs(string ManifestPath, bool Hardware, string StateDire
             {
                 case "--manifest" when i + 1 < args.Length: manifest = args[++i]; break;
                 case "--hardware": hardware = true; break;
+                case "--gpio" when i + 1 < args.Length && GpioBackings.IsKnown(args[i + 1]): gpio = args[++i]; break;
                 case "--state" when i + 1 < args.Length: state = args[++i]; break;
                 // PROTOCOL.md §1: device-initiated HTTPS only. A non-https (or malformed) URL is a
                 // usage error, never a cleartext or undialable transport handed to the daemon.
@@ -220,6 +232,6 @@ file sealed record HostArgs(string ManifestPath, bool Hardware, string StateDire
             }
         }
 
-        return manifest is null ? null : new HostArgs(manifest, hardware, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
+        return manifest is null ? null : new HostArgs(manifest, hardware, gpio, state, controller, enrollToken, tier, interval, heartbeat, watchdog);
     }
 }

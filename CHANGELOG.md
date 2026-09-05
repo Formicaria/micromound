@@ -12,6 +12,73 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.16 — GPIO over the character device, and a line that comes up safe
+
+The last MicroMound-side hardware item before the board: the digital actuator can now drive a real
+line over the Linux GPIO **character device** (`/dev/gpiochipN`, uapi v2 — the interface libgpiod
+uses and the one the kernel supports; sysfs GPIO is deprecated). No library: two ioctls, encoded by
+hand against `linux/gpio.h` and pinned to the header's own numbers. And a safety fix that fell out of
+doing it properly: **both** GPIO backings now bring a line up already at its safe level. Still
+substrate — the ioctls must be verified on a board — so `v0.10.0` stays reserved.
+
+### Added
+
+- **`ILinuxIo` / `LibcIo`** (`Micromound.Drivers`): open / ioctl-with-buffer / close behind an
+  interface, so a character-device driver's request encoding is exercised against a fake kernel that
+  decodes what it was handed. libc via P/Invoke, no `unsafe`.
+- **`GpioChardevOutput`** (`IDigitalOutput`, `IDisposable`): opens the chip, issues one
+  `GPIO_V2_GET_LINE_IOCTL` for the line as an OUTPUT with an `OUTPUT_VALUES` attribute carrying the
+  initial level, closes the chip descriptor, and keeps the line descriptor; each write is one
+  `GPIO_V2_LINE_SET_VALUES_IOCTL`; `Dispose` releases the line (so does the kernel if the process
+  dies — sysfs never did). Consumer label `micromound`, visible in `gpioinfo`. The `gpio_v2_line_request`
+  layout (592 bytes; consumer @256, config.flags @288, num_attrs @296, attrs[0] @320, num_lines @560,
+  fd @588) and the ioctl numbers (`0xC250B407`, `0xC010B40F`) were **measured from the kernel header
+  with a C compiler** and are pinned in tests, including the check that the ioctl number's size field
+  equals the struct size (the kernel refuses a mismatch). Identical on 32- and 64-bit: every field is
+  fixed-width and the 64-bit ones `__aligned_u64`.
+- **`GpioChardevActuatorFactory`**: the preferred hardware digital-actuator factory. Reads `pin` (line
+  offset; BCM on a Pi) and `chip` (default 0) from the manifest and requests the line at
+  `!active_high`. `EBUSY` (another process holds the line) is a fail-closed refusal with the reason.
+- **Manifest setting `chip`** (`digital_actuator`, hardware-only, advanced, default `0`) — in the
+  driver-settings catalog with help text (Pi header = chip 0; chip 4 on a Pi 5 with an older 6.1/6.6
+  kernel). The legacy sysfs backing **refuses** a non-zero `chip` rather than guessing: its pin numbers
+  are global, so a chardev manifest's `pin` would mean a different line.
+- **Daemon `--gpio chardev|sysfs`** (with `--hardware`; default `chardev`) and
+  `MoundHost.HardwareDriverFactories(gpioBacking)`. `--describe-drivers` shows the new setting.
+- **`GpioSettings`** — `pin`, `chip`, and the safe level parsed once for both backings.
+
+### Authority / safety
+
+- **A line is requested already at its safe level.** Before this slice `SysfsDigitalOutput` wrote
+  `out` (which drives LOW) and the driver wrote the safe level a moment later — for an **active-low**
+  relay board that is a brief energize-then-release at every bring-up, reconfigure, and restart. Now
+  sysfs writes `high`/`low` as the direction (direction and value in one write) and the chardev request
+  carries the initial value, so the line's first output level IS the safe level. The factories compute
+  it from `active_high` exactly as the driver does. Tested for both backings.
+- **A reconfigure releases the old line.** `DigitalActuatorDriver.Reset` now disposes a port that owns
+  a line (the analog sensor already did this for its channel). Found by the fake kernel: without it
+  the old chardev line stayed claimed, the descriptor leaked, and re-requesting the same pin would
+  have been `EBUSY` on a real kernel.
+- **What release means, stated plainly** (SAFETY.md): when the daemon exits or crashes, the kernel
+  returns the line to its default state and nothing holds the level. Whether that idle state is safe
+  is the board's property (a relay input with a pull-up idles off) — Layer 0's job, as it always was.
+- **No wire change, no new refusal reason, no authority widened.** A new hardware backing behind an
+  existing seam, one additive manifest setting described in the catalog.
+
+### Notes
+
+- **On a Pi:** `--hardware` now uses the character device by default; the user must be in the `gpio`
+  group (`/dev/gpiochip*` is `root:gpio 0660` on Raspberry Pi OS). `gpioinfo` shows held lines as
+  `consumer=micromound`. Use `--gpio sysfs` only on a kernel built with `CONFIG_GPIO_SYSFS` and no
+  character device. Exercised in the sandbox: `--hardware` with no `/dev/gpiochip0` refuses bring-up
+  (errno 2); `--gpio sysfs` refuses with the missing sysfs path.
+- `LinuxI2cBus` keeps its own P/Invokes for now; moving it onto `ILinuxIo` is a tidy-up, not a change.
+- Export-settle retries for sysfs remain a follow-up (moot on the chardev path, which is synchronous).
+- Remaining before `v0.10.0`: the on-board verification — sysfs/chardev writes, the I2C transfers, a
+  live enroll + sync against a running ANTHILL.
+
+---
+
 ## v0.9.15 — the device describes its own hardware vocabulary (driver-settings schema)
 
 A slice for the operator, prompted by what the reference controller's Micromound page looks like today:

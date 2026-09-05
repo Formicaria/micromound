@@ -142,13 +142,15 @@ public static class DriverSchemaCatalog
                   "It produces no evidence of its own — a separate sensor confirms the effect, or the outcome stays unverified.",
         Role = DriverRoles.Actuator,
         CapabilityPrefix = "act.",
-        HardwareBacking = "A Linux GPIO output over sysfs (/sys/class/gpio), BCM pin numbering on a Raspberry Pi.",
+        HardwareBacking = "A Linux GPIO output line on the GPIO character device (/dev/gpiochipN, the libgpiod interface; BCM line numbering on a Raspberry Pi), or legacy sysfs.",
         Settings =
         [
             new() { Name = "capability", Label = "What this output is", Kind = SettingKinds.Capability, Required = true, Choices = ["act."],
                     Help = "The act. capability name a charter grants and a mission asks for, e.g. act.water_valve." },
             new() { Name = "pin", Label = "GPIO pin", Kind = SettingKinds.Integer, Required = true, HardwareOnly = true, Min = 0,
                     Help = "The GPIO number (BCM numbering, not the header position) the line is on. Ignored without --hardware." },
+            new() { Name = "chip", Label = "GPIO chip", Kind = SettingKinds.Integer, Default = "0", HardwareOnly = true, Advanced = true, Min = 0,
+                    Help = "/dev/gpiochip<chip>. The Raspberry Pi header is chip 0 (chip 4 on a Pi 5 with an older 6.1/6.6 kernel). Character-device backing only; the legacy sysfs backing refuses a non-zero chip." },
             new() { Name = "active_high", Label = "Active when high", Kind = SettingKinds.Boolean, Default = "true", Advanced = true,
                     Help = "true if driving the pin high turns the load on; false for an active-low relay board. The safe level is the opposite." },
             new() { Name = "max_on_s", Label = "Longest single run", Kind = SettingKinds.Number, Unit = "s", Min = 0,

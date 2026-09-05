@@ -39,12 +39,19 @@ public sealed class SysfsGpioTests : IDisposable
     }
 
     [Fact]
-    public void Constructing_a_port_declares_the_pin_an_output()
+    public void Constructing_a_port_declares_the_pin_an_output_already_at_its_initial_level()
     {
+        // "low"/"high" set direction AND value in one write (v0.9.16), so the pin never sits at the
+        // wrong level between becoming an output and being driven safe. The default initial level is low.
         var pinDir = ExportPin(17);
         using var port = new SysfsDigitalOutput(17, _root);
+        Assert.Equal("low", File.ReadAllText(Path.Combine(pinDir, "direction")));
+        Assert.False(port.State);
 
-        Assert.Equal("out", File.ReadAllText(Path.Combine(pinDir, "direction")));
+        var highDir = ExportPin(18);
+        using var high = new SysfsDigitalOutput(18, _root, initialHigh: true);
+        Assert.Equal("high", File.ReadAllText(Path.Combine(highDir, "direction")));
+        Assert.True(high.State);
     }
 
     [Fact]
