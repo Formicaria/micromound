@@ -927,8 +927,18 @@ void mm_kernel_execute(mm_kernel *k, const mm_request *request, int64_t now, con
     set_str(record->outcome, sizeof record->outcome, d.clamped ? "clamped" : "succeeded");
     if (d.clamped) set_str(record->detail, sizeof record->detail, d.detail);
 
-    for (i = 0; i < outcome.n_evidence && i < MM_MAX_EVIDENCE_IDS; i++)
+    for (i = 0; i < outcome.n_evidence && i < MM_MAX_EVIDENCE_IDS; i++) {
         set_str(record->evidence_refs[record->n_evidence_refs++], MM_ID_CAP, outcome.evidence[i].id);
+        if (k->inline_evidence) {
+            mm_evidence_item_in *item = &record->evidence[record->n_evidence++];
+            set_str(item->evidence_id, sizeof item->evidence_id, outcome.evidence[i].id);
+            set_str(item->type, sizeof item->type, outcome.evidence[i].type);
+            set_str(item->captured_at, sizeof item->captured_at, outcome.evidence[i].captured_at);
+            set_str(item->source, sizeof item->source, outcome.evidence[i].source);
+            set_str(item->payload_json, sizeof item->payload_json, outcome.evidence[i].payload_json);
+            item->content_digest[0] = '\0';
+        }
+    }
 
     {
         char reason[MM_REASON_CAP];

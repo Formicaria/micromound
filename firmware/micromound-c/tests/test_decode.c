@@ -213,16 +213,41 @@ void test_decode(void)
             "{\"action_id\":\"a0000000-0000-4000-8000-000000000001\",\"mission_id\":\"\",\"charter_id\":\"c0000000-0000-4000-8000-000000000001\","
             "\"capability\":\"act.relay_1\",\"routine_id\":\"\",\"requested_parameters\":{},\"parameters\":{\"on_s\":30},"
             "\"started_at\":\"2026-08-14T21:04:11Z\",\"ended_at\":\"2026-08-14T21:04:41Z\",\"outcome\":\"succeeded\",\"evidence_required\":false,"
-            "\"evidence_refs\":[\"e0000000-0000-4000-8000-000000000001\"],\"detail\":\"\"}";
+            "\"evidence_refs\":[\"e0000000-0000-4000-8000-000000000001\"],\"evidence\":[],\"detail\":\"\"}";
+        /* a device's record: the referenced reading rides inline (PROTOCOL.md §6), payload as an escaped string */
+        static const char inl[] =
+            "{\"action_id\":\"a-7\",\"mission_id\":\"\",\"charter_id\":\"\",\"capability\":\"sense.temp\",\"routine_id\":\"\","
+            "\"requested_parameters\":{},\"parameters\":{},\"started_at\":\"2026-08-14T21:04:11Z\",\"ended_at\":\"2026-08-14T21:04:11Z\","
+            "\"outcome\":\"succeeded\",\"evidence_required\":false,\"evidence_refs\":[\"e-sense.temp-1\"],"
+            "\"evidence\":[{\"evidence_id\":\"e-sense.temp-1\",\"type\":\"reading\",\"captured_at\":\"2026-08-14T21:04:11Z\",\"source\":\"sense.temp\","
+            "\"payload_json\":\"{\\\"value\\\":25,\\\"unit\\\":\\\"C\\\",\\\"capability\\\":\\\"sense.temp\\\"}\",\"content_digest\":\"\"}],\"detail\":\"\"}";
         mm_action_record_in in; mm_action_record_view v; char out[1024]; mm_json w;
         CHECK(mm_action_record_parse(rec, sizeof rec - 1, &in, &err) == 0);
         CHECK(in.n_parameters == 1); CHECK_STR_EQ("on_s", in.parameters[0].key); CHECK(in.parameters[0].value == 30);
-        CHECK(in.n_requested_parameters == 0 && !in.evidence_required && in.n_evidence_refs == 1);
+        CHECK(in.n_requested_parameters == 0 && !in.evidence_required && in.n_evidence_refs == 1 && in.n_evidence == 0);
         mm_action_record_bind(&in, &v);
         mm_json_init(&w, out, sizeof out);
         mm_body_action_record(&w, &v.record);
         CHECK(mm_json_finish(&w) > 0);
         CHECK_STR_EQ(rec, out);
+        CHECK(mm_action_record_parse(inl, sizeof inl - 1, &in, &err) == 0);
+        CHECK(in.n_evidence == 1 && in.n_evidence_refs == 1);
+        CHECK_STR_EQ("e-sense.temp-1", in.evidence[0].evidence_id);
+        CHECK_STR_EQ("reading", in.evidence[0].type);
+        CHECK_STR_EQ("{\"value\":25,\"unit\":\"C\",\"capability\":\"sense.temp\"}", in.evidence[0].payload_json);
+        CHECK_STR_EQ("", in.evidence[0].content_digest);
+        mm_action_record_bind(&in, &v);
+        mm_json_init(&w, out, sizeof out);
+        mm_body_action_record(&w, &v.record);
+        CHECK(mm_json_finish(&w) > 0);
+        CHECK_STR_EQ(inl, out);
+        {   /* an item with an unknown member and a null array are read the way the host reads them */
+            static const char odd[] = "{\"evidence\":[{\"evidence_id\":\"x\",\"future\":{\"a\":[1]}}]}";
+            static const char nul[] = "{\"evidence\":null}";
+            CHECK(mm_action_record_parse(odd, sizeof odd - 1, &in, &err) == 0 && in.n_evidence == 1);
+            CHECK_STR_EQ("x", in.evidence[0].evidence_id); CHECK_STR_EQ("", in.evidence[0].type);
+            CHECK(mm_action_record_parse(nul, sizeof nul - 1, &in, &err) == 0 && in.n_evidence == 0);
+        }
         CHECK(mm_action_record_parse("{}", 2, &in, &err) == 0); CHECK_STR_EQ("unverified", in.outcome);
         {
             static const char nine[] = "{\"parameters\":{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9}}";

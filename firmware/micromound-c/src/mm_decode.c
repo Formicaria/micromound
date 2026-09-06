@@ -311,6 +311,41 @@ int mm_ack_parse(const char *json, size_t n, mm_ack_in *out, int *error)
     return finish(&r, rc == 0 && more == 0 ? 0 : -1, error);
 }
 
+/* One EvidenceItem object into a fixed struct; unknown members skipped, the C# defaults ("") first. */
+static int read_evidence_item(mm_jr *r, mm_evidence_item_in *out)
+{
+    char key[32];
+    int more, rc = 0;
+    memset(out, 0, sizeof *out);
+    if (mm_jr_object_begin(r) != 0) return -1;
+    while ((more = mm_jr_object_next(r, key, sizeof key)) == 1) {
+        if (strcmp(key, "evidence_id") == 0) rc = read_str(r, out->evidence_id, sizeof out->evidence_id);
+        else if (strcmp(key, "type") == 0) rc = read_str(r, out->type, sizeof out->type);
+        else if (strcmp(key, "captured_at") == 0) rc = read_str(r, out->captured_at, sizeof out->captured_at);
+        else if (strcmp(key, "source") == 0) rc = read_str(r, out->source, sizeof out->source);
+        else if (strcmp(key, "payload_json") == 0) rc = read_str(r, out->payload_json, sizeof out->payload_json);
+        else if (strcmp(key, "content_digest") == 0) rc = read_str(r, out->content_digest, sizeof out->content_digest);
+        else rc = mm_jr_skip(r);
+        if (rc != 0) return -1;
+    }
+    return more;
+}
+
+/* The `evidence` array of an action record. */
+static int read_evidence_items(mm_jr *r, mm_evidence_item_in *table, size_t max, size_t *count)
+{
+    int more;
+    *count = 0;
+    if (mm_jr_peek(r) == 'n') return mm_jr_null(r);
+    if (mm_jr_array_begin(r) != 0) return -1;
+    while ((more = mm_jr_array_next(r)) == 1) {
+        if (*count >= max) { r->error = MM_JR_TOO_MANY; return -1; }
+        if (read_evidence_item(r, &table[*count]) != 0) return -1;
+        (*count)++;
+    }
+    return more;
+}
+
 /* Dictionary<string, double> into a fixed table, in document order. */
 static int read_params(mm_jr *r, mm_param_in *table, size_t max, size_t *count)
 {
@@ -355,6 +390,7 @@ int mm_action_record_parse(const char *json, size_t n, mm_action_record_in *out,
         else if (strcmp(key, "evidence_required") == 0) rc = mm_jr_bool(&r, &out->evidence_required);
         else if (strcmp(key, "evidence_refs") == 0)
             rc = read_str_array(&r, out->evidence_refs[0], MM_ID_CAP, MM_MAX_EVIDENCE_IDS, &out->n_evidence_refs);
+        else if (strcmp(key, "evidence") == 0) rc = read_evidence_items(&r, out->evidence, MM_MAX_EVIDENCE_IDS, &out->n_evidence);
         else if (strcmp(key, "detail") == 0) rc = read_str(&r, out->detail, sizeof out->detail);
         else rc = mm_jr_skip(&r);
         if (rc != 0) break;
@@ -512,6 +548,14 @@ void mm_action_record_bind(const mm_action_record_in *in, mm_action_record_view 
         v->parameters[i].value = in->parameters[i].value;
     }
     for (i = 0; i < in->n_evidence_refs; i++) v->evidence_refs[i] = in->evidence_refs[i];
+    for (i = 0; i < in->n_evidence; i++) {
+        v->evidence[i].evidence_id = in->evidence[i].evidence_id;
+        v->evidence[i].type = in->evidence[i].type;
+        v->evidence[i].captured_at = in->evidence[i].captured_at;
+        v->evidence[i].source = in->evidence[i].source;
+        v->evidence[i].payload_json = in->evidence[i].payload_json;
+        v->evidence[i].content_digest = in->evidence[i].content_digest;
+    }
 
     v->record.action_id = in->action_id;
     v->record.mission_id = in->mission_id;
@@ -528,5 +572,7 @@ void mm_action_record_bind(const mm_action_record_in *in, mm_action_record_view 
     v->record.evidence_required = in->evidence_required;
     v->record.evidence_refs = v->evidence_refs;
     v->record.n_evidence_refs = in->n_evidence_refs;
+    v->record.evidence = v->evidence;
+    v->record.n_evidence = in->n_evidence;
     v->record.detail = in->detail;
 }

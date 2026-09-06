@@ -41,7 +41,9 @@ int mm_device_init(mm_device *d, const mm_device_config *cfg, char *error, size_
         if (error_cap) set_str(error, error_cap, "device config: mound_id, secret_key, controller_public_key and new_id are required");
         return -1;
     }
-    return mm_kernel_init(&d->kernel, cfg->mound_id, cfg->caps, cfg->n_caps, cfg->routines, cfg->n_routines, error, error_cap);
+    if (mm_kernel_init(&d->kernel, cfg->mound_id, cfg->caps, cfg->n_caps, cfg->routines, cfg->n_routines, error, error_cap) != 0) return -1;
+    d->kernel.inline_evidence = 1;   /* no evidence_bundle in the reduced profile: readings ride on the record (PROTOCOL.md §6) */
+    return 0;
 }
 
 /* ---- uplink -------------------------------------------------------------------------------- */

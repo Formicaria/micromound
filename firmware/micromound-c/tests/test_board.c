@@ -518,6 +518,17 @@ static void check_board(void)
     CHECK(mm_reading_payload(0.75 * 100 - 50, "C", "sense.temp", payload, sizeof payload) > 0);
     CHECK_STR_EQ("{\"value\":25,\"unit\":\"C\",\"capability\":\"sense.temp\"}", payload);
 
+    /* … and it rides INLINE on the record the device queued (PROTOCOL.md §6): the queue holds the probe's
+       record with the item, and the relay's record with none — a command is not evidence */
+    {
+        const char *probe_wire = app.device.queue[app.device.queue_head % MM_DEVICE_QUEUE].wire;
+        const char *relay_wire = app.device.queue[(app.device.queue_head + 1) % MM_DEVICE_QUEUE].wire;
+        CHECK(strstr(probe_wire, "\"capability\":\"sense.temp\"") != NULL && strstr(relay_wire, "\"capability\":\"act.relay_1\"") != NULL);
+        CHECK(strstr(probe_wire, "\"evidence_refs\":[\"e-sense.temp-1\"],\"evidence\":[{\"evidence_id\":\"e-sense.temp-1\",\"type\":\"reading\",") != NULL);
+        CHECK(strstr(probe_wire, "\"payload_json\":\"{\\\"value\\\":25,\\\"unit\\\":\\\"C\\\",\\\"capability\\\":\\\"sense.temp\\\"}\",\"content_digest\":\"\"}],") != NULL);
+        CHECK(strstr(relay_wire, "\"evidence_refs\":[],\"evidence\":[],") != NULL);
+    }
+
     /* the charter's cadence (15) wins over enrollment's (10) */
     mm_app_tick(&app, T0 + 110);
     CHECK(f.sync_posts == 1 && app.status.beats == 1);

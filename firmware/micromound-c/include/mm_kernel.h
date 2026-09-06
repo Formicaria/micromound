@@ -86,7 +86,6 @@ typedef struct mm_execution {
     const char *mission_id;
 } mm_execution;
 
-#define MM_PAYLOAD_CAP 128
 
 /* EvidenceItem as an executor produces it: the gate reads id and captured_at; the rest rides along
    for whatever carries evidence off the device (PROTOCOL.md §8 leaves that open for a controller). */
@@ -224,6 +223,9 @@ typedef struct mm_kernel {
     size_t n_executors;
     mm_authority authority;
     mm_history history;
+    int inline_evidence;                    /* 1 on a reduced-profile device: the items an executor produced ride
+                                               inline on the record (PROTOCOL.md §6). 0 mirrors the host kernel,
+                                               whose items travel by evidence_bundle from the store. */
 } mm_kernel;
 
 /*

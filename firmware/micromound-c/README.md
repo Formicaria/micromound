@@ -29,7 +29,7 @@ needed when the buffer was too small.
 | `mm_sha256` | `mm_sha256.h` | FIPS 180-4 SHA-256, incremental; hex encode/decode | FIPS vectors; every envelope digest |
 | `mm_ed25519` | `mm_ed25519.h` | Ed25519 over vendored TweetNaCl: keypair from a 32-byte seed (no RNG), **detached** sign and verify (message read in place), non-canonical `S` rejected | RFC 8032 §7.1 vectors 1–3; a cross-implementation signature |
 | `mm_envelope` | `mm_envelope.h` | The envelope: canonical bytes with `"sig":""` present and empty, `sha256:` digest, `ed25519:` signature, strict verify, and an **in-place splice** of the signature into the last field | `canonical-envelopes.txt` |
-| `mm_bodies` | `mm_bodies.h` | The reduced-profile bodies field for field: `mound_sync`, `action_record`, `ack`, `stop`, `charter` | `canonical-envelopes.txt`, `canonical-bodies.txt` |
+| `mm_bodies` | `mm_bodies.h` | The reduced-profile bodies field for field: `mound_sync`, `action_record` (with inline `evidence` items), `ack`, `stop`, `charter` — and `evidence_bundle`, so the item shape is pinned | `canonical-envelopes.txt`, `canonical-bodies.txt` |
 | `mm_json_read` | `mm_json_read.h` | A bounded pull parser: full escape grammar, strict UTF-8, JSON number grammar, depth-capped, skips unknown members, hands values on as raw slices | `test_json_read.c` |
 | `mm_time` | `mm_time.h` | `yyyy-MM-ddTHH:mm:ssZ` ↔ epoch seconds; accepts the offset/fractional forms §2 asks readers to tolerate | `test_time.c` |
 | `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's reason lines character for character, views to re-encode | `canonical-signed.txt` |
@@ -42,10 +42,10 @@ needed when the buffer was too small.
 | `mm_app` | `mm_app.h` | **The firmware above the HAL**: identity from protected storage (created once from the board's RNG), enrollment with a one-time token, the service loop — holds released first, quiesce, the beat on the charter's cadence, the compiled schedule through the kernel — and the trip (a relay that will not release stops the mound) | `test_board.c` |
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
-A constrained controller runs compiled routines selected by charter; it never plans. One thing is
-absent and *not yet decided*: how a reading's value reaches the controller (the action record carries
-`evidence_refs`, not values). `mm_evidence_produced` keeps each reading whole so that either additive
-answer PROTOCOL.md §8 names is a serializer away.
+A constrained controller runs compiled routines selected by charter; it never plans. Its readings
+reach the controller on the record that cites them: `mm_device` sets `mm_kernel.inline_evidence`, and
+every item an executor produced rides in the record's `evidence` array (PROTOCOL.md §6, `v0.9.24`) —
+the kernel itself mirrors the host's and inlines nothing.
 
 ## Using it
 
@@ -248,7 +248,6 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
 - **Not fast.** TweetNaCl signs in tens of milliseconds on an ESP32-class core; adequate for a sync
   beat, not for anything hotter. The backend sits behind `mm_ed25519.h` and the tests prove a swap
   did not change the bytes.
-- **Not carrying readings upstream.** See above; PROTOCOL.md §8 holds the open question.
 
 ## Portability notes
 
@@ -269,7 +268,8 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
   `MM_DEVICE_QUEUE` / `MM_DEVICE_WIRE_CAP` for a smaller board) and `mm_link`'s 8 KB response buffer
   (`MM_LINK_RESPONSE_CAP`; a downlink batch larger than it reads as unreadable and the exchange fails,
   so a controller must keep a batch under it) — `mm_kernel` 10 KB inside it,
-  `mm_charter_in` 4 KB, `mm_action_record_in` 2.7 KB, `mm_outcome` 2 KB. **Stack:** one exchange's
+  `mm_charter_in` 4 KB, `mm_action_record_in` 9 KB (16 inline evidence items of 392 B, `v0.9.24`),
+  `mm_outcome` 5.5 KB. **Stack:** one exchange's
   batch (`MM_DEVICE_BATCH` × 440 B frames) plus a charter, a refusal set, a decision, an outcome and a
   record on the way through `mm_device_sync` peaks near 14 KB; `mm_enroll` adds a 4 KB response and a
   2 KB request on its own path — run the service loop on a task with 32 KB of stack, or lower

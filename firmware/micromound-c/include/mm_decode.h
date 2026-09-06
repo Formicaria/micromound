@@ -135,6 +135,18 @@ typedef struct mm_param_in {
     double value;
 } mm_param_in;
 
+#define MM_PAYLOAD_CAP 128           /* a reading payload: {"value":…,"unit":…,"capability":…} */
+#define MM_CONTENT_DIGEST_CAP 80
+
+typedef struct mm_evidence_item_in {
+    char evidence_id[MM_ID_CAP];
+    char type[MM_NAME_CAP];
+    char captured_at[MM_TIME_TEXT_CAP];
+    char source[MM_NAME_CAP];
+    char payload_json[MM_PAYLOAD_CAP];
+    char content_digest[MM_CONTENT_DIGEST_CAP];
+} mm_evidence_item_in;
+
 typedef struct mm_action_record_in {
     char action_id[MM_ID_CAP];
     char mission_id[MM_ID_CAP];
@@ -151,6 +163,8 @@ typedef struct mm_action_record_in {
     int evidence_required;
     char evidence_refs[MM_MAX_EVIDENCE_IDS][MM_ID_CAP];
     size_t n_evidence_refs;
+    mm_evidence_item_in evidence[MM_MAX_EVIDENCE_IDS];   /* inline items (PROTOCOL.md §6); a device fills these */
+    size_t n_evidence;
     char detail[MM_DETAIL_CAP];
 } mm_action_record_in;
 
@@ -197,6 +211,7 @@ typedef struct mm_action_record_view {
     mm_param requested_parameters[MM_MAX_PARAMS];
     mm_param parameters[MM_MAX_PARAMS];
     const char *evidence_refs[MM_MAX_EVIDENCE_IDS];
+    mm_evidence_item evidence[MM_MAX_EVIDENCE_IDS];
 } mm_action_record_view;
 void mm_action_record_bind(const mm_action_record_in *in, mm_action_record_view *view);
 

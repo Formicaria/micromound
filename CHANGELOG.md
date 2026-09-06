@@ -12,6 +12,74 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.24 — M5: readings reach the controller — `evidence` rides on the action record
+
+**This release changes the canonical wire bytes of every `action_record`** — the in-place v0
+amendment PROTOCOL.md §11 reserves for "before the first firmware ships", and the last one: the
+firmware image now exists and the next such change is a version bump. No authority is widened or
+narrowed; no refusal reason changes. The question `v0.9.22` wrote down in §8 — how a constrained
+device's reading reaches the controller when the reduced profile has no `evidence_bundle` — is
+answered the way §8 always said it would be: the readings ride on the action record.
+
+### Changed — wire
+
+- **`ActionRecord.evidence`** (`"evidence"`, after `evidence_refs`, always present, `[]` when empty): the
+  referenced `EvidenceItem`s themselves — `evidence_id`, `type`, `captured_at`, `source`, `payload_json`,
+  `content_digest`. A reduced-profile device inlines every item its `evidence_refs` name (it has no
+  bundle kind and no store); a Pi-class mound leaves it empty and keeps sending `evidence_bundle`s from
+  its store, pressure accounting and all. A reader resolving refs looks in `evidence` first, then in its
+  store; an item in both is the same item (PROTOCOL.md §6).
+- **Regenerated fixtures**, reviewed line by line: `canonical-bodies.txt` (the `action_record` row gains
+  `"evidence":[]`), `canonical-envelopes.txt` (the seq 1 record's bytes change, so every digest and
+  `prev_digest` from seq 1 on re-chains; seq 0 is untouched), `kernel-decisions.txt` (all 32 records gain
+  `"evidence":[]` — the host kernel inlines nothing, and the C kernel replays it to the byte),
+  `device-session.txt` (re-signed; every `succeeded`/`clamped` record a device sends now carries its
+  proof inline — a `reading` with `{"value":22.5,"unit":"C","capability":"sense.temp"}`, a relay's
+  `sensor_window`). `canonical-signed.txt` (no action record), `canonical-strings.txt`,
+  `canonical-doubles.txt` and `enroll-exchange.txt` did not move.
+
+### Changed — host
+
+- `EvidenceCorrelator.For` resolves a record's inline items before the store; `SimController` stores a
+  record's inline items as evidence and acknowledges their ids, as it does for a bundle's.
+- `DeviceSessionTests` now also checks, for every device record, that `evidence` carries exactly the
+  items `evidence_refs` name, each `captured_at` canonical and `source` the capability, every `reading`
+  readable by `EvidenceReadings.TryRead`, and that the host's `EvidenceGate` — given the record's inline
+  items and nothing else — grants the outcome the device claimed.
+
+### Changed — C
+
+- `mm_bodies`: `mm_evidence_item` and `mm_write_evidence_item` (the EvidenceItem shape); `mm_action_record`
+  carries `evidence`/`n_evidence`; and `mm_body_evidence_bundle`, a full-profile body the device never
+  sends, so the item shape is pinned against the golden bundle (`canonical-envelopes.txt` seq 2 and the
+  `canonical-bodies.txt` row are now rebuilt byte for byte too — four of the six chain envelopes).
+- `mm_decode`: `mm_evidence_item_in`; `mm_action_record_parse` reads `evidence` (null, unknown members,
+  capacity `MM_MAX_EVIDENCE_IDS`); `mm_action_record_bind` re-encodes it. A record with an inline reading
+  round-trips to the same bytes (`test_decode.c`).
+- `mm_kernel.inline_evidence` — off, the kernel is the host's kernel to the byte (`kernel-decisions.txt`);
+  on, the items an executor produced are copied into the record's `evidence` with the refs. `mm_device`
+  turns it on at init: the reduced profile's one behavioural difference lives in the profile's own layer,
+  not in the kernel.
+- `mm_action_record_in` grew from 2.7 KB to 9 KB (16 items × 392 B); `mm_outcome` to 5.5 KB. Both are
+  stack objects on the act path; the 32 KB task in `firmware/esp32` covers it, and the image grew by
+  ~600 B. Host tests: 1,975 checks under gcc, clang, `-Os`, `-O1`+sanitizers, and `MM_DEVICE_QUEUE=8`.
+
+### Notes
+
+- Why on the record and not a bundle. The reduced profile keeps `evidence_bundle` out on purpose (a CI
+  guard enforces it): a device has no evidence store, so the store's eviction and spill accounting has
+  nothing to report; and one envelope per reading would halve a constrained queue. A record that carries
+  its own proof is one envelope, verifiable on its own, and reads the same at the controller whether a Pi
+  or a board sent it.
+- Why the Pi does not inline too. It could, and the bytes would be legal; it would also duplicate every
+  item on the wire (bundle and record) for no reader that needs it. If a controller ever prefers
+  self-contained records from Pis as well, the switch is one line in `RunnerAnt`, not a protocol change.
+- ANTHILL: parses and verifies the amended records as-is (unknown members are ignored; signatures cover
+  the received bytes) but sees no device readings until it compiles against `v0.9.24` — `docs/UPSTREAM.md`
+  now carries a section for exactly this kind of note.
+
+---
+
 ## v0.9.23 — M5: the ESP32 firmware compiles
 
 `firmware/esp32` built under ESP-IDF v5.3.2 for the `esp32` target: `micromound_esp32.bin`, 1,025,484

@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.23
+**Current version:** v0.9.24
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.23`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.24`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -134,11 +134,14 @@ the relay and probe as kernel executors, and the service loop, all over a seven-
 abstraction and driven through first boot, outage, refusal, enrollment, charter, hold, reboot, stop and
 trip against a fake of it; `firmware/esp32` binds that abstraction to ESP-IDF in one file and — new in
 `v0.9.23` — **compiles**: a 1.0 MB image under ESP-IDF v5.3.2, built by CI on every push, not yet flashed
-or run. What's still ahead for M4 is only the board itself. End-to-end simulator missions run against an in-process controller that verifies every
+or run — and, new in `v0.9.24`, **a device's readings reach the controller**: `action_record` carries its
+referenced evidence items inline (the last in-place v0 wire amendment; every fixture regenerated), so the
+host's evidence gate is satisfied by a board's record alone. What's still ahead for M4 is only the board
+itself. End-to-end simulator missions run against an in-process controller that verifies every
 byte. The v0 canonical bytes of every existing fixture are unchanged. The host has both a real digital
 line and a real analog channel available, but has not yet been run on a device against real hardware —
-that boundary finishes M4; what remains of M5 is the bench run of `firmware/esp32`, the decision on
-how a reading's value travels upstream (PROTOCOL.md §8), and the Pi↔ESP32 packet protocol. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+that boundary finishes M4; what remains of M5 is the bench run of `firmware/esp32` and the Pi↔ESP32
+packet protocol. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real

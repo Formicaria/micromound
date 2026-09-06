@@ -153,3 +153,12 @@ One constraint follows from that and is worth stating as a rule: **the protocol 
 unnecessary dependence on any hosted cloud service.** A mound and a self-hosted controller on the
 same LAN must be a complete, working system with no third party involved. Local ownership is not a
 deployment option to be supported later; it is the shape of the thing.
+
+## Contract amendments an upstream must pick up
+
+- **`v0.9.24` — `evidence` on `action_record`** (PROTOCOL.md §6). An additive member, always present.
+  A controller built against an older `Micromound.Protocol` still parses the record (unknown members are
+  ignored) and still verifies it (signatures cover the bytes as received), but it will not see a
+  reduced-profile device's readings until it compiles against this version: resolve `evidence_refs`
+  against the record's own `evidence` first, then the store — `EvidenceCorrelator` and the simulator's
+  controller show the order.

@@ -48,8 +48,8 @@ test — it means the bytes a deployed mound would send no longer match what a d
 
 | File | What it pins | C mirror test |
 |---|---|---|
-| `canonical-envelopes.txt` | six chained envelopes: canonical bytes, `prev_digest` linkage, digests | every digest and link; `mound_sync`, `action_record`, `charter` rebuilt byte for byte |
-| `canonical-bodies.txt` | the bare JSON of every typed body | `charter` and `action_record` rebuilt |
+| `canonical-envelopes.txt` | six chained envelopes: canonical bytes, `prev_digest` linkage, digests | every digest and link; `mound_sync`, `action_record`, `evidence_bundle`, `charter` rebuilt byte for byte |
+| `canonical-bodies.txt` | the bare JSON of every typed body | `charter`, `action_record` and `evidence_bundle` rebuilt |
 | `canonical-strings.txt` | the §2 escaping rule: `<utf-8 hex> TAB <literal>` | every row through `mm_json_escape` |
 | `canonical-doubles.txt` | .NET's number layout: `<IEEE bits> TAB <text>` | every row through `mm_format_double` |
 | `canonical-signed.txt` | four REAL signed wire envelopes (fixed test seeds): a device beat and a controller's charter/stop/ack chain | each verified from the bytes as received, decoded, re-encoded to the same body, re-signed to the same wire |
@@ -59,8 +59,10 @@ test — it means the bytes a deployed mound would send no longer match what a d
 
 The fixtures are **current** — they were regenerated when the v0 contracts were last amended
 (`routines` on charters; `mission_id` / `routine_id` / `requested_parameters` / `evidence_required`
-on action records) and `v0.9.18`'s escaping change left every existing byte untouched (all were
-ASCII). `firmware/micromound-c`'s `make test` reads every one of these files and is the other half of the pin.
+on action records; and, in `v0.9.24`, `evidence` on action records — which re-chained
+`canonical-envelopes.txt` from seq 1 and re-signed `device-session.txt`, while `canonical-signed.txt`,
+which carries no action record, did not move) and `v0.9.18`'s escaping change left every existing byte
+untouched (all were ASCII). `firmware/micromound-c`'s `make test` reads every one of these files and is the other half of the pin.
 
 ## What `sig` actually does here
 

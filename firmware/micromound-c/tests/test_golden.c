@@ -100,6 +100,21 @@ static mm_action_record golden_action_record(void)
 static const char *const CHARTER_CAPABILITIES[] = { "sense.temp", "act.relay_1" };
 static const char *const CHARTER_REQUIRED_FOR[] = { "act.*" };
 
+static const mm_evidence_item GOLDEN_ITEM = {
+    "e0000000-0000-4000-8000-000000000001", "sensor_window", "2026-08-14T21:04:41Z", "sim.act.relay_1",
+    "{\"before\":0,\"after\":1}", ""
+};
+
+static mm_evidence_bundle golden_bundle(void)
+{
+    mm_evidence_bundle b;
+    memset(&b, 0, sizeof b);
+    b.bundle_id = "b0000000-0000-4000-8000-000000000001";
+    b.items = &GOLDEN_ITEM;
+    b.n_items = 1;
+    return b;
+}
+
 static mm_charter golden_charter(mm_limit_entry limits[1])
 {
     mm_charter c;
@@ -212,8 +227,13 @@ static void check_envelopes(void)
                 c = golden_charter(limits);
                 e.body = mm_body_charter;
                 e.body_ctx = &c;
+            } else if (strcmp(kind, "evidence_bundle") == 0) {
+                static mm_evidence_bundle b;
+                b = golden_bundle();
+                e.body = mm_body_evidence_bundle;
+                e.body_ctx = &b;
             } else {
-                continue; /* mission, mission_report, evidence_bundle: outside the reduced profile (§8) */
+                continue; /* mission, mission_report: a controller plans, a device never encodes them (§8) */
             }
             n = mm_envelope_canonical(&e, built, sizeof built, NULL);
             CHECK(n > 0);
@@ -225,7 +245,7 @@ static void check_envelopes(void)
     }
     fclose(f);
     CHECK(blocks == 6);
-    CHECK(rebuilt == 3);
+    CHECK(rebuilt == 4);
 }
 
 /* ---- canonical-bodies.txt ---------------------------------------------------------------- */
@@ -244,14 +264,16 @@ static void check_bodies(void)
         if ((v = after_prefix(line, "## ")) != NULL) { copy_str(label, sizeof label, v); continue; }
         if (line[0] != '{') continue;
 
-        if (strcmp(label, "charter") == 0 || strcmp(label, "action_record") == 0) {
+        if (strcmp(label, "charter") == 0 || strcmp(label, "action_record") == 0 || strcmp(label, "evidence_bundle") == 0) {
             char built[LINE_MAX_LEN];
             mm_json w;
             mm_limit_entry limits[1];
             mm_charter c;
             mm_action_record r;
+            mm_evidence_bundle b;
             mm_json_init(&w, built, sizeof built);
             if (label[0] == 'c') { c = golden_charter(limits); mm_body_charter(&w, &c); }
+            else if (label[0] == 'e') { b = golden_bundle(); mm_body_evidence_bundle(&w, &b); }
             else { r = golden_action_record(); mm_body_action_record(&w, &r); }
             CHECK(mm_json_finish(&w) > 0);
             CHECK_STR_EQ(line, built);
@@ -259,7 +281,7 @@ static void check_bodies(void)
         }
     }
     fclose(f);
-    CHECK(checked == 2);
+    CHECK(checked == 3);
 }
 
 /* ---- canonical-strings.txt --------------------------------------------------------------- */

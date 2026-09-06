@@ -146,6 +146,12 @@ public sealed class EvidenceCorrelator(IEvidenceLookup store) : IEvidenceCorrela
     {
         var view = new Dictionary<string, EvidenceItem>(StringComparer.Ordinal);
 
+        // Items the record carries inline resolve first (PROTOCOL.md §6): a reduced-profile device
+        // has no store to consult, so what rides with the record is all the proof there is.
+        foreach (var inline in record.Evidence)
+            if (record.EvidenceRefs.Contains(inline.EvidenceId) && !view.ContainsKey(inline.EvidenceId))
+                view[inline.EvidenceId] = inline;
+
         foreach (var id in record.EvidenceRefs)
             if (!view.ContainsKey(id) && store.TryGet(id, out var item))
                 view[id] = item;

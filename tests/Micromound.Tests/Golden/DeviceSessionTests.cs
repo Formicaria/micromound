@@ -149,6 +149,24 @@ public class DeviceSessionTests
                     }
                     if (record.Outcome == ActionOutcomes.Stopped)
                         Assert.Equal("stopped: a stop order is in force; stop precedes all work except observation", record.Detail);
+
+                    // A reduced-profile device has no evidence_bundle: every item it references rides
+                    // inline (PROTOCOL.md §6), and the host's gate must be satisfied by those items alone.
+                    Assert.Equal(record.EvidenceRefs.Order(), record.Evidence.Select(e => e.EvidenceId).Order());
+                    foreach (var item in record.Evidence)
+                    {
+                        Assert.True(ProtocolTime.IsCanonical(item.CapturedAt));
+                        Assert.Equal(record.Capability, item.Source);
+                        if (item.Type == EvidenceReadings.Type)
+                            Assert.True(EvidenceReadings.TryRead(item, out _), $"reading {item.EvidenceId} carries no numeric value");
+                    }
+                    if (ActionOutcomes.AssertPhysicalWork.Contains(record.Outcome))
+                    {
+                        var inline = record.Evidence.ToDictionary(e => e.EvidenceId, e => e, StringComparer.Ordinal);
+                        var gated = EvidenceGate.Gate(record, new EvidencePolicy { RequiredFor = ["act.*"], MinIntervalSeconds = 60 }, inline,
+                            ProtocolTime.TryParse(record.EndedAt, out var ended) ? ended : DateTimeOffset.UtcNow, out var why);
+                        Assert.True(gated == record.Outcome, $"record {record.ActionId}: {why}");
+                    }
                     if (record.Outcome == ActionOutcomes.Refused)
                         Assert.StartsWith("lease_expired: lease expired at ", record.Detail);
                     break;

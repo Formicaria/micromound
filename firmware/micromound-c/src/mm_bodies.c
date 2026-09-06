@@ -41,6 +41,7 @@ void mm_body_mound_sync(mm_json *w, const void *ctx)
 void mm_body_action_record(mm_json *w, const void *ctx)
 {
     const mm_action_record *b = (const mm_action_record *)ctx;
+    size_t i;
     mm_json_object_begin(w);
     mm_json_kv_string(w, "action_id", b->action_id);
     mm_json_kv_string(w, "mission_id", b->mission_id);
@@ -54,7 +55,23 @@ void mm_body_action_record(mm_json *w, const void *ctx)
     mm_json_kv_string(w, "outcome", b->outcome);
     mm_json_kv_bool(w, "evidence_required", b->evidence_required);
     write_string_array(w, "evidence_refs", b->evidence_refs, b->n_evidence_refs);
+    mm_json_key(w, "evidence");
+    mm_json_array_begin(w);
+    for (i = 0; i < b->n_evidence; i++) mm_write_evidence_item(w, &b->evidence[i]);
+    mm_json_array_end(w);
     mm_json_kv_string(w, "detail", b->detail);
+    mm_json_object_end(w);
+}
+
+void mm_write_evidence_item(mm_json *w, const mm_evidence_item *item)
+{
+    mm_json_object_begin(w);
+    mm_json_kv_string(w, "evidence_id", item->evidence_id);
+    mm_json_kv_string(w, "type", item->type ? item->type : "");
+    mm_json_kv_string(w, "captured_at", item->captured_at);
+    mm_json_kv_string(w, "source", item->source ? item->source : "");
+    mm_json_kv_string(w, "payload_json", item->payload_json ? item->payload_json : "");
+    mm_json_kv_string(w, "content_digest", item->content_digest ? item->content_digest : "");
     mm_json_object_end(w);
 }
 
@@ -127,5 +144,20 @@ void mm_body_charter(mm_json *w, const void *ctx)
 
     mm_json_kv_string(w, "safe_state", b->safe_state);
     mm_json_kv_int(w, "sync_interval_s", b->sync_interval_s);
+    mm_json_object_end(w);
+}
+
+void mm_body_evidence_bundle(mm_json *w, const void *ctx)
+{
+    const mm_evidence_bundle *b = (const mm_evidence_bundle *)ctx;
+    size_t i;
+    mm_json_object_begin(w);
+    mm_json_kv_string(w, "bundle_id", b->bundle_id);
+    mm_json_key(w, "items");
+    mm_json_array_begin(w);
+    for (i = 0; i < b->n_items; i++) mm_write_evidence_item(w, &b->items[i]);
+    mm_json_array_end(w);
+    mm_json_kv_int(w, "evicted_acked_items", b->evicted_acked_items);
+    mm_json_kv_int(w, "spilled_unacked_items", b->spilled_unacked_items);
     mm_json_object_end(w);
 }

@@ -17,7 +17,7 @@ detail:
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     observe_only
-record:    {"action_id":"a-1","mission_id":"","charter_id":"","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:11Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-1"],"detail":""}
+record:    {"action_id":"a-1","mission_id":"","charter_id":"","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:11Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-1"],"evidence":[],"detail":""}
 
 ## step 2 — actuation with no charter
 at:        2026-08-14T21:04:11Z  (+0s)
@@ -27,7 +27,7 @@ detail:    no charter: authority is 'observe' only, 'act.relay_1' is class 'beni
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     observe_only
-record:    {"action_id":"a-2","mission_id":"","charter_id":"","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":30},"parameters":{},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:11Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"no_charter: no charter: authority is 'observe' only, 'act.relay_1' is class 'benign'"}
+record:    {"action_id":"a-2","mission_id":"","charter_id":"","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":30},"parameters":{},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:11Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"no_charter: no charter: authority is 'observe' only, 'act.relay_1' is class 'benign'"}
 
 ## step 3 — a routine with no charter
 at:        2026-08-14T21:04:11Z  (+0s)
@@ -37,7 +37,7 @@ detail:    no charter: authority is 'observe' only, 'routine.cool' is class 'ben
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     observe_only
-record:    {"action_id":"a-3","mission_id":"","charter_id":"","capability":"routine.cool","routine_id":"routine.cool","requested_parameters":{"on_s":10},"parameters":{},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:11Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"no_charter: no charter: authority is 'observe' only, 'routine.cool' is class 'benign'"}
+record:    {"action_id":"a-3","mission_id":"","charter_id":"","capability":"routine.cool","routine_id":"routine.cool","requested_parameters":{"on_s":10},"parameters":{},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:11Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"no_charter: no charter: authority is 'observe' only, 'routine.cool' is class 'benign'"}
 
 ## step 4 — accept a benign charter (charter tries to widen max_rate_per_h: 10 over hardware 4)
 at:        2026-08-14T21:04:11Z  (+0s)
@@ -52,7 +52,7 @@ detail:    'on_s' 50 -> 30 by max_on_s 30
 effective: {"on_s":30} clamped=true evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-5","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":50},"parameters":{"on_s":30},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:41Z","outcome":"clamped","evidence_required":true,"evidence_refs":["e-act.relay_1-1"],"detail":"'on_s' 50 -> 30 by max_on_s 30"}
+record:    {"action_id":"a-5","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":50},"parameters":{"on_s":30},"started_at":"2026-08-14T21:04:11Z","ended_at":"2026-08-14T21:04:41Z","outcome":"clamped","evidence_required":true,"evidence_refs":["e-act.relay_1-1"],"evidence":[],"detail":"'on_s' 50 -> 30 by max_on_s 30"}
 
 ## step 6 — duty cycle: min_off_s 300 not elapsed
 at:        2026-08-14T21:04:51Z  (+40s)
@@ -62,7 +62,7 @@ detail:    'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T21:04:41Z
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-6","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":10},"parameters":{},"started_at":"2026-08-14T21:04:51Z","ended_at":"2026-08-14T21:04:51Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"duty_cycle: 'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T21:04:41Z"}
+record:    {"action_id":"a-6","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":10},"parameters":{},"started_at":"2026-08-14T21:04:51Z","ended_at":"2026-08-14T21:04:51Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"duty_cycle: 'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T21:04:41Z"}
 
 ## step 7 — class exceeded: controlled over a benign ceiling
 at:        2026-08-14T21:04:52Z  (+41s)
@@ -72,7 +72,7 @@ detail:    'act.dimmer' is class 'controlled', charter ceiling is 'benign'
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-7","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.dimmer","routine_id":"","requested_parameters":{"level":50},"parameters":{},"started_at":"2026-08-14T21:04:52Z","ended_at":"2026-08-14T21:04:52Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"action_class_exceeded: 'act.dimmer' is class 'controlled', charter ceiling is 'benign'"}
+record:    {"action_id":"a-7","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.dimmer","routine_id":"","requested_parameters":{"level":50},"parameters":{},"started_at":"2026-08-14T21:04:52Z","ended_at":"2026-08-14T21:04:52Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"action_class_exceeded: 'act.dimmer' is class 'controlled', charter ceiling is 'benign'"}
 
 ## step 8 — unknown parameter is refused, not dropped
 at:        2026-08-14T21:04:53Z  (+42s)
@@ -82,7 +82,7 @@ detail:    'act.relay_1' does not accept parameter 'speed'
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-8","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"speed":3},"parameters":{},"started_at":"2026-08-14T21:04:53Z","ended_at":"2026-08-14T21:04:53Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"unknown_parameter: 'act.relay_1' does not accept parameter 'speed'"}
+record:    {"action_id":"a-8","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"speed":3},"parameters":{},"started_at":"2026-08-14T21:04:53Z","ended_at":"2026-08-14T21:04:53Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"unknown_parameter: 'act.relay_1' does not accept parameter 'speed'"}
 
 ## step 9 — missing required parameter
 at:        2026-08-14T21:04:54Z  (+43s)
@@ -92,7 +92,7 @@ detail:    'act.relay_1' requires parameter 'on_s'
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-9","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:54Z","ended_at":"2026-08-14T21:04:54Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"missing_parameter: 'act.relay_1' requires parameter 'on_s'"}
+record:    {"action_id":"a-9","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:54Z","ended_at":"2026-08-14T21:04:54Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"missing_parameter: 'act.relay_1' requires parameter 'on_s'"}
 
 ## step 10 — granted but nothing can do it
 at:        2026-08-14T21:04:55Z  (+44s)
@@ -102,7 +102,7 @@ detail:    'act.fan' is authorized but no executor is bound to it
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-10","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.fan","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:55Z","ended_at":"2026-08-14T21:04:55Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"executor_missing: 'act.fan' is authorized but no executor is bound to it"}
+record:    {"action_id":"a-10","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.fan","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:55Z","ended_at":"2026-08-14T21:04:55Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"executor_missing: 'act.fan' is authorized but no executor is bound to it"}
 
 ## step 11 — unknown capability
 at:        2026-08-14T21:04:56Z  (+45s)
@@ -112,7 +112,7 @@ detail:    'act.nothing' is not a capability this mound registers
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-11","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.nothing","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:56Z","ended_at":"2026-08-14T21:04:56Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"unknown_capability: 'act.nothing' is not a capability this mound registers"}
+record:    {"action_id":"a-11","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.nothing","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:56Z","ended_at":"2026-08-14T21:04:56Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"unknown_capability: 'act.nothing' is not a capability this mound registers"}
 
 ## step 12 — malformed capability id
 at:        2026-08-14T21:04:57Z  (+46s)
@@ -122,7 +122,7 @@ detail:    'not-an-id' is not a well-formed capability id
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-12","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"not-an-id","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:57Z","ended_at":"2026-08-14T21:04:57Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"unknown_capability: 'not-an-id' is not a well-formed capability id"}
+record:    {"action_id":"a-12","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"not-an-id","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:57Z","ended_at":"2026-08-14T21:04:57Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"unknown_capability: 'not-an-id' is not a well-formed capability id"}
 
 ## step 13 — routine not registered
 at:        2026-08-14T21:04:58Z  (+47s)
@@ -132,7 +132,7 @@ detail:    no routine 'routine.freeze' is registered in this build
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-13","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"routine.freeze","routine_id":"routine.freeze","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:58Z","ended_at":"2026-08-14T21:04:58Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"routine_not_registered: no routine 'routine.freeze' is registered in this build"}
+record:    {"action_id":"a-13","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"routine.freeze","routine_id":"routine.freeze","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:04:58Z","ended_at":"2026-08-14T21:04:58Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"routine_not_registered: no routine 'routine.freeze' is registered in this build"}
 
 ## step 14 — worker ceiling below the charter's
 at:        2026-08-14T21:04:59Z  (+48s)
@@ -142,7 +142,7 @@ detail:    worker 'scout' has ceiling 'observe', 'act.relay_1' is class 'benign'
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-14","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:04:59Z","ended_at":"2026-08-14T21:04:59Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"action_class_exceeded: worker 'scout' has ceiling 'observe', 'act.relay_1' is class 'benign'"}
+record:    {"action_id":"a-14","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:04:59Z","ended_at":"2026-08-14T21:04:59Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"action_class_exceeded: worker 'scout' has ceiling 'observe', 'act.relay_1' is class 'benign'"}
 
 ## step 15 — sensing spends no duty cycle
 at:        2026-08-14T21:05:00Z  (+49s)
@@ -152,7 +152,7 @@ detail:
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-15","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:05:00Z","ended_at":"2026-08-14T21:05:00Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-2"],"detail":""}
+record:    {"action_id":"a-15","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T21:05:00Z","ended_at":"2026-08-14T21:05:00Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-2"],"evidence":[],"detail":""}
 
 ## step 16 — routine: clamped by its own compiled bound (45) intersected with the relay's (60)
 at:        2026-08-14T21:10:51Z  (+400s)
@@ -162,7 +162,7 @@ detail:    'on_s' 100 -> 45 by max_on_s 45
 effective: {"on_s":45} clamped=true evidence_required=false
 limits:    {"max_on_s":45,"min_off_s":120,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-16","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"routine.cool","routine_id":"routine.cool","requested_parameters":{"on_s":100},"parameters":{"on_s":45},"started_at":"2026-08-14T21:10:51Z","ended_at":"2026-08-14T21:11:36Z","outcome":"clamped","evidence_required":false,"evidence_refs":["e-routine.cool-1"],"detail":"'on_s' 100 -> 45 by max_on_s 45"}
+record:    {"action_id":"a-16","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"routine.cool","routine_id":"routine.cool","requested_parameters":{"on_s":100},"parameters":{"on_s":45},"started_at":"2026-08-14T21:10:51Z","ended_at":"2026-08-14T21:11:36Z","outcome":"clamped","evidence_required":false,"evidence_refs":["e-routine.cool-1"],"evidence":[],"detail":"'on_s' 100 -> 45 by max_on_s 45"}
 
 ## step 17 — routine inside the relay's cooldown is refused under the relay's key
 at:        2026-08-14T21:12:31Z  (+500s)
@@ -172,7 +172,7 @@ detail:    'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T21:11:36Z
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-17","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:12:31Z","ended_at":"2026-08-14T21:12:31Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"duty_cycle: 'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T21:11:36Z"}
+record:    {"action_id":"a-17","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:12:31Z","ended_at":"2026-08-14T21:12:31Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"duty_cycle: 'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T21:11:36Z"}
 
 ## step 18 — driver reports itself unavailable
 at:        2026-08-14T21:17:31Z  (+800s)
@@ -182,7 +182,7 @@ detail:    'act.relay_1': driver reports itself unavailable
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-18","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:17:31Z","ended_at":"2026-08-14T21:17:31Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"capability_unavailable: 'act.relay_1': driver reports itself unavailable"}
+record:    {"action_id":"a-18","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:17:31Z","ended_at":"2026-08-14T21:17:31Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"capability_unavailable: 'act.relay_1': driver reports itself unavailable"}
 
 ## step 19 — relay again after the cooldown
 at:        2026-08-14T21:17:31Z  (+800s)
@@ -192,7 +192,7 @@ detail:
 effective: {"on_s":5} clamped=false evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-19","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T21:17:31Z","ended_at":"2026-08-14T21:17:36Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-2"],"detail":""}
+record:    {"action_id":"a-19","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T21:17:31Z","ended_at":"2026-08-14T21:17:36Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-2"],"evidence":[],"detail":""}
 
 ## step 20 — relay: fourth start in the trailing hour
 at:        2026-08-14T21:24:11Z  (+1200s)
@@ -202,7 +202,7 @@ detail:
 effective: {"on_s":5} clamped=false evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-20","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T21:24:11Z","ended_at":"2026-08-14T21:24:16Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-3"],"detail":""}
+record:    {"action_id":"a-20","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T21:24:11Z","ended_at":"2026-08-14T21:24:16Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-3"],"evidence":[],"detail":""}
 
 ## step 21 — rate limit: hardware max_rate_per_h 4 reached
 at:        2026-08-14T21:30:51Z  (+1600s)
@@ -212,7 +212,7 @@ detail:    'act.relay_1': max_rate_per_h 4 already reached in the trailing hour
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-21","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:30:51Z","ended_at":"2026-08-14T21:30:51Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"rate_limit: 'act.relay_1': max_rate_per_h 4 already reached in the trailing hour"}
+record:    {"action_id":"a-21","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T21:30:51Z","ended_at":"2026-08-14T21:30:51Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"rate_limit: 'act.relay_1': max_rate_per_h 4 already reached in the trailing hour"}
 
 ## step 22 — renew the lease
 at:        2026-08-14T21:54:11Z  (+3000s)
@@ -227,7 +227,7 @@ detail:
 effective: {"on_s":5} clamped=false evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-23","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:12:31Z","ended_at":"2026-08-14T22:12:36Z","outcome":"unverified","evidence_required":true,"evidence_refs":[],"detail":"no evidence referenced"}
+record:    {"action_id":"a-23","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:12:31Z","ended_at":"2026-08-14T22:12:36Z","outcome":"unverified","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"no evidence referenced"}
 
 ## step 24 — stale evidence demotes too (captured 400 s before a 60 s window)
 at:        2026-08-14T22:19:11Z  (+4500s)
@@ -237,7 +237,7 @@ detail:
 effective: {"on_s":5} clamped=false evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-24","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:19:11Z","ended_at":"2026-08-14T22:19:16Z","outcome":"unverified","evidence_required":true,"evidence_refs":["e-act.relay_1-4"],"detail":"evidence 'e-act.relay_1-4' is stale (captured 2026-08-14T22:12:31Z, action started 2026-08-14T22:19:11Z, min_interval_s 60)"}
+record:    {"action_id":"a-24","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:19:11Z","ended_at":"2026-08-14T22:19:16Z","outcome":"unverified","evidence_required":true,"evidence_refs":["e-act.relay_1-4"],"evidence":[],"detail":"evidence 'e-act.relay_1-4' is stale (captured 2026-08-14T22:12:31Z, action started 2026-08-14T22:19:11Z, min_interval_s 60)"}
 
 ## step 25 — a driver fault is failed, and still spends the duty cycle
 at:        2026-08-14T22:25:51Z  (+4900s)
@@ -247,7 +247,7 @@ detail:
 effective: {"on_s":5} clamped=false evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-25","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:25:51Z","ended_at":"2026-08-14T22:25:56Z","outcome":"failed","evidence_required":true,"evidence_refs":[],"detail":"driver_fault: relay did not answer"}
+record:    {"action_id":"a-25","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:25:51Z","ended_at":"2026-08-14T22:25:56Z","outcome":"failed","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"driver_fault: relay did not answer"}
 
 ## step 26 — the failed run's cooldown holds
 at:        2026-08-14T22:27:31Z  (+5000s)
@@ -257,7 +257,7 @@ detail:    'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T22:25:56Z
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-26","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T22:27:31Z","ended_at":"2026-08-14T22:27:31Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"duty_cycle: 'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T22:25:56Z"}
+record:    {"action_id":"a-26","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T22:27:31Z","ended_at":"2026-08-14T22:27:31Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"duty_cycle: 'act.relay_1': min_off_s 300 not elapsed since 2026-08-14T22:25:56Z"}
 
 ## step 27 — the lease runs out
 at:        2026-08-14T22:55:51Z  (+6700s)
@@ -272,7 +272,7 @@ detail:    lease expired at 2026-08-14T22:54:11Z; awaiting a fresh charter
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     quiesced
-record:    {"action_id":"a-28","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T22:55:52Z","ended_at":"2026-08-14T22:55:52Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"detail":"lease_expired: lease expired at 2026-08-14T22:54:11Z; awaiting a fresh charter"}
+record:    {"action_id":"a-28","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T22:55:52Z","ended_at":"2026-08-14T22:55:52Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"lease_expired: lease expired at 2026-08-14T22:54:11Z; awaiting a fresh charter"}
 
 ## step 29 — after expiry: sensing continues
 at:        2026-08-14T22:55:53Z  (+6702s)
@@ -282,7 +282,7 @@ detail:
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     quiesced
-record:    {"action_id":"a-29","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T22:55:53Z","ended_at":"2026-08-14T22:55:53Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-3"],"detail":""}
+record:    {"action_id":"a-29","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T22:55:53Z","ended_at":"2026-08-14T22:55:53Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-3"],"evidence":[],"detail":""}
 
 ## step 30 — a fresh charter is the only way out of quiesce
 at:        2026-08-14T22:57:31Z  (+6800s)
@@ -297,7 +297,7 @@ detail:
 effective: {"on_s":5} clamped=false evidence_required=true
 limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
 state:     chartered
-record:    {"action_id":"a-31","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:57:32Z","ended_at":"2026-08-14T22:57:37Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-5"],"detail":""}
+record:    {"action_id":"a-31","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T22:57:32Z","ended_at":"2026-08-14T22:57:37Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-5"],"evidence":[],"detail":""}
 
 ## step 32 — stop
 at:        2026-08-14T23:00:51Z  (+7000s)
@@ -312,7 +312,7 @@ detail:    a stop order is in force; stop precedes all work except observation
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     stopped
-record:    {"action_id":"a-33","mission_id":"","charter_id":"","capability":"act.nonexistent","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:00:52Z","ended_at":"2026-08-14T23:00:52Z","outcome":"stopped","evidence_required":false,"evidence_refs":[],"detail":"stopped: a stop order is in force; stop precedes all work except observation"}
+record:    {"action_id":"a-33","mission_id":"","charter_id":"","capability":"act.nonexistent","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:00:52Z","ended_at":"2026-08-14T23:00:52Z","outcome":"stopped","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"stopped: a stop order is in force; stop precedes all work except observation"}
 
 ## step 34 — stopped: sensing continues
 at:        2026-08-14T23:00:53Z  (+7002s)
@@ -322,7 +322,7 @@ detail:
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     stopped
-record:    {"action_id":"a-34","mission_id":"","charter_id":"","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T23:00:53Z","ended_at":"2026-08-14T23:00:53Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-4"],"detail":""}
+record:    {"action_id":"a-34","mission_id":"","charter_id":"","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T23:00:53Z","ended_at":"2026-08-14T23:00:53Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-4"],"evidence":[],"detail":""}
 
 ## step 35 — a charter cannot clear a stop
 at:        2026-08-14T23:00:54Z  (+7003s)
@@ -342,7 +342,7 @@ detail:    no charter: authority is 'observe' only, 'act.relay_1' is class 'beni
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     observe_only
-record:    {"action_id":"a-37","mission_id":"","charter_id":"","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:00:56Z","ended_at":"2026-08-14T23:00:56Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"no_charter: no charter: authority is 'observe' only, 'act.relay_1' is class 'benign'"}
+record:    {"action_id":"a-37","mission_id":"","charter_id":"","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:00:56Z","ended_at":"2026-08-14T23:00:56Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"no_charter: no charter: authority is 'observe' only, 'act.relay_1' is class 'benign'"}
 
 ## step 38 — an observe-ceiling charter
 at:        2026-08-14T23:02:31Z  (+7100s)
@@ -357,7 +357,7 @@ detail:    'act.relay_1' is class 'benign', charter ceiling is 'observe'
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-39","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000002","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:02:32Z","ended_at":"2026-08-14T23:02:32Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"action_class_exceeded: 'act.relay_1' is class 'benign', charter ceiling is 'observe'"}
+record:    {"action_id":"a-39","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000002","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:02:32Z","ended_at":"2026-08-14T23:02:32Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"action_class_exceeded: 'act.relay_1' is class 'benign', charter ceiling is 'observe'"}
 
 ## step 40 — a routine the charter does not enable
 at:        2026-08-14T23:02:33Z  (+7102s)
@@ -367,7 +367,7 @@ detail:    'routine.cool' is class 'benign', charter ceiling is 'observe'
 effective: {} clamped=false evidence_required=false
 limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
 state:     chartered
-record:    {"action_id":"a-40","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000002","capability":"routine.cool","routine_id":"routine.cool","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:02:33Z","ended_at":"2026-08-14T23:02:33Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"detail":"action_class_exceeded: 'routine.cool' is class 'benign', charter ceiling is 'observe'"}
+record:    {"action_id":"a-40","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000002","capability":"routine.cool","routine_id":"routine.cool","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:02:33Z","ended_at":"2026-08-14T23:02:33Z","outcome":"refused","evidence_required":false,"evidence_refs":[],"evidence":[],"detail":"action_class_exceeded: 'routine.cool' is class 'benign', charter ceiling is 'observe'"}
 
 ## step 41 — an expired charter is refused with the validator's reasons
 at:        2026-08-14T23:04:11Z  (+7200s)

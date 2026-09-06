@@ -149,7 +149,15 @@ public sealed class SimController
         switch (uplink.Kind)
         {
             case EnvelopeKinds.ActionRecord:
-                if (Body<ActionRecord>(uplink) is { } record) account.Records.Add(record);
+                if (Body<ActionRecord>(uplink) is { } record)
+                {
+                    account.Records.Add(record);
+                    foreach (var inline in record.Evidence)          // a reduced-profile device's readings ride here
+                    {
+                        account.Evidence[inline.EvidenceId] = inline;
+                        evidenceIds.Add(inline.EvidenceId);
+                    }
+                }
                 break;
 
             case EnvelopeKinds.EvidenceBundle:

@@ -245,6 +245,8 @@ Every actuation produces an `action_record`:
   "outcome": "succeeded | failed | clamped | refused | stopped | unverified",
   "evidence_required": true,
   "evidence_refs": ["uuid"],
+  "evidence": [ { "evidence_id": "uuid", "type": "reading", "captured_at": "…", "source": "sense.temp",
+                  "payload_json": "{\"value\":22.5,\"unit\":\"C\",\"capability\":\"sense.temp\"}", "content_digest": "" } ],
   "detail": "…"
 }
 ```
@@ -263,6 +265,12 @@ Every actuation produces an `action_record`:
   `hazardous_prohibited`, `missing_parameter`, `unknown_parameter`, `duty_cycle`, `rate_limit`,
   `executor_missing`, `driver_fault`.
 - Refused actions are queued for the controller exactly like successful ones.
+- **`evidence` carries the referenced items themselves** (added in `v0.9.24`). A reduced-profile
+  device (§8) has no `evidence_bundle` and no evidence store, so this is the only road a reading has
+  to the controller: a device inlines every item its `evidence_refs` name. A Pi-class mound leaves
+  `evidence` empty — its items travel by `evidence_bundle` from the store, with the store's pressure
+  accounting — and a reader resolving `evidence_refs` looks in `evidence` first, then in its store.
+  An item present in both is the same item. The member is always present (`[]` when empty).
 - **Evidence gating is mechanical.** An outcome that asserts physical work happened (`succeeded`,
   `clamped`) survives only if every referenced evidence item resolves, parses, and — where
   `evidence.required_for` covers the capability — was captured within `min_interval_s` of the
@@ -349,16 +357,13 @@ kernel executors, and the service loop, all over a seven-function hardware abstr
 the host against a fake of it. `firmware/esp32` is the ESP-IDF project that binds that abstraction to
 a board; see `docs/ROADMAP.md` M5.
 
-**An open question in this profile: how a reading's value travels.** An `action_record` carries
-`evidence_refs` — the ids of the evidence items the device captured and gated on — not their values,
-and the reduced profile has no `evidence_bundle`. So today a constrained device takes a reading,
-verifies its own outcome with it, and reports the outcome and the reference; the controller does not
-receive the number. The C library keeps each item whole (`mm_evidence_produced`: id, `captured_at`,
-`type`, `source`, the §6 `reading` payload) so that whichever of the two additive answers is chosen —
-an `evidence` member on `action_record` carrying the fixed-shape items, or a bounded `evidence_bundle`
-admitted to the profile — costs a serializer, not a redesign. Either is additive under §10. The choice
-is deferred to the bench slice, where the controller's needs are visible; until then the sentence
-above ("fixed-shape readings ride on the action record") describes the intent, not the wire.
+**How a reading's value travels (settled in `v0.9.24`).** An `action_record` carries `evidence_refs`
+and, since `v0.9.24`, the referenced items themselves in `evidence` (§6). The reduced profile has no
+`evidence_bundle`, so a constrained device inlines every item it references; a reading reaches the
+controller on the record that cites it, and the controller's evidence gate can be satisfied from the
+record alone. The C kernel mirrors the host kernel exactly (it inlines nothing); the device loop
+(`mm_device`) sets the one switch that makes records self-contained. `device-session.txt` shows the
+result: every `succeeded`/`clamped` record a device sends carries its proof.
 
 **How a constrained device verifies a downlink envelope.** A signed envelope on the wire is its
 canonical bytes with the signature spliced into the last field, because `sig` is last by declaration
@@ -475,7 +480,9 @@ legal.
 **v0 is fluid until the first firmware ships.** No physical device is deployed and no firmware
 is in the field, so v0 has been amended in place rather than superseded — to add `mission_id`,
 `routine_id`, and `requested_parameters` to action records, `routines` to charters, the `config`
-and `mission_report` kinds, and (v0.9.18) to fix the string escaping rule above. That last one
+and `mission_report` kinds, (v0.9.18) to fix the string escaping rule above, and (v0.9.24) to add
+`evidence` to action records so a reduced-profile device's readings reach the controller — the last
+in-place amendment before a firmware image exists to ship. The escaping fix
 changed no golden byte — every fixture was ASCII — but it changed what a non-ASCII string
 canonicalizes to, from "whatever this runtime's relaxed encoder does" to a rule a C encoder can
 hold. Once a firmware build is in the field this stops: from that point a change to these bytes

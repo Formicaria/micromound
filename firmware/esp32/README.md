@@ -101,10 +101,6 @@ firmware/esp32/
 - **The bench run.** Flash, enroll against a controller, watch a beat, read the heap high-water mark
   through a TLS exchange. The first slice of real hardware, and the one that turns this README's
   "compiles" into "runs on".
-- **How a reading's value travels.** The action record carries `evidence_refs`, not values, and the
-  reduced profile has no `evidence_bundle` — PROTOCOL.md §8 names the two additive options and
-  defers the choice to the bench, where the controller's needs are visible. The library already keeps
-  each reading whole (`mm_evidence_produced`), so either answer is a serializer.
 - **The Pi↔ESP32 packet protocol** (ROADMAP M5), for a controller subordinate to a Pi-class mound
   rather than enrolled directly upstream.
 - **Layer 0.** E-stops and interlocks wired outside the MCU's control, reported as observed facts

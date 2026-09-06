@@ -41,6 +41,28 @@ typedef struct mm_mound_sync {
 } mm_mound_sync;
 void mm_body_mound_sync(mm_json *w, const void *ctx);
 
+/* ---- evidence item (Micromound.Protocol.EvidenceItem), as it rides inline on an action_record ---- */
+typedef struct mm_evidence_item {
+    const char *evidence_id;
+    const char *type;                       /* reading | sensor_window | image_ref | telemetry_summary | outcome_code */
+    const char *captured_at;
+    const char *source;
+    const char *payload_json;               /* a JSON document as a STRING (escaped on the wire); "" when none */
+    const char *content_digest;             /* "" unless image_ref */
+} mm_evidence_item;
+void mm_write_evidence_item(mm_json *w, const mm_evidence_item *item);
+
+/* ---- evidence_bundle (uplink, full profile only; Micromound.Protocol.EvidenceBundle). Not in the
+   reduced profile (§8) — here so the item shape is pinned against the golden bundle. ---- */
+typedef struct mm_evidence_bundle {
+    const char *bundle_id;
+    const mm_evidence_item *items;
+    size_t n_items;
+    long long evicted_acked_items;
+    long long spilled_unacked_items;
+} mm_evidence_bundle;
+void mm_body_evidence_bundle(mm_json *w, const void *ctx);
+
 /* ---- action_record (uplink; Micromound.Protocol.ActionRecord) ---- */
 typedef struct mm_action_record {
     const char *action_id;
@@ -58,6 +80,8 @@ typedef struct mm_action_record {
     int evidence_required;
     const char *const *evidence_refs;
     size_t n_evidence_refs;
+    const mm_evidence_item *evidence;       /* the referenced items inline (a device); NULL/0 on a Pi (they travel by bundle) */
+    size_t n_evidence;
     const char *detail;
 } mm_action_record;
 void mm_body_action_record(mm_json *w, const void *ctx);

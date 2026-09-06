@@ -9,6 +9,7 @@
 #include "mm_test.h"
 #include "mm_decode.h"
 #include "mm_device.h"
+#include "mm_drivers.h"
 #include "mm_ed25519.h"
 #include "mm_envelope.h"
 #include "mm_sha256.h"
@@ -50,6 +51,14 @@ static int fake_run(void *ctx, const mm_execution *x, mm_outcome *out)
     f->n++;
     snprintf(out->evidence[0].id, MM_ID_CAP, "e-%s-%d", f->id, f->n);
     mm_time_format(x->started_at, out->evidence[0].captured_at, MM_TIME_TEXT_CAP);
+    snprintf(out->evidence[0].source, MM_NAME_CAP, "%s", f->id);
+    if (strncmp(f->id, "sense.", 6) == 0) {          /* a reading: the number the controller will see inline */
+        strcpy(out->evidence[0].type, "reading");
+        mm_reading_payload(21.5 + f->n, "C", f->id, out->evidence[0].payload_json, MM_PAYLOAD_CAP);
+    } else {                                          /* an actuator's own observation of the line */
+        strcpy(out->evidence[0].type, "sensor_window");
+        strcpy(out->evidence[0].payload_json, "{\"before\":0,\"after\":1}");
+    }
     out->n_evidence = 1;
     return 0;
 }

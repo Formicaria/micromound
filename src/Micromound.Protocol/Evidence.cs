@@ -75,6 +75,16 @@ public sealed class ActionRecord
     [JsonPropertyName("evidence_refs")] public List<string> EvidenceRefs { get; set; } = [];
 
     /// <summary>
+    /// The referenced items themselves, riding with the record (added in `v0.9.24`, PROTOCOL.md §6).
+    /// A reduced-profile device has no <c>evidence_bundle</c> and no evidence store, so this is the
+    /// only way its readings reach the controller: it inlines every item it references. A Pi-class
+    /// mound leaves this empty — its items travel by <c>evidence_bundle</c> from the store, with the
+    /// store's pressure accounting. A reader resolving <see cref="EvidenceRefs"/> looks here first,
+    /// then in its store; an item present in both is the same item.
+    /// </summary>
+    [JsonPropertyName("evidence")] public List<EvidenceItem> Evidence { get; set; } = [];
+
+    /// <summary>
     /// Why this outcome, in words: the limit that clamped it, the rule that refused it, the
     /// evidence that was missing. SAFETY.md prohibits silent failure, so every non-success
     /// outcome carries its reason on the wire.
