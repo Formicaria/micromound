@@ -99,20 +99,19 @@ jobs:
             EXTRA_LDFLAGS="-fsanitize=address,undefined" test
 
   esp32:
-    # ADVISORY. firmware/esp32 is written against ESP-IDF v5.2+ and has not yet been compiled on a
-    # bench (its README says so). This job is the first toolchain that sees it; a failure here is
-    # information for the bench slice, not a broken build of anything that ships — hence
-    # continue-on-error. Everything the project calls is tested on the host by the c-mirror job.
-    name: ESP-IDF build (firmware/esp32, advisory)
+    # firmware/esp32 compiles under ESP-IDF v5.3.2 (v0.9.23); this job keeps it compiling. It has
+    # not run on a board yet — that is the bench slice, and its README says so. Everything the
+    # project calls is tested on the host by the c-mirror job; this job proves the HAL binding and
+    # the whole image still build against the pinned IDF.
+    name: ESP-IDF build (firmware/esp32)
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: idf.py build
         uses: espressif/esp-idf-ci-action@v1
         with:
-          esp_idf_version: v5.3
+          esp_idf_version: v5.3.2
           target: esp32
           path: firmware/esp32
 

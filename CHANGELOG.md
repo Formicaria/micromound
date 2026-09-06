@@ -12,6 +12,47 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.23 — M5: the ESP32 firmware compiles
+
+`firmware/esp32` built under ESP-IDF v5.3.2 for the `esp32` target: `micromound_esp32.bin`, 1,025,484
+bytes. The first real toolchain to see the board project, one release after it was written. No wire
+change; no new refusal reason; nothing about the kernel changed. **Not yet flashed or run on a board.**
+
+### Changed
+
+- **`firmware/esp32` compiles.** `idf.py set-target esp32 && idf.py build` under ESP-IDF v5.3.2 (xtensa
+  gcc 13.2) succeeds with no warnings from MicroMound's own files. Measured at link: image 1,025,484 B
+  (33% of the 1.5 MB app partition free); `libmicromound_c.a` 37.8 KB of flash code + 2.3 KB rodata;
+  `libmain.a` 40.2 KB of `.bss` — the static `mm_app` (device queue, link buffer, HAL context) — with
+  DRAM 41.5% used and 105 KB left for Wi-Fi and the TLS handshake; IRAM 73% (all ESP-IDF's).
+- **`MM_DEVICE_QUEUE=8` project-wide on the board** (`CMakeLists.txt`, `idf_build_set_property` so every
+  component agrees on `sizeof(mm_app)`): an uplink queue of 8 envelopes — a beat and seven records; a
+  full queue refuses to record and audits it, as before — saves 16 KB of DRAM against the host default
+  of 16. The host tests pass at both capacities (`make test EXTRA_CFLAGS=-DMM_DEVICE_QUEUE=8`).
+- **Two audit lines in `mm_device`**, composed from ids and a mound name, are now built in a
+  `MM_DETAIL_CAP` buffer and bounded to `MM_REASON_CAP` by `audit()` (they were composed directly in the
+  smaller buffer; gcc 13's format-truncation heuristic at `-Og` refused it, correctly — the line could
+  exceed the buffer with maximal ids). Same text on the wire and in the audit; nothing else moved.
+- `hal_esp32.c`: `ADC_ATTEN_DB_12` used directly (it is an enum, not a macro, so the `#ifdef` fallback to
+  the deprecated `_DB_11` name never took and warned).
+- **CI: the `esp32` job is no longer advisory.** It builds `firmware/esp32` with `esp_idf_version:
+  v5.3.2` on every push; a red job now means the image stopped building.
+- Docs: esp32 README status line ("compiles; not yet flashed or run"), micromound-c README portability
+  note on the target toolchain, ROADMAP M5, README.
+
+### Notes
+
+- What "compiles" does and does not say. It says the HAL binding uses the IDF v5.3 API surface
+  correctly by the compiler's lights and that the whole image links within its partition and its RAM.
+  It does not say the board enrolls, beats, or survives a TLS handshake on the heap that is left — those
+  are the bench slice, with a heap high-water-mark reading as its first deliverable.
+- Toolchain notes for whoever builds next: `IDF_PYTHON_CHECK_CONSTRAINTS=no` needs
+  `idf-component-manager~=1.5` pinned by hand (the latest one rejects v5.3's interface version);
+  `IDF_GITHUB_ASSETS=github.com` fetches the toolchain from GitHub releases where dl.espressif.com is
+  unreachable. Neither is in the repository; both are the environment's problem, not the project's.
+
+---
+
 ## v0.9.22 — M5: the board layer, host-simulated — enrollment, transport, drivers and the service loop in C; the ESP-IDF project exists
 
 Everything a constrained board runs above its hardware, written over a seven-function hardware

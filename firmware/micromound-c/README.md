@@ -242,9 +242,9 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
 
 ## What this is not, yet
 
-- **Not yet on a board.** [`firmware/esp32`](../esp32/README.md) binds `mm_hal` to ESP-IDF — the
-  clock, `esp_http_client`, NVS, GPIO, ADC — in one file, and is written but not yet compiled on a
-  bench. Everything above that file has run, here.
+- **Not yet run on a board.** [`firmware/esp32`](../esp32/README.md) binds `mm_hal` to ESP-IDF — the
+  clock, `esp_http_client`, NVS, GPIO, ADC — in one file, and compiles to a 1.0 MB image under ESP-IDF
+  v5.3.2 (37.8 KB of it is this library). Everything above that file has run, here; the board has not.
 - **Not fast.** TweetNaCl signs in tens of milliseconds on an ESP32-class core; adequate for a sync
   beat, not for anything hotter. The backend sits behind `mm_ed25519.h` and the tests prove a swap
   did not change the bytes.
@@ -254,6 +254,10 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
 
 - Requires a correctly rounded `printf("%.*e")` and `strtod` (glibc, musl, newlib, MSVCRT ≥ 2015).
   `canonical-doubles.txt` is the check for the libc in use; run `make test` on the target toolchain.
+  The xtensa gcc 13 in ESP-IDF v5.3.2 compiles the library at `-Og -Wall -Werror=all -Wextra`; its
+  format-truncation heuristic wants composed audit lines built in a buffer as large as their parts
+  (`MM_DETAIL_CAP`) before they are bounded to `MM_REASON_CAP` — which is how they are written now.
+  The library has not yet run on the target (see `firmware/esp32`).
 - Integer widths: `long long` for C# `long`, `double` for everything the protocol types as a number.
   TweetNaCl's `u32` is `unsigned long` and is masked where it matters. The sanitizer build in CI
   (ASan + UBSan, every finding fatal) is clean, with one named exemption: `shift-base`, which

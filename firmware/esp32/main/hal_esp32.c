@@ -1,7 +1,7 @@
 /*
- * hal_esp32 — mm_hal over ESP-IDF v5.x. Written against the v5.2+ APIs (adc_oneshot, adc_cali,
- * esp_http_client, esp_crt_bundle, NVS) and not yet compiled on a bench — see the README's status
- * line; this is the file the first bench build will correct.
+ * hal_esp32 — mm_hal over ESP-IDF v5.x (adc_oneshot, adc_cali, esp_http_client, esp_crt_bundle,
+ * NVS). Compiles under ESP-IDF v5.3.2 for the esp32 target; not yet flashed or run on a board —
+ * see the README's status line.
  *
  * Every function keeps the HAL's contract: 0 on success, -1 on a failure the library handles
  * (offline, absent key, a line that will not drive). Nothing here panics on a controller that is
@@ -178,11 +178,7 @@ static int adc_channel_ready(hal_ctx *h, int channel)
     adc_oneshot_chan_cfg_t cc;
     adc_atten_t atten;
     if (h->channel_ready[channel]) return 0;
-#ifdef ADC_ATTEN_DB_12
-    atten = ADC_ATTEN_DB_12;                                  /* 0 – ~3.1 V on the ESP32 */
-#else
-    atten = ADC_ATTEN_DB_11;
-#endif
+    atten = ADC_ATTEN_DB_12;                                  /* 0 – ~3.1 V on the ESP32 (ESP-IDF v5.2+ name) */
     memset(&cc, 0, sizeof cc);
     cc.atten = atten;
     cc.bitwidth = ADC_BITWIDTH_DEFAULT;

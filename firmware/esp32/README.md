@@ -8,13 +8,14 @@ seven-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal
 the host against a fake of it (`tests/test_board.c`). What this directory adds is the one file that
 knows it is on an ESP32 — `main/hal_esp32.c` — plus the board description and `app_main`.
 
-**Status: written against ESP-IDF v5.2+, not yet compiled on a bench.** Nothing in this directory
-has run on silicon. Every line of logic it calls has run on the host; the API surface it binds to
-(`esp_http_client`, `adc_oneshot`/`adc_cali`, NVS, `gpio`, `esp_netif_sntp`) is used as documented
-and syntax-checked against stubs, but the first `idf.py build` on a real toolchain will be the
-correction pass. It is committed now so that pass has something to correct, and so that the shape of
-the port — what a board must supply, and how little — is visible in the tree. The `esp32` CI job is
-advisory (`continue-on-error`) for the same reason.
+**Status: compiles under ESP-IDF v5.3.2 for the `esp32` target; not yet flashed or run on a board.**
+`idf.py build` produces `micromound_esp32.bin` — 1,025,484 bytes (33% of the 1.5 MB app partition
+free), with `libmicromound_c.a` at 37.8 KB of flash code and the static `mm_app` at 40 KB of DRAM
+(uplink queue of 8; DRAM 41.5% used at link, 105 KB left for Wi-Fi and the TLS handshake). The CI job
+`esp32` builds it on every push with the same IDF version. Every line of logic it calls has run on
+the host; the HAL binding has been compiled, not exercised — enrolling against a controller,
+watching a beat, and reading the heap high-water mark under TLS are the bench slice, and the README
+will say "runs on" only after that.
 
 ## What a board supplies
 
@@ -84,7 +85,7 @@ empty means "use the root bundle").
 
 ```text
 firmware/esp32/
-  CMakeLists.txt                 the project; pulls protocol_examples_common for Wi-Fi
+  CMakeLists.txt                 the project; pulls protocol_examples_common for Wi-Fi; MM_DEVICE_QUEUE=8 project-wide
   sdkconfig.defaults             1.5 MB app partition, 32 KB main-task stack, task watchdog (panic → reboot → safe), TLS bundle
   main/
     app_main.c                   boot order, clock wait, the tick loop, the watchdog
@@ -97,8 +98,9 @@ firmware/esp32/
 
 ## What is still ahead
 
-- **The bench build.** Compile, flash, enroll against a controller, watch a beat. The first slice of
-  real hardware, and the one that turns this README's "written against" into "runs on".
+- **The bench run.** Flash, enroll against a controller, watch a beat, read the heap high-water mark
+  through a TLS exchange. The first slice of real hardware, and the one that turns this README's
+  "compiles" into "runs on".
 - **How a reading's value travels.** The action record carries `evidence_refs`, not values, and the
   reduced profile has no `evidence_bundle` — PROTOCOL.md §8 names the two additive options and
   defers the choice to the bench, where the controller's needs are visible. The library already keeps

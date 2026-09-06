@@ -144,7 +144,7 @@ static void publish_ack(mm_device *d, const char *status, const char *refers_to,
 /* RunnerAnt.Verify: signature, addressing, shape — dropped and audited, never processed, otherwise. */
 static int verify(mm_device *d, const mm_wire *w, mm_envelope_in *frame)
 {
-    char line[MM_REASON_CAP], joined[MM_REASON_CAP];
+    char line[MM_DETAIL_CAP], joined[MM_REASON_CAP];   /* composed here whole; audit() bounds it to MM_REASON_CAP */
     mm_refusal why;
     int err;
 
@@ -159,8 +159,8 @@ static int verify(mm_device *d, const mm_wire *w, mm_envelope_in *frame)
     }
     if (seen(d, frame->id)) return 0;                               /* re-delivery: idempotent, silent */
     if (strcmp(frame->mound_id, d->cfg.mound_id) != 0) {
-        snprintf(line, sizeof line, "downlink %s (%s) dropped: addressed to '%s', this mound is '%s'",
-                 frame->id, frame->kind, frame->mound_id, d->cfg.mound_id);
+        snprintf(line, sizeof line, "downlink %.63s (%.23s) dropped: addressed to '%.63s', this mound is '%.63s'",
+                 frame->id, frame->kind, frame->mound_id, d->cfg.mound_id);   /* precisions = the fields' caps, for gcc's truncation heuristic */
         audit(d, line);
         return 0;
     }
