@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.24
+**Current version:** v0.9.25
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.24`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.25`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -136,12 +136,14 @@ trip against a fake of it; `firmware/esp32` binds that abstraction to ESP-IDF in
 `v0.9.23` — **compiles**: a 1.0 MB image under ESP-IDF v5.3.2, built by CI on every push, not yet flashed
 or run — and, new in `v0.9.24`, **a device's readings reach the controller**: `action_record` carries its
 referenced evidence items inline (the last in-place v0 wire amendment; every fixture regenerated), so the
-host's evidence gate is satisfied by a board's record alone. What's still ahead for M4 is only the board
-itself. End-to-end simulator missions run against an in-process controller that verifies every
+host's evidence gate is satisfied by a board's record alone — and, new in `v0.9.25`, **the Pi↔ESP32
+link**: the board's exchanges framed over a serial cable to `micromound --bridge` on a Pi (PROTOCOL.md
+§12, pinned by `link-frames.txt` at both ends), and a second firmware image with no network stack at
+all. What's still ahead for M4 is only the board itself. End-to-end simulator missions run against an in-process controller that verifies every
 byte. The v0 canonical bytes of every existing fixture are unchanged. The host has both a real digital
 line and a real analog channel available, but has not yet been run on a device against real hardware —
-that boundary finishes M4; what remains of M5 is the bench run of `firmware/esp32` and the Pi↔ESP32
-packet protocol. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+that boundary finishes M4; what remains of M5 is the bench run of `firmware/esp32` and the arrangement
+in which a Pi's kernel routes bounded requests to the board over the link. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real
@@ -185,7 +187,7 @@ src/Micromound.Host/           the headless Linux/Pi daemon
 src/Micromound.Sim/            simulated mounds — the real kernel over fake hardware
 deploy/                        systemd unit, environment template, installer for a Pi
 firmware/micromound-c/         the C mirror: wire format, reader, kernel, device loop and board layer of a reduced-profile mound (C99, host-tested)
-firmware/esp32/                the ESP-IDF project: mm_hal bound to SNTP/HTTPS/NVS/GPIO/ADC, app_main, the board (compiles under IDF v5.3.2; not yet run)
+firmware/esp32/                the ESP-IDF project: mm_hal bound to SNTP/HTTPS or a serial link, NVS/GPIO/ADC, app_main, the board (compiles under IDF v5.3.2; not yet run)
 tests/Micromound.Tests/        contract, authority, kernel, evidence, and golden-byte tests
 ```
 

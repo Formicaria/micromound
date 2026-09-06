@@ -501,3 +501,49 @@ C99, no allocation) — the encoder half of the firmware, proven before any boar
 As of `v0.9.19` it also reads: the frame and the `charter`/`stop`/`ack` bodies decode into fixed
 structs, validate with the host's rules and refusal reasons, and `canonical-signed.txt` pins four
 real signed envelopes that BouncyCastle and TweetNaCl produce and verify identically.
+
+## 12. The Pi↔ESP32 link (serial framing)
+
+A constrained controller (§8) makes exactly two kinds of HTTP exchange: the §3 enrollment POST and
+the §1 sync POST. A board with no network of its own makes the same two exchanges over a byte
+stream — a UART, USB-serial, a socket — to a **bridge** on a Pi-class host, which performs the HTTPS
+half against the controller and hands the answer back. The bridge is transport, not authority: it
+holds no key, verifies nothing, and alters no byte. The envelopes inside are signed end to end by
+the board and by the controller, and a bridge that changed one would only produce something the
+other side refuses. "Discovering" a board is the bridge seeing its first frame.
+
+**Frame (normative).** Little-endian throughout:
+
+```text
+"MM"  ver(1)  type(1)  seq(1)  len(2)  payload(len)  crc32(4)
+```
+
+- `ver` is `1`. A frame of any other version is dropped, never interpreted.
+- `type` is `0x01` request (board → bridge) or `0x02` response (bridge → board).
+- `seq` is the board's request counter; a response echoes it. A response for another `seq` is a
+  late answer to a request the board already gave up on, and is ignored.
+- `len` caps at 8192 (`MM_FRAME_MAX_PAYLOAD`, `LinkFrame.MaxPayload`): one sync response.
+- `crc32` is the IEEE 802.3 CRC-32 (the zlib polynomial, reflected, init and final xor
+  `FFFFFFFF`) over every byte before it, magic to payload. A frame that fails it is dropped and
+  counted; the decoder then resynchronises on the next `"MM"`.
+
+**Payloads (normative).** A request payload is `path '\n' body` — the same path the board would
+POST to (`micromound/v0/enroll`, `micromound/v0/sync`) and the same body, byte for byte. A response
+payload is `status '\n' body` — the HTTP status in decimal (at most three digits) and the response
+body, byte for byte. Status `0` means the bridge could not exchange at all — no link, DNS, TLS, a
+timeout — which the board reads exactly as its own HAL reads "offline": nothing happened, retry on
+the next beat. A 4xx or 5xx travels as itself.
+
+**The one request a bridge answers itself.** `micromound/link/time` (body `{}`) is answered `200`
+with `{"epoch_s":N}`, the bridge host's UTC clock, so a board with no NTP can have one. A bridge
+relays nothing outside `micromound/v0/`: any other path is answered `404` and never reaches the
+network — the link carries the protocol, not the Pi's network.
+
+**Timing.** The link is synchronous: one request in flight, the response awaited with a first-byte
+timeout that covers the bridge's HTTPS round trip and an inter-byte timeout for a stalled stream.
+A timeout is offline.
+
+Both ends are pinned by `link-frames.txt`: `Micromound.Host.LinkFrame` freezes the CRC and eleven
+frames; `firmware/micromound-c/mm_frame` must encode every case to the same bytes and decode every
+frame to the same payload. `mm_serial` is the board's HAL `http_post_json` over the link;
+`micromound --bridge <device> --controller <url>` is the Pi's side.

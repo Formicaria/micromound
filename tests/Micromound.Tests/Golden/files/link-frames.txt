@@ -1,0 +1,96 @@
+# MICROMOUND link frames — golden fixture
+#
+# Frozen by tests/Micromound.Tests/Golden/LinkFramesTests.cs from Micromound.Host.LinkFrame (PROTOCOL.md §12).
+# frame = "MM" ver(1) type(1) seq(1) len(2 LE) payload crc32(4 LE); crc32 = IEEE 802.3 over magic..payload.
+# The C mm_frame must encode every case to `frame:` and decode `frame:` back to `payload:`.
+
+crc32:     313233343536373839 -> cbf43926
+crc32:     (empty) -> 00000000
+
+## a beat
+type:      request
+seq:       1
+path:      micromound/v0/sync
+body:      {"v":0,"kind":"mound_sync"}
+payload:   6d6963726f6d6f756e642f76302f73796e630a7b2276223a302c226b696e64223a226d6f756e645f73796e63227d
+frame:     4d4d0101012e006d6963726f6d6f756e642f76302f73796e630a7b2276223a302c226b696e64223a226d6f756e645f73796e63227d3dec6b11
+
+## an enrollment
+type:      request
+seq:       2
+path:      micromound/v0/enroll
+body:      {"token":"tok-0001"}
+payload:   6d6963726f6d6f756e642f76302f656e726f6c6c0a7b22746f6b656e223a22746f6b2d30303031227d
+frame:     4d4d01010229006d6963726f6d6f756e642f76302f656e726f6c6c0a7b22746f6b656e223a22746f6b2d30303031227d32407327
+
+## the time
+type:      request
+seq:       3
+path:      micromound/link/time
+body:      {}
+payload:   6d6963726f6d6f756e642f6c696e6b2f74696d650a7b7d
+frame:     4d4d01010317006d6963726f6d6f756e642f6c696e6b2f74696d650a7b7dc426bd67
+
+## an empty body
+type:      request
+seq:       255
+path:      micromound/v0/sync
+body:      
+payload:   6d6963726f6d6f756e642f76302f73796e630a
+frame:     4d4d0101ff13006d6963726f6d6f756e642f76302f73796e630a1df71f1c
+
+## nothing downlink
+type:      response
+seq:       1
+status:    200
+body:      
+payload:   3230300a
+frame:     4d4d01020104003230300adf397d34
+
+## one envelope down
+type:      response
+seq:       1
+status:    200
+body:      [{"v":0,"kind":"ack"}]
+payload:   3230300a5b7b2276223a302c226b696e64223a2261636b227d5d
+frame:     4d4d0102011a003230300a5b7b2276223a302c226b696e64223a2261636b227d5df6bea748
+
+## the time
+type:      response
+seq:       3
+status:    200
+body:      {"epoch_s":1786741451}
+payload:   3230300a7b2265706f63685f73223a313738363734313435317d
+frame:     4d4d0102031a003230300a7b2265706f63685f73223a313738363734313435317d24aa985e
+
+## offline: the bridge could not exchange
+type:      response
+seq:       4
+status:    0
+body:      
+payload:   300a
+frame:     4d4d0102040200300adb3ce9f0
+
+## refused: not a protocol path
+type:      response
+seq:       5
+status:    404
+body:      not a protocol path
+payload:   3430340a6e6f7420612070726f746f636f6c2070617468
+frame:     4d4d01020517003430340a6e6f7420612070726f746f636f6c207061746855689f9f
+
+## a controller error
+type:      response
+seq:       6
+status:    500
+body:      {"error":"db"}
+payload:   3530300a7b226572726f72223a226462227d
+frame:     4d4d01020612003530300a7b226572726f72223a226462227d6143cba2
+
+## seq wraps
+type:      response
+seq:       0
+status:    200
+body:      []
+payload:   3230300a5b5d
+frame:     4d4d01020006003230300a5b5db2cdb701

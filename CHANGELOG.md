@@ -12,6 +12,68 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.25 — M5: the Pi↔ESP32 link — the same exchanges, framed over a serial cable to a bridge
+
+The "compact versioned Pi↔ESP32 packet protocol" the roadmap has carried since M5 was named, now
+specified (PROTOCOL.md §12), pinned by a fixture both sides must reproduce, implemented at both ends,
+and built into a second firmware image a third the size of the first. No change to any envelope: the
+link carries the signed protocol byte for byte, and a bridge that altered one would only produce
+something the other side refuses. No authority moves — the bridge holds no key.
+
+### Added
+
+- **PROTOCOL.md §12.** A frame is `"MM" ver(1) type(1) seq(1) len(2 LE) payload crc32(4 LE)`, the
+  CRC the IEEE 802.3 (zlib) CRC-32 over everything before it; a request payload is `path '\n' body`,
+  a response payload `status '\n' body`, with status `0` meaning the bridge could not exchange at all
+  — read by the board exactly as its own HAL reads "offline". A response echoes the request's `seq`;
+  another `seq` is a late answer and is ignored. One request the bridge answers itself:
+  `micromound/link/time` → `{"epoch_s":N}`. Nothing outside `micromound/v0/` is relayed (404).
+- **Fixture `link-frames.txt`** (`tests/Micromound.Tests/Golden/LinkFramesTests.cs`): the CRC-32 of
+  `123456789` and of nothing, and eleven frames — beats, an enrollment, the time, an empty body,
+  nothing downlink, one envelope down, offline, refused, a controller error, a wrapped `seq` — as
+  `Micromound.Host.LinkFrame` encodes them. Added to the CI golden guard.
+- **`Micromound.Host.LinkFrame` / `LinkFrameDecoder`**: the codec and an incremental decoder that
+  resynchronises on the magic and drops — and counts — the wrong version, an oversize length, a bad CRC.
+  **`LinkBridge`**: the Pi side — reads request frames off any `Stream`, relays each to the controller
+  over HTTPS byte for byte (`application/json`, the daemon's timeout), frames the status and body back,
+  answers the clock, refuses off-protocol paths, counts requests/relayed/offline/refused.
+  **`micromound --bridge <device> --controller <url>`**: runs only the bridge — no mound, no key —
+  reopening the device when the board is unplugged. Tests: the relay is untouched and echoes `seq`; an
+  unreachable controller is status 0 and a 409 is a 409; the time; four off-protocol paths refused and
+  never seen by the network; a malformed payload is 400; `Serve` over a stream with junk, a stray
+  response frame, and two requests answers in order.
+- **`mm_frame`** (`firmware/micromound-c`): the same codec and decoder in C99, no allocation, with the
+  same drop-and-resync rules and counters. **`mm_serial`**: the HAL's `http_post_json` over a byte
+  stream (two callbacks: write all, read one byte with a timeout) — first-byte and inter-byte timeouts
+  are offline; stale responses are skipped; `mm_serial_time` asks the bridge's clock. `test_frame.c`:
+  every fixture frame encoded and decoded byte for byte; the decoder's rules (garbage, a bad CRC, the
+  wrong version, oversize, joined mid-frame, a lone magic byte, back-to-back frames, refused encodes);
+  `mm_serial` over a fake pipe with a scripted bridge (a beat, a 409, a 500, offline, a silent bridge,
+  a stale answer first, the time, a truncated body, 260 requests through the `seq` wrap). 2,402 checks.
+- **`firmware/esp32`: two link configurations.** `CONFIG_MM_LINK_WIFI` (as before) or
+  `CONFIG_MM_LINK_SERIAL`: `hal_esp32.c` swaps `http_post_json` for `mm_serial_post_json` over a UART
+  (`uart_driver_install`, `uart_read_bytes` with the link's timeouts), asks the bridge for the clock at
+  boot and hourly (`settimeofday`), and `app_main` brings up no Wi-Fi and no SNTP. `sdkconfig.defaults.serial`
+  is the overlay (UART 0 — the USB cable that flashes the board — with the console off, since they share
+  it). Measured: the serial image is **295,940 bytes** (81% of the partition free, DRAM 35% used) against
+  the Wi-Fi image's 1,026,224 — the linker drops Wi-Fi and TLS entirely. CI builds both.
+- `docs/DEPLOY.md` §7: a board on the bench through the Pi — `stty … raw -echo`, `micromound --bridge`.
+
+### Notes
+
+- What the link is and is not. It makes a Pi the board's *transport*: the board is still enrolled
+  upstream under its own key, chartered by the controller, and its records are its own. It does not
+  make the Pi the board's *authority* — the acceptance bench's "a generic driver sends a bounded request
+  to the ESP32" is a different arrangement, on top of this link, and is now the one M5 item left
+  undesigned (`firmware/esp32/README.md`, "What is still ahead").
+- The bridge opens the device as a plain file (`FileStream`), not through `System.IO.Ports`, so the
+  line discipline must be set first (`stty … raw -echo`) — and so any byte stream with a path works,
+  a pseudo-terminal included.
+- `MM_FRAME_MAX_PAYLOAD` (8192) equals `MM_LINK_RESPONSE_CAP`: a downlink batch the link cannot carry
+  is answered as status 0 by the bridge rather than truncated into something the board would misread.
+
+---
+
 ## v0.9.24 — M5: readings reach the controller — `evidence` rides on the action record
 
 **This release changes the canonical wire bytes of every `action_record`** — the in-place v0

@@ -12,11 +12,16 @@ extern "C" {
 #endif
 
 /*
- * Fills *hal. controller_url is the base ("https://host:port/", trailing slash). Opens NVS
- * (namespace "micromound") and the ADC unit. Returns 0, or -1 when NVS cannot be opened — a board
- * without protected storage has no identity and must not run.
+ * Fills *hal. controller_url is the base ("https://host:port/", trailing slash) for the Wi-Fi link,
+ * ignored for the serial link (CONFIG_MM_LINK_SERIAL: the same exchanges go to a bridge over a UART,
+ * and the clock is asked of the bridge). Opens NVS (namespace "micromound") and the ADC unit. Returns
+ * 0, or -1 when NVS cannot be opened — a board without protected storage has no identity and must not
+ * run.
  */
 int mm_hal_esp32_init(mm_hal *hal, const char *controller_url);
+
+/* Serial link only: ask the bridge for the time and set the system clock. Returns 0, or -1 when it did not answer. */
+int mm_hal_esp32_sync_clock(void);
 
 /* Bench provisioning: store the one-time token unless a token or a controller key is already stored. */
 void mm_hal_esp32_provision_token(const mm_hal *hal, const char *token);

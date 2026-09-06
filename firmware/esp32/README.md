@@ -8,14 +8,19 @@ seven-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal
 the host against a fake of it (`tests/test_board.c`). What this directory adds is the one file that
 knows it is on an ESP32 — `main/hal_esp32.c` — plus the board description and `app_main`.
 
-**Status: compiles under ESP-IDF v5.3.2 for the `esp32` target; not yet flashed or run on a board.**
-`idf.py build` produces `micromound_esp32.bin` — 1,025,484 bytes (33% of the 1.5 MB app partition
-free), with `libmicromound_c.a` at 37.8 KB of flash code and the static `mm_app` at 40 KB of DRAM
-(uplink queue of 8; DRAM 41.5% used at link, 105 KB left for Wi-Fi and the TLS handshake). The CI job
-`esp32` builds it on every push with the same IDF version. Every line of logic it calls has run on
-the host; the HAL binding has been compiled, not exercised — enrolling against a controller,
-watching a beat, and reading the heap high-water mark under TLS are the bench slice, and the README
-will say "runs on" only after that.
+**Status: compiles under ESP-IDF v5.3.2 for the `esp32` target, in both link configurations; not
+yet flashed or run on a board.** Every line of logic it calls has run on the host; the HAL binding
+has been compiled, not exercised — enrolling against a controller and watching a beat are the bench
+slice, and this README will say "runs on" only after that. The CI job `esp32` builds both images on
+every push with the same IDF version.
+
+| Configuration | Image | DRAM at link | What the board needs |
+|---|---|---|---|
+| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,026,224 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
+| **Serial link** (`sdkconfig.defaults.serial`) | 295,940 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
+
+`libmicromound_c.a` is 38–39 KB of flash code either way; the static `mm_app` is 40 KB of DRAM
+(uplink queue of 8), plus 11 KB for the serial link's frame decoder in the serial image.
 
 ## What a board supplies
 
@@ -38,6 +43,16 @@ from `main/certs/controller_ca.pem` — never an insecure mode), NVS blobs in th
 namespace, `gpio_set_level`, and `adc_oneshot` with the target's calibration scheme. Everything above
 it — `mm_app`, `mm_enroll`, `mm_link`, `mm_drivers`, `mm_device`, `mm_kernel` — is the library,
 compiled unchanged from `../micromound-c/src` by `components/micromound_c`.
+
+**The serial link** (`CONFIG_MM_LINK_SERIAL`, PROTOCOL.md §12) swaps one of the seven: `http_post_json`
+becomes `mm_serial_post_json` — the same path and body, framed over a UART to a Pi running
+`micromound --bridge`, which performs the HTTPS half and frames the status and body back — and the
+clock is asked of the bridge (`micromound/link/time`) at boot and hourly instead of SNTP. Nothing else
+changes: not the identity, not the enrollment, not a byte of any envelope. The board then has no
+network stack at all, which is why that image is a third the size and why the heap question of the
+Wi-Fi image does not arise. By default the link is UART 0 — the USB-serial cable that flashes the
+board — so the console log is off in that configuration (it would corrupt the frames); use
+`CONFIG_MM_SERIAL_UART=1` with TX/RX pins to keep the console.
 
 ## What the board does
 
@@ -69,8 +84,11 @@ actuates on a zero clock** — and then hands everything to `mm_app`, one tick a
 . $IDF_PATH/export.sh
 cd firmware/esp32
 idf.py set-target esp32
-idf.py menuconfig          # Example Connection Configuration → Wi-Fi; MicroMound controller → URL, mound id, token, pins
+idf.py menuconfig          # Example Connection Configuration → Wi-Fi; MicroMound controller → link, URL, mound id, token, pins
 idf.py build flash monitor
+
+# the serial-link image instead (no Wi-Fi; a Pi bridges — DEPLOY.md §7):
+idf.py -B build-serial -DSDKCONFIG=sdkconfig.serial -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.serial" build flash
 ```
 
 `main/Kconfig.projbuild` holds the controller URL, the mound id, the enrollment token (bench
@@ -87,9 +105,10 @@ empty means "use the root bundle").
 firmware/esp32/
   CMakeLists.txt                 the project; pulls protocol_examples_common for Wi-Fi; MM_DEVICE_QUEUE=8 project-wide
   sdkconfig.defaults             1.5 MB app partition, 32 KB main-task stack, task watchdog (panic → reboot → safe), TLS bundle
+  sdkconfig.defaults.serial      overlay: the serial link on UART 0, console off
   main/
     app_main.c                   boot order, clock wait, the tick loop, the watchdog
-    hal_esp32.c / .h             mm_hal over ESP-IDF — the only file that knows the board
+    hal_esp32.c / .h             mm_hal over ESP-IDF — the only file that knows the board; both links live here
     board.c / .h                 THIS board: capability tables, relay on a GPIO, probe on an ADC channel, the schedule
     Kconfig.projbuild            the menuconfig entries above
     certs/controller_ca.pem      optional private CA (empty = root bundle)
@@ -101,7 +120,9 @@ firmware/esp32/
 - **The bench run.** Flash, enroll against a controller, watch a beat, read the heap high-water mark
   through a TLS exchange. The first slice of real hardware, and the one that turns this README's
   "compiles" into "runs on".
-- **The Pi↔ESP32 packet protocol** (ROADMAP M5), for a controller subordinate to a Pi-class mound
-  rather than enrolled directly upstream.
+- **Routing through a Pi-class mound's own kernel.** The serial link makes a Pi the board's
+  transport; it does not make the Pi the board's authority. A board whose actions are requested by
+  a Pi's Forager and gated by the Pi's kernel — the "generic driver sends a bounded request to the
+  ESP32" of the acceptance bench — is a different arrangement, on top of this link, not yet designed.
 - **Layer 0.** E-stops and interlocks wired outside the MCU's control, reported as observed facts
   only (SAFETY.md). Nothing here pretends to be one.

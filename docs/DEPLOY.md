@@ -137,6 +137,24 @@ mission is reported as not proven finished rather than resumed.
 
 If all of that held, the host has run on a real device against real hardware: `v0.10.0`.
 
+## 7. A board on the bench, through this Pi
+
+An ESP32 running `firmware/esp32` in its serial-link configuration has no Wi-Fi and no TLS: it
+frames its enrollment and its beats over the USB-serial cable (PROTOCOL.md §12), and this Pi
+relays them to the controller. The bridge is transport — it holds no key and changes no byte — so
+the board enrolls and beats exactly as it would over Wi-Fi, under its own identity.
+
+```bash
+stty -F /dev/ttyUSB0 115200 raw -echo                     # the link is raw bytes; no line discipline
+micromound --bridge /dev/ttyUSB0 --controller https://anthill.example
+```
+
+The bridge logs every relayed path and status, answers the board's clock requests from this Pi's
+clock, refuses anything outside `micromound/v0/`, and reopens the device when the board is
+unplugged and plugged back. It can run beside the mound daemon (a second unit, a second process);
+it does not need the mound's state directory or its identity. Provision the board's one-time token
+in its own NVS (`firmware/esp32/README.md`); the bridge never sees it as anything but bytes.
+
 ## Operating notes
 
 - **Stop.** ANTHILL's *Stop* on the fleet row is carried by the next beat; the mound de-energizes,

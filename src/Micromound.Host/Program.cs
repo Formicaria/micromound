@@ -33,6 +33,42 @@ if (args.Length > 0 && args.Contains("--describe-drivers", StringComparer.Ordina
     return 0;
 }
 
+// `--bridge <device>`: run ONLY the Pi side of the Pi↔ESP32 link (PROTOCOL.md §12) — read request
+// frames from a serial device (or any byte stream), relay each to the controller over HTTPS, frame
+// the answer back. No mound comes up, no key is loaded: the bridge is transport. The device must be
+// in raw mode (`stty -F /dev/ttyUSB0 115200 raw -echo`); the daemon opens it as a plain file.
+if (args.Length > 0 && args.Contains("--bridge", StringComparer.Ordinal))
+{
+    var bi = Array.IndexOf(args, "--bridge");
+    var ci = Array.IndexOf(args, "--controller");
+    if (bi + 1 >= args.Length || ci < 0 || ci + 1 >= args.Length
+        || !Uri.TryCreate(args[ci + 1], UriKind.Absolute, out var bridgeController) || bridgeController.Scheme != Uri.UriSchemeHttps)
+    {
+        Console.Error.WriteLine("usage: micromound --bridge <serial device> --controller <https url>   relay a board's link frames to the controller; no mound runs");
+        return 2;
+    }
+    var device = args[bi + 1];
+    using var bridge = new LinkBridge(bridgeController, log: line => Console.WriteLine($"[{DateTimeOffset.UtcNow:HH:mm:ss}] {line}"));
+    using var bridgeStop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; bridgeStop.Cancel(); };
+    Console.WriteLine($"bridge: {device} -> {bridgeController} (protocol paths only; the board's clock is served from this host)");
+    while (!bridgeStop.IsCancellationRequested)
+    {
+        try
+        {
+            using var stream = new FileStream(device, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize: 1, FileOptions.None);
+            bridge.Serve(stream, bridgeStop.Token);                         // returns when the stream ends (the board unplugged)
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"bridge: {device}: {ex.Message}");
+        }
+        if (!bridgeStop.IsCancellationRequested) Thread.Sleep(2000);  // the board will be back; the link is not the authority
+    }
+    Console.WriteLine($"bridge: stopped — {bridge.Requests} request(s), {bridge.Relayed} relayed, {bridge.Offline} offline, {bridge.Refused} refused");
+    return 0;
+}
+
 var options = HostArgs.Parse(args);
 if (options is null)
 {
@@ -40,6 +76,7 @@ if (options is null)
         "usage: micromound --manifest <path> [--hardware [--gpio chardev|sysfs] | --simulate] [--state <dir>] [--controller <url>] [--enroll-token <t>] [--tier <t>] [--interval-s <n>] [--heartbeat-s <n>] [--watchdog-s <n>]\n" +
         "       micromound --manifest <path> --check-hardware [--gpio chardev|sysfs]   claim every port the manifest names, read each sensor once, report, exit (0 = all claimed)\n" +
         "       micromound --describe-drivers [--hardware]   print the driver types this build ships and their settings (JSON), then exit\n" +
+        "       micromound --bridge <serial device> --controller <url>   relay a board's link frames (PROTOCOL.md §12) to the controller over HTTPS; no mound runs\n" +
         "  --manifest     path to the mound manifest (JSON). required.\n" +
         "  --hardware     drive REAL ports: digital actuators on a GPIO line (settings 'pin', 'chip'), analog\n" +
         "                 sensors on an ADS1115 over I2C (settings 'channel', 'bus', 'address', 'gain'). Without it\n" +

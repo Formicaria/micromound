@@ -23,6 +23,14 @@
 #include "esp_random.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
+#ifdef CONFIG_MM_LINK_SERIAL
+#include <sys/time.h>
+#include "driver/uart.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "mm_serial.h"
+#endif
 
 static const char *TAG = "mm_hal";
 
@@ -65,8 +73,71 @@ static int hal_random(void *ctx, uint8_t *out, size_t n)
     return 0;
 }
 
+/* ---- the serial link (CONFIG_MM_LINK_SERIAL): the HAL's POST as frames to a bridge ------------ */
+
+#ifdef CONFIG_MM_LINK_SERIAL
+static mm_serial_link the_link;             /* large: the frame decoder's buffer */
+
+static int uart_write_all(void *ctx, const uint8_t *bytes, size_t n)
+{
+    (void)ctx;
+    return uart_write_bytes(CONFIG_MM_SERIAL_UART, bytes, n) == (int)n ? 0 : -1;
+}
+
+static int uart_read_one(void *ctx, uint8_t *out, int timeout_ms)
+{
+    int n;
+    (void)ctx;
+    n = uart_read_bytes(CONFIG_MM_SERIAL_UART, out, 1, pdMS_TO_TICKS(timeout_ms));
+    return n == 1 ? 1 : (n == 0 ? 0 : -1);
+}
+
+static int link_init(void)
+{
+    uart_config_t cfg;
+    mm_serial_io io;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.baud_rate = CONFIG_MM_SERIAL_BAUD;
+    cfg.data_bits = UART_DATA_8_BITS;
+    cfg.parity = UART_PARITY_DISABLE;
+    cfg.stop_bits = UART_STOP_BITS_1;
+    cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
+    cfg.source_clk = UART_SCLK_DEFAULT;
+    if (uart_driver_install(CONFIG_MM_SERIAL_UART, 4096, 4096, 0, NULL, 0) != ESP_OK) return -1;
+    if (uart_param_config(CONFIG_MM_SERIAL_UART, &cfg) != ESP_OK) return -1;
+    if (uart_set_pin(CONFIG_MM_SERIAL_UART,
+                     CONFIG_MM_SERIAL_TX_GPIO < 0 ? UART_PIN_NO_CHANGE : CONFIG_MM_SERIAL_TX_GPIO,
+                     CONFIG_MM_SERIAL_RX_GPIO < 0 ? UART_PIN_NO_CHANGE : CONFIG_MM_SERIAL_RX_GPIO,
+                     UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) return -1;
+    io.ctx = NULL;
+    io.write = uart_write_all;
+    io.read_byte = uart_read_one;
+    mm_serial_init(&the_link, &io);
+    return 0;
+}
+
+/* The HAL's POST for the serial link. The HAL's ctx stays the board context; the link is this file's own. */
+static int serial_post(void *ctx, const char *path, const char *body, size_t body_len,
+                       char *resp, size_t cap, size_t *resp_len, int *status)
+{
+    (void)ctx;
+    return mm_serial_post_json(&the_link, path, body, body_len, resp, cap, resp_len, status);
+}
+
+int mm_hal_esp32_sync_clock(void)
+{
+    int64_t epoch = mm_serial_time(&the_link);
+    struct timeval tv;
+    if (epoch <= 0) return -1;
+    tv.tv_sec = (time_t)epoch;
+    tv.tv_usec = 0;
+    return settimeofday(&tv, NULL) == 0 ? 0 : -1;
+}
+#endif
+
 /* ---- HTTPS ---------------------------------------------------------------------------------- */
 
+#ifndef CONFIG_MM_LINK_SERIAL
 static int hal_http_post_json(void *ctx, const char *path, const char *body, size_t body_len,
                               char *resp, size_t cap, size_t *resp_len, int *status)
 {
@@ -120,6 +191,7 @@ static int hal_http_post_json(void *ctx, const char *path, const char *body, siz
     esp_http_client_cleanup(client);
     return 0;
 }
+#endif
 
 /* ---- NVS ------------------------------------------------------------------------------------ */
 
@@ -251,7 +323,12 @@ int mm_hal_esp32_init(mm_hal *hal, const char *controller_url)
     hal->ctx = h;
     hal->now = hal_now;
     hal->random_bytes = hal_random;
+#ifdef CONFIG_MM_LINK_SERIAL
+    if (link_init() != 0) { ESP_LOGE(TAG, "the link UART would not initialise"); return -1; }
+    hal->http_post_json = serial_post;
+#else
     hal->http_post_json = hal_http_post_json;
+#endif
     hal->kv_get = hal_kv_get;
     hal->kv_set = hal_kv_set;
     hal->gpio_write = hal_gpio_write;

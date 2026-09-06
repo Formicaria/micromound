@@ -11,7 +11,7 @@ is what a board will run.
 
 ```bash
 make            # build/libmicromound.a
-make test       # 1,950+ checks, including every golden file, byte for byte
+make test       # 2,400 checks, including every golden file, byte for byte
 make CC=clang test
 ```
 
@@ -39,6 +39,8 @@ needed when the buffer was too small.
 | `mm_enroll` | `mm_enroll.h` | PROTOCOL.md §3 as `HttpEnrollmentClient` does it: the same request body, the same reading of the response, the same verdicts in the same words; persists the controller key before anything else | `enroll-exchange.txt` |
 | `mm_link` | `mm_link.h` | `HttpSyncTransport`: POST one envelope, split the JSON array that comes down into slices the device verifies; non-2xx is a failed exchange, no exchange is offline | `test_board.c` |
 | `mm_drivers` | `mm_drivers.h` | The two generic drivers as executors: `mm_relay` = `DigitalActuatorDriver` (safe at bring-up, held for the clamped `on_s`, released by `mm_relay_service` or any stop, **no evidence — a command is not evidence**); `mm_probe` = `AnalogSensorDriver` (volts × scale + offset, a `reading` evidence item; a failed read is a fault, never a zero) | `test_board.c` |
+| `mm_frame` | `mm_frame.h` | The Pi↔ESP32 link framing (PROTOCOL.md §12): `"MM" ver type seq len payload crc32`, request/response payloads, an incremental decoder that resynchronises and counts what it drops | `link-frames.txt` |
+| `mm_serial` | `mm_serial.h` | The HAL's `http_post_json` over a byte stream to a bridge — the same exchanges, framed; timeouts are offline; the bridge's clock on request | `test_frame.c` (a fake pipe, a scripted bridge) |
 | `mm_app` | `mm_app.h` | **The firmware above the HAL**: identity from protected storage (created once from the board's RNG), enrollment with a one-time token, the service loop — holds released first, quiesce, the beat on the charter's cadence, the compiled schedule through the kernel — and the trip (a relay that will not release stops the mound) | `test_board.c` |
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
@@ -133,7 +135,7 @@ firmware/micromound-c/
   include/            the public headers (one per module)
   src/                the modules
   third_party/tweetnacl/   TweetNaCl, verbatim, with a provenance README
-  tests/              mm_test.h harness; one test file per module; test_golden.c, test_kernel.c, test_device.c and test_board.c cover the eight fixtures
+  tests/              mm_test.h harness; one test file per module; test_golden.c, test_kernel.c, test_device.c, test_board.c and test_frame.c cover the nine fixtures
   Makefile
 ```
 

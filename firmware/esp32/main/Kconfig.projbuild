@@ -1,7 +1,46 @@
 menu "MicroMound controller"
 
+    choice MM_LINK
+        prompt "How the board reaches the controller"
+        default MM_LINK_WIFI
+        help
+            Wi-Fi: the board speaks HTTPS to the controller itself (TLS, SNTP, the root bundle).
+            Serial: the board frames the same exchanges over a UART to a Pi running
+            `micromound --bridge` (PROTOCOL.md §12); no network stack, no TLS, and the clock comes from
+            the bridge. The signed envelopes are identical either way.
+
+        config MM_LINK_WIFI
+            bool "Wi-Fi + HTTPS (the board talks to the controller directly)"
+        config MM_LINK_SERIAL
+            bool "Serial link to a bridge (a Pi relays; the board has no network)"
+    endchoice
+
+    config MM_SERIAL_UART
+        int "Link UART number"
+        depends on MM_LINK_SERIAL
+        default 0
+        help
+            UART 0 is the USB-serial console on most dev boards: the bridge then runs on the same cable
+            that flashes the board, and the console log is off (it would corrupt the frames).
+
+    config MM_SERIAL_TX_GPIO
+        int "Link UART TX GPIO (-1 = the UART's default pin)"
+        depends on MM_LINK_SERIAL
+        default -1
+
+    config MM_SERIAL_RX_GPIO
+        int "Link UART RX GPIO (-1 = the UART's default pin)"
+        depends on MM_LINK_SERIAL
+        default -1
+
+    config MM_SERIAL_BAUD
+        int "Link baud rate"
+        depends on MM_LINK_SERIAL
+        default 115200
+
     config MM_CONTROLLER_URL
         string "Controller base URL"
+        depends on MM_LINK_WIFI
         default "https://anthill.local:8443/"
         help
             Where the mound enrolls and beats: <url>micromound/v0/enroll and <url>micromound/v0/sync
@@ -24,6 +63,7 @@ menu "MicroMound controller"
 
     config MM_NTP_SERVER
         string "NTP server"
+        depends on MM_LINK_WIFI
         default "pool.ntp.org"
 
     config MM_RELAY_GPIO

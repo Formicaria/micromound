@@ -1,0 +1,8 @@
+# Overlay for the serial link: idf.py -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.serial" build
+# The board frames its exchanges over UART 0 (the USB-serial cable) to `micromound --bridge` on a Pi;
+# the console log is off, because it shares that UART with the frames.
+CONFIG_MM_LINK_SERIAL=y
+CONFIG_MM_LINK_WIFI=n
+CONFIG_MM_SERIAL_UART=0
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_ESP_CONSOLE_UART_NONE=y
