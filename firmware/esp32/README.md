@@ -1,66 +1,109 @@
 # Constrained controller firmware (ESP32) — M5
 
-Placeholder for the ESP-IDF project. Nothing in *this* directory compiles yet, by design: the
-firmware starts only once the protocol contracts are frozen and the Pi-class runtime has proven
-them. But the software of the controller already exists and is host-tested —
-[`firmware/micromound-c`](../micromound-c/README.md) (`v0.9.18`–`v0.9.21`): the wire format, the
-reader and validators, the capability kernel and the device loop, verified against the golden
-fixtures and, for the device loop, accepted by the host's own verifier. What this project adds is the
-board: an HTTPS transport and enrollment, drivers as executors, a clock, key storage, and `app_main`
-driving `mm_device`. See [`docs/ROADMAP.md`](../../docs/ROADMAP.md).
+The ESP-IDF project that puts [`firmware/micromound-c`](../micromound-c/README.md) on a board. The
+software of the controller is finished and host-tested — the wire format, the reader and validators,
+the capability kernel, the device loop, and (since `v0.9.22`) the board layer: enrollment, the sync
+transport, the relay and probe drivers as kernel executors, and the service loop, all written over a
+seven-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal.h)) and proven on
+the host against a fake of it (`tests/test_board.c`). What this directory adds is the one file that
+knows it is on an ESP32 — `main/hal_esp32.c` — plus the board description and `app_main`.
 
-## What this firmware will be
+**Status: written against ESP-IDF v5.2+, not yet compiled on a bench.** Nothing in this directory
+has run on silicon. Every line of logic it calls has run on the host; the API surface it binds to
+(`esp_http_client`, `adc_oneshot`/`adc_cali`, NVS, `gpio`, `esp_netif_sntp`) is used as documented
+and syntax-checked against stubs, but the first `idf.py build` on a real toolchain will be the
+correction pass. It is committed now so that pass has something to correct, and so that the shape of
+the port — what a board must supply, and how little — is visible in the tree. The `esp32` CI job is
+advisory (`continue-on-error`) for the same reason.
 
-An ESP-IDF (C) project implementing the reduced protocol profile from
-[`docs/PROTOCOL.md`](../../docs/PROTOCOL.md) §8:
+## What a board supplies
 
-- **Envelope kinds:** `enroll`, `mound_sync`, `charter`, `action_record`, `stop`, `ack` only.
-  Absent, and why: `mission` and `mission_report` (a controller runs compiled routines selected by
-  charter, not open work packets), `evidence_bundle` (fixed-shape readings ride on the action
-  record), and `config` (the hardware map is compiled in).
-- **Ed25519 signing** — today over TweetNaCl in `micromound-c` (auditable, slow); libsodium or
-  monocypher behind the same `mm_ed25519.h` if the beat needs it. No unsigned mode exists; a board
-  that cannot sign does not join the mesh.
-- **The same capability kernel, in C.** Not a simplified one: the same check order, the same
-  three-tier limit intersection, the same closed set of refusal reasons. A controller that
-  refused differently from a Pi would make "the mound refused" mean two different things.
-- **Compiled routines.** Enumerated at build time. A charter can only enable routines this image
-  already contains, and parameters clamp to compiled ranges regardless of charter contents — the
-  charter narrows, never widens (mirrors `LimitClamp.Effective` in `Micromound.Protocol`).
-- **Hardware watchdog.** Loss of the firmware loop drops actuation into the declared safe state.
-  Layer 0 devices — e-stops, interlocks — are wired outside the MCU's control and are reported as
-  observed facts only. See [`docs/SAFETY.md`](../../docs/SAFETY.md).
+```c
+typedef struct mm_hal {
+    void *ctx;
+    int64_t (*now)(void *ctx);                                    /* UTC epoch seconds; 0 until the clock is set  */
+    int (*random_bytes)(void *ctx, uint8_t *out, size_t n);       /* the seed, envelope ids                       */
+    int (*http_post_json)(void *ctx, const char *path, ...);      /* POST JSON, get status + body; -1 = offline    */
+    int (*kv_get)(void *ctx, const char *key, ...);               /* protected storage: seed, controller key, token */
+    int (*kv_set)(void *ctx, const char *key, ...);
+    int (*gpio_write)(void *ctx, int pin, int level);
+    int (*adc_read)(void *ctx, int channel, double *volts);
+} mm_hal;
+```
 
-Logical ants may still be represented in metadata even when Scout, Forager, Guard, and Runner
-compile into one image, so a controller mound renders in a colony view like any other.
+That is the whole port. `hal_esp32.c` fills it with SNTP's clock (zero until the year is plausible),
+`esp_fill_random`, `esp_http_client` over esp-tls (the Mozilla root bundle, or a private CA embedded
+from `main/certs/controller_ca.pem` — never an insecure mode), NVS blobs in the `micromound`
+namespace, `gpio_set_level`, and `adc_oneshot` with the target's calibration scheme. Everything above
+it — `mm_app`, `mm_enroll`, `mm_link`, `mm_drivers`, `mm_device`, `mm_kernel` — is the library,
+compiled unchanged from `../micromound-c/src` by `components/micromound_c`.
 
-## Layout (when it lands)
+## What the board does
+
+`app_main` drives the relay to its safe level before the network is up, brings up Wi-Fi
+(ESP-IDF's `protocol_examples_common`, configured in menuconfig), waits for SNTP — **nothing signs or
+actuates on a zero clock** — and then hands everything to `mm_app`, one tick a second:
+
+- **Identity.** The Ed25519 seed is created from the hardware RNG on first boot and stored in NVS
+  (`mm.seed`); it is never regenerated and never read out. A board whose NVS will not open, or will
+  not store the seed, halts with its outputs safe rather than run with an identity that would not
+  survive a reboot.
+- **Enrollment** (PROTOCOL.md §3). Until a controller key is stored, every 30 s the app spends the
+  one-time token in `mm.token`: an outage retries, a controller error retries, a definite 4xx
+  refusal burns the token, success stores the controller's key (`mm.ctl_pk`) and cadence
+  (`mm.sync_s`) and burns the token. The request body and every verdict line are the host's own,
+  byte for byte (`enroll-exchange.txt`).
+- **The loop.** Once enrolled: release any relay hold whose time is up, quiesce when the lease runs
+  out, beat on the charter's `sync_interval_s` (enrollment's until chartered), and run the compiled
+  schedule — a reading every minute, the relay for 30 s every ten minutes — through the kernel, which
+  refuses what the charter does not allow and records the refusal.
+- **Safety.** A stop or a quiesce releases every relay. A relay whose release write fails is a
+  **trip**: the mound is stopped, the hold stays pending and is retried every tick, and the beat
+  still goes out so the controller hears it. The task watchdog reboots a loop that stops returning,
+  and every relay comes back up at its safe level.
+
+## Building (when you have the toolchain)
+
+```bash
+. $IDF_PATH/export.sh
+cd firmware/esp32
+idf.py set-target esp32
+idf.py menuconfig          # Example Connection Configuration → Wi-Fi; MicroMound controller → URL, mound id, token, pins
+idf.py build flash monitor
+```
+
+`main/Kconfig.projbuild` holds the controller URL, the mound id, the enrollment token (bench
+provisioning: written to NVS on a boot that has neither a token nor a controller key — a burned
+compiled-in token is re-provisioned and refused again once per boot, harmlessly), the NTP server,
+the relay GPIO and polarity, the probe's ADC channel and its volts→reading scale and offset, and the
+tick period. For a fleet, provision `mm.token` in NVS directly and leave the Kconfig token empty.
+A controller with a private CA: put its PEM in `main/certs/controller_ca.pem` (the file is embedded;
+empty means "use the root bundle").
+
+## Layout
 
 ```text
 firmware/esp32/
-  main/            app_main, sync beat task, watchdog task
-  components/
-    micromound_c/  ../micromound-c — wire format, reader, validators, kernel, device loop (exists, host-tested)
-    mm_routines/   the compiled capability/routine tables (mm_capability_desc / mm_routine_desc) for this board
-    mm_drivers/    GPIO, I2C, ADC as mm_executor implementations, with real hold/release timing
-    mm_link/       HTTPS transport (mm_exchange_fn) and the enrollment exchange (PROTOCOL.md §3)
-  test/            Unity-based host tests for the protocol mirror
+  CMakeLists.txt                 the project; pulls protocol_examples_common for Wi-Fi
+  sdkconfig.defaults             1.5 MB app partition, 32 KB main-task stack, task watchdog (panic → reboot → safe), TLS bundle
+  main/
+    app_main.c                   boot order, clock wait, the tick loop, the watchdog
+    hal_esp32.c / .h             mm_hal over ESP-IDF — the only file that knows the board
+    board.c / .h                 THIS board: capability tables, relay on a GPIO, probe on an ADC channel, the schedule
+    Kconfig.projbuild            the menuconfig entries above
+    certs/controller_ca.pem      optional private CA (empty = root bundle)
+  components/micromound_c/       ../../micromound-c, compiled as an IDF component, unchanged
 ```
 
-## The fixtures already exist
+## What is still ahead
 
-`micromound-c`'s host tests read the same golden files the C# tests do, and reproduce every
-`digest:` line and every reduced-profile `canonical:` line byte for byte — see
-[`tests/Micromound.Tests/Golden/`](../../tests/Micromound.Tests/Golden/README.md). Run them with
-`make -C firmware/micromound-c test`.
-
-Two properties of the wire format exist specifically to make this practical:
-
-- The signature format is deliberately trivial — `ed25519:<lowercase hex>`, no base64, no JSON
-  nesting.
-- `sig` is **zeroed, not omitted**, in the canonical bytes. The field is present with an empty
-  value: `…,"prev_digest":"","sig":""}`. A C encoder written to "exclude the signature" would drop
-  the field and produce different digests for identical data. Emit `"sig":""`.
-
-Together these let the firmware sign and hash one buffer it has already built, with no
-re-serialization pass and no dynamic allocation.
+- **The bench build.** Compile, flash, enroll against a controller, watch a beat. The first slice of
+  real hardware, and the one that turns this README's "written against" into "runs on".
+- **How a reading's value travels.** The action record carries `evidence_refs`, not values, and the
+  reduced profile has no `evidence_bundle` — PROTOCOL.md §8 names the two additive options and
+  defers the choice to the bench, where the controller's needs are visible. The library already keeps
+  each reading whole (`mm_evidence_produced`), so either answer is a serializer.
+- **The Pi↔ESP32 packet protocol** (ROADMAP M5), for a controller subordinate to a Pi-class mound
+  rather than enrolled directly upstream.
+- **Layer 0.** E-stops and interlocks wired outside the MCU's control, reported as observed facts
+  only (SAFETY.md). Nothing here pretends to be one.

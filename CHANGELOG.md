@@ -12,6 +12,118 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.22 — M5: the board layer, host-simulated — enrollment, transport, drivers and the service loop in C; the ESP-IDF project exists
+
+Everything a constrained board runs above its hardware, written over a seven-function hardware
+abstraction and proven on the host against a fake of it — and, for the first time, an ESP-IDF project
+that binds that abstraction to a real chip. No wire change; no new refusal reason. One protocol gap
+is now written down rather than implied (see Notes).
+
+### Added
+
+- **`mm_hal`** (`firmware/micromound-c/include/mm_hal.h`) — what a board supplies, and nothing else:
+  `now` (UTC epoch seconds; zero until the clock is set), `random_bytes`, `http_post_json` (one JSON POST;
+  `-1` means no exchange happened — offline), `kv_get`/`kv_set` (protected storage), `gpio_write`,
+  `adc_read`. Four storage keys, all within NVS's 15-character limit: `mm.seed`, `mm.ctl_pk`, `mm.sync_s`,
+  `mm.token`. The library stores nothing else on a board's behalf.
+- **`mm_enroll`** (`mm_enroll.h`, `src/mm_enroll.c`) = `Micromound.Host.HttpEnrollmentClient`, PROTOCOL.md §3:
+  the same request body (same members, same order; `driver_schemas` is always `[]` — a device's hardware is
+  compiled in), the same reading of the response (4xx with a `reason` → `enrollment refused: HTTP 409 —
+  token already used`; without → `(token burned or unknown)`; 5xx → `controller returned HTTP 500;
+  enrollment not yet complete`; no key, a zero key, a wrong-length key, a key bound to another mound, a
+  protocol-version skew — each in the host's words), and the same acceptance (`enrolled (controller asks
+  for a 10s sync cadence)`). `mm_enroll` persists the controller key **before anything else happens**;
+  a key that cannot be stored is not an enrollment.
+- **`mm_link`** (`mm_link.h`, `src/mm_link.c`) = `HttpSyncTransport`: POST one envelope to
+  `micromound/v0/sync`, split the JSON array that comes down into slices `mm_device` verifies from the
+  bytes as received; whitespace is "nothing downlink", a non-2xx is a failed exchange (the queue retries),
+  no exchange at all is offline. The response lives in the link's own 8 KB buffer, so the slices stay valid
+  exactly as long as `mm_exchange_fn` promises.
+- **`mm_drivers`** (`mm_drivers.h`, `src/mm_drivers.c`) — the two generic drivers of the reduced profile as
+  kernel executors. **`mm_relay`** = `DigitalActuatorDriver`: the line is driven to its SAFE level at
+  bring-up (an active-low relay is never pulsed), energized for an `on_s` the kernel already clamped —
+  and capped again at the effective `max_on_s` as a last-resort belt — HELD, and released by
+  `mm_relay_service` when the deadline passes or by `mm_relay_safe` on any stop, quiesce or trip. **It
+  produces no evidence: a command is not evidence.** A release write that fails keeps the hold pending
+  (retried every tick) and reports it. **`mm_probe`** = `AnalogSensorDriver`: one ADC channel, volts ×
+  scale + offset, reported as a `reading` evidence item whose payload is `EvidenceReadings.Create`'s
+  (`{"value":25,"unit":"C","capability":"sense.temp"}`), captured at the read. A failed read is a fault
+  with no reading — never a zero.
+- **`mm_app`** (`mm_app.h`, `src/mm_app.c`) — the whole firmware above the HAL, one tick at a time.
+  Identity: the Ed25519 seed is created from the board's RNG on first boot, stored, and never
+  regenerated (no entropy, or no storage → the app refuses to run: *an identity that does not survive a
+  reboot is not one*). Enrollment: until a controller key is stored, every 30 s the app spends the
+  one-time token — an outage or a controller error retries with the token kept, a definite 4xx burns it,
+  success stores the key and cadence and burns it. The loop: relay holds are released **first**, before
+  anything else happens in the tick; quiesce on lease expiry; the beat on the charter's `sync_interval_s`
+  (enrollment's until chartered, 15 s failing both); the compiled schedule (a capability request on a
+  period) through the kernel, which refuses what it must and records the refusal. The **trip**: a relay
+  that will not release stops the mound (`mm_app_status.tripped`), and the beat still goes out so the
+  controller hears it. **The app never acts on a zero clock.**
+- **`mm_evidence_produced`** now carries the whole item — `type`, `source`, and a 128-byte
+  `payload_json` — not just the id and `captured_at` the gate reads, so whichever way readings travel
+  upstream (Notes) is a serializer, not a redesign.
+- **Fixture `enroll-exchange.txt`** (`tests/Micromound.Tests/Golden/EnrollExchangeTests.cs`): the exact
+  request body `HttpEnrollmentClient` sends for a fixed device (the fixture's seed → public key
+  `03a107bf…`), and the verdict and detail line for fifteen scripted controller responses — accepted
+  with a cadence, key only, a fractional cadence, a non-positive cadence ignored, unknown members
+  skipped; refused with a reason, without one, with an unreadable body; a controller error; no key, an
+  empty response, a zero key, a short key, another mound's binding, a protocol-version skew. The C
+  `mm_enroll_request_body` must equal the `request:` line byte for byte and `mm_enroll_read_response`
+  must reach every verdict in the same words. Added to the CI golden guard.
+- **`tests/test_board.c`** — `mm_app` against a fake HAL (in-memory kv, a scripted HTTP endpoint that
+  plays the controller for both paths and signs with the fixture's controller key, fake GPIO and ADC,
+  an RNG whose first 32 bytes are the fixture's device seed): first boot creates and stores the seed; a
+  zero clock does nothing; no token → said, not posted; an outage and a 500 retried with the token kept;
+  a 200 → enrolled, key and `10` stored, token burned; the first enrolled tick beats, is chartered, reads
+  the probe and energizes the relay for the charter's 30 s (50 requested, hardware 60); the charter's
+  cadence (15) wins over enrollment's (10); one envelope per exchange (the beat and its two records);
+  the hold is released at the top of the tick whose time has come; the probe reads on its period and a
+  failed read produces no reading; an outage mid-session keeps the queue and the charter; a reboot on the
+  same storage keeps the identity and the enrollment (the RNG is not asked) and is re-chartered; a stop
+  releases the relay and the next scheduled actuation is refused, not actuated; a release write that fails
+  trips the mound, the hold stays pending, the retry releases it and the trip stands; a 409 burns the
+  token and nothing is tried again; a board that cannot store the seed refuses to run. Plus every
+  `mm_link_parse_downlink` shape and every `mm_link_exchange` outcome.
+- **`firmware/esp32`** is no longer a placeholder: an ESP-IDF project — `main/hal_esp32.c` binds `mm_hal`
+  to SNTP's clock (zero until the year is plausible), `esp_fill_random`, `esp_http_client` over esp-tls
+  (the root bundle, or a private CA embedded from `main/certs/controller_ca.pem`; **no insecure mode**),
+  NVS blobs, `gpio_set_level`, `adc_oneshot` with the target's calibration; `main/board.c` describes this
+  board (the fixtures' device: one probe, one relay, a reading a minute, the relay 30 s every ten minutes);
+  `main/app_main.c` drives the relay safe before the network is up, waits for the clock, and ticks
+  `mm_app` under the task watchdog (a hung loop reboots to a safe board); `components/micromound_c`
+  compiles `../micromound-c/src` unchanged; `Kconfig.projbuild` holds URL, mound id, bench token, pins and
+  scale; `sdkconfig.defaults` sets the 1.5 MB app partition and a 32 KB main-task stack. **Written against
+  ESP-IDF v5.2+ and not yet compiled on a bench** — syntax-checked against stub headers only; the README
+  says so on its first screen. A new **advisory** CI job (`espressif/esp-idf-ci-action`,
+  `continue-on-error`) is the first real toolchain that will see it.
+- Tests: 1,954 checks (from 1,792). gcc, clang, `-Os`, gcc+ASan/UBSan (findings fatal), and now also
+  `-O2` with the sanitizers (a `format-truncation` heuristic in the evidence gate's stale-evidence line
+  was silenced with the fields' own precisions; no behaviour change).
+
+### Notes
+
+- **An open question in the reduced profile, now written down (PROTOCOL.md §8).** An `action_record`
+  carries `evidence_refs` — ids — not values, and the profile has no `evidence_bundle`; so a constrained
+  device today takes a reading, gates its own outcome on it, and reports the outcome and the reference,
+  while the controller never receives the number. Two additive answers exist (an `evidence` member on
+  `action_record`, or a bounded `evidence_bundle` admitted to the profile); the choice is deferred to the
+  bench slice, where the controller's needs are visible. Until then §8's "fixed-shape readings ride on the
+  action record" describes the intent, not the wire.
+- The host suffixes two lines with an exception message (`controller unreachable; not enrolled yet: …`,
+  `enrollment response unreadable: …`, and the transport's `offline: …`); the C library emits the prefix
+  alone. The fixture contains no such line, since the suffix is not deterministic.
+- `mm_app_status.last_detail` is the last enrollment or sync line; a trip is the `tripped` flag, because a
+  beat follows the trip in the same tick and would overwrite any line.
+- A relay hold is released when `now` passes the deadline: a clock that jumps forward releases early (the
+  safe direction); one that jumps back holds longer. The app never starts a hold on a zero clock.
+- The compiled-in enrollment token in `Kconfig.projbuild` is bench provisioning: a burned token is
+  re-provisioned on every boot and refused again, once, harmlessly. A fleet provisions NVS directly.
+- `firmware/esp32` renamed the storage keys the library had used for a day (`mm.controller_pk`,
+  `mm.sync_interval` were 16 characters; NVS allows 15). Nothing shipped with the old names.
+
+---
+
 ## v0.9.21 — M5: the device loop — a reduced-profile mound runs end to end, and the controller accepts it
 
 The Runner Ant in C, over everything `v0.9.18`–`v0.9.20` built. A device now beats, records, chains,

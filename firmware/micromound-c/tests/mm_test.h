@@ -40,6 +40,7 @@ void test_time(void);
 void test_decode(void);
 void test_kernel(void);
 void test_device(void);
+void test_board(void);
 void test_golden(void);
 
 #endif

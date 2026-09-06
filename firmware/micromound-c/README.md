@@ -11,7 +11,7 @@ is what a board will run.
 
 ```bash
 make            # build/libmicromound.a
-make test       # 1,700+ checks, including every golden file, byte for byte
+make test       # 1,950+ checks, including every golden file, byte for byte
 make CC=clang test
 ```
 
@@ -35,9 +35,17 @@ needed when the buffer was too small.
 | `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's reason lines character for character, views to re-encode | `canonical-signed.txt` |
 | `mm_kernel` | `mm_kernel.h` | **The capability kernel**: compiled capability/routine tables, `KernelAuthority` (charter, lease, stop, quiesce, device limits), the thirteen authorization checks in the host's order, hardware ∩ device ∩ charter, duty cycle and rate, clamping, execution through a function pointer, the evidence gate; the host's refusal reasons and detail text | `kernel-decisions.txt` |
 | `mm_device` | `mm_device.h` | **The device loop** (`RunnerAnt`): signed, chained uplink on a bounded queue, the beat and its acknowledgement-driven drain, downlink verified from the bytes as received and handled stops-first, acks, lease renewal on the acknowledged beat, quiesce, offline as a normal state | `device-session.txt` (written here, verified by the host) |
+| `mm_hal` | `mm_hal.h` | **What a board supplies**, and nothing else: clock, entropy, one HTTPS POST, protected key/value storage, a digital output, an analog input — seven function pointers | `test_board.c`'s fake of it |
+| `mm_enroll` | `mm_enroll.h` | PROTOCOL.md §3 as `HttpEnrollmentClient` does it: the same request body, the same reading of the response, the same verdicts in the same words; persists the controller key before anything else | `enroll-exchange.txt` |
+| `mm_link` | `mm_link.h` | `HttpSyncTransport`: POST one envelope, split the JSON array that comes down into slices the device verifies; non-2xx is a failed exchange, no exchange is offline | `test_board.c` |
+| `mm_drivers` | `mm_drivers.h` | The two generic drivers as executors: `mm_relay` = `DigitalActuatorDriver` (safe at bring-up, held for the clamped `on_s`, released by `mm_relay_service` or any stop, **no evidence — a command is not evidence**); `mm_probe` = `AnalogSensorDriver` (volts × scale + offset, a `reading` evidence item; a failed read is a fault, never a zero) | `test_board.c` |
+| `mm_app` | `mm_app.h` | **The firmware above the HAL**: identity from protected storage (created once from the board's RNG), enrollment with a one-time token, the service loop — holds released first, quiesce, the beat on the charter's cadence, the compiled schedule through the kernel — and the trip (a relay that will not release stops the mound) | `test_board.c` |
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
-A constrained controller runs compiled routines selected by charter; it never plans.
+A constrained controller runs compiled routines selected by charter; it never plans. One thing is
+absent and *not yet decided*: how a reading's value reaches the controller (the action record carries
+`evidence_refs`, not values). `mm_evidence_produced` keeps each reading whole so that either additive
+answer PROTOCOL.md §8 names is a serializer away.
 
 ## Using it
 
@@ -125,7 +133,7 @@ firmware/micromound-c/
   include/            the public headers (one per module)
   src/                the modules
   third_party/tweetnacl/   TweetNaCl, verbatim, with a provenance README
-  tests/              mm_test.h harness; one test file per module; test_golden.c, test_kernel.c and test_device.c cover the seven fixtures
+  tests/              mm_test.h harness; one test file per module; test_golden.c, test_kernel.c, test_device.c and test_board.c cover the eight fixtures
   Makefile
 ```
 
@@ -203,16 +211,44 @@ loop against a scripted controller and records the session as `device-session.tx
 `DeviceSessionTests` then verifies that transcript with the host's verifier, chain validator and typed
 contracts — the controller accepts what the C device sends.
 
+## The board layer
+
+Above `mm_device` sits everything a board runs, written against seven function pointers:
+
+```c
+#include "mm_app.h"
+
+static mm_relay relay;  static mm_probe probe;  static mm_app app;      /* static; nothing allocates */
+mm_hal hal = { &board, board_now, board_random, board_https_post, board_kv_get, board_kv_set, board_gpio_write, board_adc_read };
+
+mm_relay_init(&relay, &hal, "act.relay_1", 5, 1);                     /* the line comes up at its SAFE level */
+mm_probe_init(&probe, &hal, "sense.temp", 0, 100.0, -50.0, "C");     /* volts × 100 − 50 → degrees */
+mm_app_config cfg = { my_mound_id, "sense.temp,act.relay_1", CAPS, 2, NULL, 0, NULL, 0, &relay, 1, &probe, 1, SCHEDULE, 2 };
+
+char err[256];
+if (mm_app_init(&app, &hal, &cfg, err, sizeof err) != 0) halt_safe(err);   /* seed created or loaded; enrolled if a key is stored */
+for (;;) { mm_app_tick(&app, 0); sleep_ms(1000); }                          /* holds, quiesce, enrollment or the beat, the schedule */
+```
+
+`tests/test_board.c` runs exactly this against a fake HAL: first boot creates and stores the seed (the
+fixture's, so the enrollment request equals `enroll-exchange.txt`'s `request:` line byte for byte);
+no token, an outage and a 500 are retried with the token kept; a 200 stores the key and cadence and
+burns the token; a 409 burns it too; the first enrolled tick beats, is chartered, reads the probe and
+energizes the relay under the charter's clamp; the charter's cadence wins over enrollment's; the hold
+is released at the top of the tick whose time has come; a reboot on the same storage keeps the identity
+and the enrollment; a stop releases the relay and the kernel refuses the next scheduled actuation; a
+release write that fails trips the mound and is retried. Every `## case` of `enroll-exchange.txt` is
+replayed through `mm_enroll_read_response` and must reach the host's verdict in the host's words.
+
 ## What this is not, yet
 
-- **Not the board.** [`firmware/esp32`](../esp32/README.md) is still a placeholder. What it must add
-  is exactly what this library declines to guess at: an HTTPS transport and the enrollment exchange,
-  drivers as executors with real hold/release timing, a clock, and protected key storage.
+- **Not yet on a board.** [`firmware/esp32`](../esp32/README.md) binds `mm_hal` to ESP-IDF — the
+  clock, `esp_http_client`, NVS, GPIO, ADC — in one file, and is written but not yet compiled on a
+  bench. Everything above that file has run, here.
 - **Not fast.** TweetNaCl signs in tens of milliseconds on an ESP32-class core; adequate for a sync
   beat, not for anything hotter. The backend sits behind `mm_ed25519.h` and the tests prove a swap
   did not change the bytes.
-- **Not enrollment.** PROTOCOL.md §3 is an HTTP exchange, not an envelope; it belongs with the
-  transport on the board.
+- **Not carrying readings upstream.** See above; PROTOCOL.md §8 holds the open question.
 
 ## Portability notes
 
@@ -225,11 +261,19 @@ contracts — the controller accepts what the C device sends.
   in the Makefile. Nothing of MicroMound's own is exempt.
 - Endianness: SHA-256 and the hex helpers are byte-oriented; the double fixture is decoded via an
   integer, so it reads correctly on either byte order.
-- Memory, measured on x86-64 (`sizeof`): `mm_device` 48 KB static (the queue is 16 × 2 KB; lower
-  `MM_DEVICE_QUEUE` / `MM_DEVICE_WIRE_CAP` for a smaller board), `mm_kernel` 10 KB inside it,
+- Memory, measured on x86-64 (`sizeof`): `mm_app` ~60 KB static — `mm_device` 48 KB (the queue is 16 × 2 KB; lower
+  `MM_DEVICE_QUEUE` / `MM_DEVICE_WIRE_CAP` for a smaller board) and `mm_link`'s 8 KB response buffer
+  (`MM_LINK_RESPONSE_CAP`; a downlink batch larger than it reads as unreadable and the exchange fails,
+  so a controller must keep a batch under it) — `mm_kernel` 10 KB inside it,
   `mm_charter_in` 4 KB, `mm_action_record_in` 2.7 KB, `mm_outcome` 2 KB. **Stack:** one exchange's
   batch (`MM_DEVICE_BATCH` × 440 B frames) plus a charter, a refusal set, a decision, an outcome and a
-  record on the way through `mm_device_sync` peaks near 14 KB — run the device loop on a task with
-  24 KB of stack or more, or lower `MM_DEVICE_BATCH`. Nothing allocates, so this is the whole budget.
+  record on the way through `mm_device_sync` peaks near 14 KB; `mm_enroll` adds a 4 KB response and a
+  2 KB request on its own path — run the service loop on a task with 32 KB of stack, or lower
+  `MM_DEVICE_BATCH`. Nothing allocates, so this is the whole budget.
+- Storage keys are at most 15 characters (`mm.seed`, `mm.ctl_pk`, `mm.sync_s`, `mm.token`): NVS's limit.
+  A `kv_set` of zero bytes may be implemented as an erase; the library treats "absent" and "empty" alike.
+- Clock: the app never acts on a zero clock, and a relay hold is released when `now` passes the deadline
+  — a clock that jumps forward releases early (the safe direction); one that jumps back holds longer,
+  bounded by the next tick after the jump is corrected. Set the clock before the loop, not during it.
 - Text fields are bounded (`MM_DETAIL_CAP` 320, `MM_REASON_CAP` 192): a detail or reason longer than
   that is truncated, where the host would carry it whole. The fixtures contain no such line.

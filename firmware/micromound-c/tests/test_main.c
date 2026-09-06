@@ -28,6 +28,7 @@ int main(int argc, char **argv)
     run("decode: frames, charter/stop/ack/action_record bodies, validators", test_decode);
     run("kernel: registries, limits, and the whole kernel-decisions.txt script", test_kernel);
     run("device: a whole session against a scripted controller (device-session.txt)", test_device);
+    run("board: mm_app over a fake HAL — enrollment (enroll-exchange.txt), beats, drivers, reboot, stop, trip", test_board);
     run("golden fixtures: byte-for-byte against tests/Micromound.Tests/Golden/files", test_golden);
 
     printf("\n%d checks, %d failed\n", mm_test_checks, mm_test_failures);

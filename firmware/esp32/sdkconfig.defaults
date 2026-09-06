@@ -1,0 +1,22 @@
+# The app is ~1.1 MB with mbedTLS, the HTTP client and Wi-Fi: use the 1.5 MB single-app table.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
+# mm_device_sync peaks near 14 KB of stack on the way through one exchange (micromound-c README,
+# "Portability notes"); app_main drives the loop, so give it room.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+
+# The task watchdog watches the service loop: a tick that never returns reboots the board, and every
+# relay comes back up at its safe level (mm_relay_init). Generous, because one beat may drain several
+# queued envelopes over HTTPS.
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_INIT=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=120
+
+# TLS: the Mozilla root bundle for a controller with a public certificate; an embedded CA otherwise
+# (main/certs/controller_ca.pem). Never an insecure mode — a board that cannot verify does not enroll.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_ESP_TLS_INSECURE=n
+
+# SNTP: the app never signs or actuates on a zero clock.
+CONFIG_LWIP_SNTP_MAX_SERVERS=2

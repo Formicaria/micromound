@@ -86,9 +86,16 @@ typedef struct mm_execution {
     const char *mission_id;
 } mm_execution;
 
+#define MM_PAYLOAD_CAP 128
+
+/* EvidenceItem as an executor produces it: the gate reads id and captured_at; the rest rides along
+   for whatever carries evidence off the device (PROTOCOL.md §8 leaves that open for a controller). */
 typedef struct mm_evidence_produced {
     char id[MM_ID_CAP];
     char captured_at[MM_TIME_TEXT_CAP];
+    char type[MM_NAME_CAP];             /* "reading" for a numeric reading */
+    char source[MM_NAME_CAP];
+    char payload_json[MM_PAYLOAD_CAP];
 } mm_evidence_produced;
 
 typedef struct mm_outcome {

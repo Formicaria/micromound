@@ -842,8 +842,8 @@ static const char *gate(const mm_kernel *k, const mm_action_record_in *record, c
         }
         if (captured > now) { snprintf(reason, reason_cap, "evidence '%s' is captured in the future", item->id); return "unverified"; }
         if (required && captured < oldest) {
-            snprintf(reason, reason_cap, "evidence '%s' is stale (captured %s, action started %s, min_interval_s %lld)", item->id,
-                     wire_time(captured, ct), wire_time(started, st), min_interval);
+            snprintf(reason, reason_cap, "evidence '%.63s' is stale (captured %.20s, action started %.20s, min_interval_s %lld)", item->id,
+                     wire_time(captured, ct), wire_time(started, st), min_interval);   /* precisions: the fields' own caps, for gcc's truncation heuristic */
             return "unverified";
         }
     }

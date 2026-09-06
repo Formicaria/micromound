@@ -1,0 +1,59 @@
+menu "MicroMound controller"
+
+    config MM_CONTROLLER_URL
+        string "Controller base URL"
+        default "https://anthill.local:8443/"
+        help
+            Where the mound enrolls and beats: <url>micromound/v0/enroll and <url>micromound/v0/sync
+            (PROTOCOL.md §3, §7). Must end with '/'. HTTPS only; the certificate is verified against the
+            root bundle, or against main/certs/controller_ca.pem when that file holds a PEM certificate.
+
+    config MM_MOUND_ID
+        string "Mound id (the manifest's)"
+        default "mm-7f3a0000-0000-4000-8000-000000000001"
+        help
+            The mound this board is. Enrollment refuses a token minted for another mound.
+
+    config MM_ENROLL_TOKEN
+        string "One-time enrollment token (bench provisioning)"
+        default ""
+        help
+            Written into NVS on first boot when no token and no controller key are stored, then burned
+            by the first definite answer. A compiled-in token is for the bench; provision NVS directly
+            for a fleet (see README).
+
+    config MM_NTP_SERVER
+        string "NTP server"
+        default "pool.ntp.org"
+
+    config MM_RELAY_GPIO
+        int "Relay output GPIO (act.relay_1)"
+        default 5
+
+    config MM_RELAY_ACTIVE_HIGH
+        bool "Relay is energized by a HIGH level"
+        default y
+
+    config MM_PROBE_ADC_CHANNEL
+        int "Probe ADC1 channel (sense.temp)"
+        default 0
+        help
+            ADC unit 1; the channel-to-pin map is the target's (channel 0 is GPIO36 on the ESP32).
+
+    config MM_PROBE_SCALE_MILLI
+        int "Probe scale × 1000 (reading = volts × scale + offset)"
+        default 100000
+        help
+            100000 = 100.0: a 10 mV/°C sensor read in volts gives degrees.
+
+    config MM_PROBE_OFFSET_MILLI
+        int "Probe offset × 1000"
+        default -50000
+        help
+            -50000 = -50.0: the sensor's zero point.
+
+    config MM_TICK_MS
+        int "Service loop period (ms)"
+        default 1000
+
+endmenu

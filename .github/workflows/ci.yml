@@ -98,6 +98,24 @@ jobs:
             EXTRA_CFLAGS="-fsanitize=address,undefined -fno-sanitize=shift-base -fno-sanitize-recover=all -fno-omit-frame-pointer" \
             EXTRA_LDFLAGS="-fsanitize=address,undefined" test
 
+  esp32:
+    # ADVISORY. firmware/esp32 is written against ESP-IDF v5.2+ and has not yet been compiled on a
+    # bench (its README says so). This job is the first toolchain that sees it; a failure here is
+    # information for the bench slice, not a broken build of anything that ships — hence
+    # continue-on-error. Everything the project calls is tested on the host by the c-mirror job.
+    name: ESP-IDF build (firmware/esp32, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: idf.py build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3
+          target: esp32
+          path: firmware/esp32
+
   docs-consistency:
     name: Docs consistency
     runs-on: ubuntu-latest
@@ -163,7 +181,8 @@ jobs:
                    tests/Micromound.Tests/Golden/files/canonical-doubles.txt \
                    tests/Micromound.Tests/Golden/files/canonical-signed.txt \
                    tests/Micromound.Tests/Golden/files/kernel-decisions.txt \
-                   tests/Micromound.Tests/Golden/files/device-session.txt; do
+                   tests/Micromound.Tests/Golden/files/device-session.txt \
+                   tests/Micromound.Tests/Golden/files/enroll-exchange.txt; do
             [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
           done
           # validate.sh refuses to run under MICROMOUND_UPDATE_GOLDEN; no workflow may set it either.

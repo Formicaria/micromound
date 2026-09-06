@@ -343,8 +343,22 @@ formatter, SHA-256, Ed25519 (seed keypair, detached sign and verify), envelopes,
 validators for the `charter`, `stop` and `ack` a device receives (`v0.9.19`); the capability kernel
 itself, reproducing the host's decisions against a scripted fixture (`v0.9.20`); and the device loop —
 beat, drain, downlink handling, stop, quiesce — whose recorded session the host's verifier accepts
-(`v0.9.21`, `device-session.txt`). The ESP-IDF project that puts it on a board is what remains; see
-`docs/ROADMAP.md` M5.
+(`v0.9.21`, `device-session.txt`); and the board layer — the §3 enrollment exchange with the host's
+exact verdicts (`v0.9.22`, `enroll-exchange.txt`), the §7 sync transport, the two generic drivers as
+kernel executors, and the service loop, all over a seven-function hardware abstraction and proven on
+the host against a fake of it. `firmware/esp32` is the ESP-IDF project that binds that abstraction to
+a board; see `docs/ROADMAP.md` M5.
+
+**An open question in this profile: how a reading's value travels.** An `action_record` carries
+`evidence_refs` — the ids of the evidence items the device captured and gated on — not their values,
+and the reduced profile has no `evidence_bundle`. So today a constrained device takes a reading,
+verifies its own outcome with it, and reports the outcome and the reference; the controller does not
+receive the number. The C library keeps each item whole (`mm_evidence_produced`: id, `captured_at`,
+`type`, `source`, the §6 `reading` payload) so that whichever of the two additive answers is chosen —
+an `evidence` member on `action_record` carrying the fixed-shape items, or a bounded `evidence_bundle`
+admitted to the profile — costs a serializer, not a redesign. Either is additive under §10. The choice
+is deferred to the bench slice, where the controller's needs are visible; until then the sentence
+above ("fixed-shape readings ride on the action record") describes the intent, not the wire.
 
 **How a constrained device verifies a downlink envelope.** A signed envelope on the wire is its
 canonical bytes with the signature spliced into the last field, because `sig` is last by declaration

@@ -1,0 +1,88 @@
+# MICROMOUND enrollment exchange — golden fixture
+#
+# Frozen by tests/Micromound.Tests/Golden/EnrollExchangeTests.cs from HttpEnrollmentClient (PROTOCOL.md §3).
+# The C client (mm_enroll) must send the same `request:` body and reach each `verdict:` in the same words.
+# Device: mound mm-7f3a0000-…, tier deterministic_controller, capabilities sense.temp + act.relay_1, no driver schemas.
+
+path:      /micromound/v0/enroll
+request:   {"token":"tok-0001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","device_public_key":"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8","hardware_profile":"sense.temp,act.relay_1","tier":"deterministic_controller","capabilities":["sense.temp","act.relay_1"],"protocol_version":0,"driver_schemas":[]}
+
+## accepted, with cadence
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","sync_interval_s":10,"protocol_version":0,"colony_version":"0.3.8.122"}
+verdict:   enrolled
+detail:    enrolled (controller asks for a 10s sync cadence)
+result:    key=29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7 mound=mm-7f3a0000-0000-4000-8000-000000000001 sync=10
+
+## accepted, key only
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7"}
+verdict:   enrolled
+detail:    enrolled
+result:    key=29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7 mound= sync=none
+
+## accepted, fractional cadence
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","sync_interval_s":7.5}
+verdict:   enrolled
+detail:    enrolled (controller asks for a 7.5s sync cadence)
+result:    key=29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7 mound= sync=7.5
+
+## accepted, non-positive cadence ignored
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","sync_interval_s":0}
+verdict:   enrolled
+detail:    enrolled
+result:    key=29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7 mound= sync=none
+
+## accepted, unknown members skipped
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","future":{"x":[1,2]}}
+verdict:   enrolled
+detail:    enrolled
+result:    key=29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7 mound= sync=none
+
+## refused with a reason
+response:  409 {"accepted":false,"reason":"token already used"}
+verdict:   not enrolled
+detail:    enrollment refused: HTTP 409 — token already used
+
+## refused without a reason
+response:  404 (no body)
+verdict:   not enrolled
+detail:    enrollment refused: HTTP 404 (token burned or unknown)
+
+## refused with an unreadable body
+response:  403 not json
+verdict:   not enrolled
+detail:    enrollment refused: HTTP 403 (token burned or unknown)
+
+## controller error
+response:  500 {"error":"db"}
+verdict:   not enrolled
+detail:    controller returned HTTP 500; enrollment not yet complete
+
+## no key in the response
+response:  200 {"mound_id":"mm-7f3a0000-0000-4000-8000-000000000001"}
+verdict:   not enrolled
+detail:    controller response carried no controller_public_key
+
+## empty response
+response:  200 
+verdict:   not enrolled
+detail:    controller response carried no controller_public_key
+
+## a zero key
+response:  200 {"controller_public_key":"0000000000000000000000000000000000000000000000000000000000000000"}
+verdict:   not enrolled
+detail:    controller returned an invalid public key (32 bytes); not enrolled
+
+## a short key
+response:  200 {"controller_public_key":"0011223344"}
+verdict:   not enrolled
+detail:    controller returned an invalid public key (5 bytes); not enrolled
+
+## bound to another mound
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","mound_id":"mm-other"}
+verdict:   not enrolled
+detail:    controller bound this key to mound 'mm-other' but this device's manifest is 'mm-7f3a0000-0000-4000-8000-000000000001'; the token was minted for a different mound — not enrolled
+
+## protocol version skew
+response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","protocol_version":1}
+verdict:   not enrolled
+detail:    controller speaks protocol version 1, this device speaks 0; not enrolled
