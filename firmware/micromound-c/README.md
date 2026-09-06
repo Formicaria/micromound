@@ -225,3 +225,11 @@ contracts — the controller accepts what the C device sends.
   in the Makefile. Nothing of MicroMound's own is exempt.
 - Endianness: SHA-256 and the hex helpers are byte-oriented; the double fixture is decoded via an
   integer, so it reads correctly on either byte order.
+- Memory, measured on x86-64 (`sizeof`): `mm_device` 48 KB static (the queue is 16 × 2 KB; lower
+  `MM_DEVICE_QUEUE` / `MM_DEVICE_WIRE_CAP` for a smaller board), `mm_kernel` 10 KB inside it,
+  `mm_charter_in` 4 KB, `mm_action_record_in` 2.7 KB, `mm_outcome` 2 KB. **Stack:** one exchange's
+  batch (`MM_DEVICE_BATCH` × 440 B frames) plus a charter, a refusal set, a decision, an outcome and a
+  record on the way through `mm_device_sync` peaks near 14 KB — run the device loop on a task with
+  24 KB of stack or more, or lower `MM_DEVICE_BATCH`. Nothing allocates, so this is the whole budget.
+- Text fields are bounded (`MM_DETAIL_CAP` 320, `MM_REASON_CAP` 192): a detail or reason longer than
+  that is truncated, where the host would carry it whole. The fixtures contain no such line.

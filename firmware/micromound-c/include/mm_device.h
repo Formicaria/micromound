@@ -21,9 +21,11 @@
  *             acknowledged (PROTOCOL.md §5: it is the ACKNOWLEDGED beat that renews the lease).
  *   the tick  mm_device_tick: quiesce when the lease runs out (and enter the safe state).
  *
- * Fixed memory: MM_DEVICE_QUEUE envelopes of MM_DEVICE_WIRE_CAP bytes. A full queue refuses to
- * publish — a device that cannot reach its controller stops recording rather than overwriting
- * unacknowledged proof; the beat still goes when there is room for it.
+ * Fixed memory: MM_DEVICE_QUEUE envelopes of MM_DEVICE_WIRE_CAP bytes (48 KB in all by default; an
+ * mm_device is meant to be static). A full queue refuses to publish — a device that cannot reach its
+ * controller stops recording rather than overwriting unacknowledged proof; the beat still goes when
+ * there is room for it. Stack: mm_device_sync peaks near 14 KB (a batch of MM_DEVICE_BATCH frames,
+ * a charter, a decision, an outcome, a record); give the task 24 KB or lower MM_DEVICE_BATCH.
  *
  * Transcript: tests/Micromound.Tests/Golden/files/device-session.txt — a scripted session written
  * by tests/test_device.c and read back by the C# DeviceSessionTests, which verifies every uplink
