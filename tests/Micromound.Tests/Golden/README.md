@@ -2,7 +2,8 @@
 
 `files/` holds frozen copies of the exact bytes MICROMOUND puts on the wire — canonical envelope
 serializations, their sha256 digests, the JSON shape of every typed body, real signatures under fixed
-test seeds — and, since `v0.9.20`, the capability kernel's decisions over a scripted session.
+test seeds — and, since `v0.9.20`, the capability kernel's decisions over a scripted session; since `v0.9.21`, one
+fixture runs the other way — `device-session.txt` is produced by the C device and verified by the host.
 
 They exist for one reason. M5 ships a C protocol mirror for the ESP32 — `firmware/micromound-c`,
 consumed by `firmware/esp32` — and two independent implementations of the same wire format drift
@@ -10,6 +11,11 @@ silently unless something pins them together. These files are that pin: the C mi
 feed the same fixed inputs and must produce byte-identical output.
 
 ## Working with them
+
+`device-session.txt` is the exception to "the C# test writes, the C test reads": `make -C
+firmware/micromound-c test` writes it when it is missing (and fails that run, like `GoldenFile`), and
+compares against it afterwards; the C# `DeviceSessionTests` only reads it. Regenerate it by deleting it
+and running the C tests twice, then read the diff as you would any other golden change.
 
 A missing golden file fails the run rather than writing itself green — a fixture that
 regenerates on demand pins nothing. To bootstrap the files on a fresh checkout, or to accept an
@@ -47,6 +53,7 @@ test — it means the bytes a deployed mound would send no longer match what a d
 | `canonical-doubles.txt` | .NET's number layout: `<IEEE bits> TAB <text>` | every row through `mm_format_double` |
 | `canonical-signed.txt` | four REAL signed wire envelopes (fixed test seeds): a device beat and a controller's charter/stop/ack chain | each verified from the bytes as received, decoded, re-encoded to the same body, re-signed to the same wire |
 | `kernel-decisions.txt` | the capability kernel's decisions: a fixed device, a fixed clock, 42 scripted steps — reason, detail, effective parameters, limits, state, record | `mm_kernel` replays the script and must match every line |
+| `device-session.txt` | **written by the C side** (`test_device.c`): a whole device↔controller session — every `up:` and `down:` wire envelope, an outage, re-sends | the C test compares its session to the file; `DeviceSessionTests` (C#) verifies every uplink envelope, the chain, and every body with the host's code |
 
 The fixtures are **current** — they were regenerated when the v0 contracts were last amended
 (`routines` on charters; `mission_id` / `routine_id` / `requested_parameters` / `evidence_required`

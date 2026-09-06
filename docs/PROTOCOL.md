@@ -340,9 +340,10 @@ Both halves of this profile's wire handling exist as a portable C library, `firm
 verified byte for byte against the golden fixtures on the host: the canonical writer, the number
 formatter, SHA-256, Ed25519 (seed keypair, detached sign and verify), envelopes, the `mound_sync`,
 `action_record`, `ack` and `charter` bodies (`v0.9.18`); and a bounded JSON reader with decoders and
-validators for the `charter`, `stop` and `ack` a device receives (`v0.9.19`); and the capability
-kernel itself, reproducing the host's decisions against a scripted fixture (`v0.9.20`). The device
-loop that ties them together and the ESP-IDF project are what remains before a board runs it; see
+validators for the `charter`, `stop` and `ack` a device receives (`v0.9.19`); the capability kernel
+itself, reproducing the host's decisions against a scripted fixture (`v0.9.20`); and the device loop —
+beat, drain, downlink handling, stop, quiesce — whose recorded session the host's verifier accepts
+(`v0.9.21`, `device-session.txt`). The ESP-IDF project that puts it on a board is what remains; see
 `docs/ROADMAP.md` M5.
 
 **How a constrained device verifies a downlink envelope.** A signed envelope on the wire is its

@@ -162,7 +162,8 @@ jobs:
                    tests/Micromound.Tests/Golden/files/canonical-strings.txt \
                    tests/Micromound.Tests/Golden/files/canonical-doubles.txt \
                    tests/Micromound.Tests/Golden/files/canonical-signed.txt \
-                   tests/Micromound.Tests/Golden/files/kernel-decisions.txt; do
+                   tests/Micromound.Tests/Golden/files/kernel-decisions.txt \
+                   tests/Micromound.Tests/Golden/files/device-session.txt; do
             [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
           done
           # validate.sh refuses to run under MICROMOUND_UPDATE_GOLDEN; no workflow may set it either.

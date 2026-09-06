@@ -39,6 +39,7 @@ void test_json_read(void);
 void test_time(void);
 void test_decode(void);
 void test_kernel(void);
+void test_device(void);
 void test_golden(void);
 
 #endif

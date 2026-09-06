@@ -12,6 +12,71 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.21 — M5: the device loop — a reduced-profile mound runs end to end, and the controller accepts it
+
+The Runner Ant in C, over everything `v0.9.18`–`v0.9.20` built. A device now beats, records, chains,
+signs, drains, receives, verifies, stops, quiesces and refuses exactly as a Pi does — and for the first
+time the proof runs in the other direction: a whole session the C device produced is verified by the
+host's own verifier, chain validator and typed contracts. No wire change; no new refusal reason.
+
+### Added
+
+- **`mm_device`** (`firmware/micromound-c/include/mm_device.h`, `src/mm_device.c`) = `RecordAnts.RunnerAnt`:
+  - **Uplink.** `mm_device_publish` builds an envelope (id from the device's id source, `seq`, `sent_at`,
+    `prev_digest` = the chain head), signs it and queues it — a bounded ring of `MM_DEVICE_QUEUE` (16)
+    envelopes of `MM_DEVICE_WIRE_CAP` (2048) bytes. **A full queue refuses to record** rather than
+    overwrite unacknowledged proof, and says so in the audit. `mm_device_beat` publishes the runtime's
+    real `mound_sync` body `{state, queue_depth}`; `mm_device_act` runs a request through `mm_kernel` and
+    publishes the `action_record`.
+  - **Downlink.** `mm_device_receive_batch` takes one exchange's worth: each envelope is verified from
+    the bytes as received under the controller key, parsed, checked once (a 32-id idempotency window —
+    re-delivery is silent, not an incident), addressed to this mound, and shaped for the reduced profile
+    — or **dropped and audited, never processed, never acknowledged**, with the host's audit wording
+    (`downlink <id> (<kind>) dropped: addressed to '…', this mound is '…'`). Acks are handled inline
+    and drive eviction (`AcknowledgeThrough`: cumulative, never backwards); everything else is handled
+    **stops first, charters second** within the batch. A stop enters the safe state (a callback) and is
+    acknowledged `ok` with the host's detail; a charter is accepted silently or refused with the
+    validator's reasons in a `refused` ack (`charter refused: …`); any other kind — including protocol
+    kinds that never travel downhill, like `action_record` — gets `refused_unknown_kind`.
+  - **The beat.** `mm_device_sync` publishes the beat, then drains oldest-first through a transport
+    callback (one envelope up, an array down — `ISyncTransport.TryExchange`), stopping when an exchange
+    acknowledged nothing; only what was queued at beat time goes up in that beat, so the acks a stop or a
+    refused charter provoke wait for the next one, as they do on a Pi. **The acknowledged beat renews
+    the lease** (PROTOCOL.md §5) — not the transport returning. Offline is a return value, not an error:
+    the queue keeps everything and the next beat resumes from exactly where this one stopped.
+  - **The tick.** `mm_device_tick` quiesces when the lease has run out and enters the safe state.
+- **Transcript fixture `device-session.txt`** — the first fixture written by the C side and read by the
+  host. `tests/test_device.c` runs a scripted session between an `mm_device` (device seed `00 01 02 …`)
+  and a fake controller (seed `20 21 22 …`, verifying what comes up with `mm_decode` as ANTHILL would):
+  an observe-only beat; a charter; a clamped actuation and a reading; a three-exchange drain with the
+  charter re-delivered; a batch in which the controller misbehaves four ways (a stop for another mound,
+  a `mission` kind, an `action_record` downhill, a charter tampered after signing); a stop; refused and
+  continuing work while stopped; a charter that cannot clear the stop; an outage and the resumed drain;
+  an explicit clear, a 30-second lease and its expiry; a `quiesced` beat. Every `up:` and `down:` line
+  is the transcript. The C test compares against the committed file byte for byte; **the new C#
+  `DeviceSessionTests` verifies every uplink envelope under the device key with `Ed25519KeyPair`,
+  checks the wire form is exactly what the host re-serializes, validates the whole chain with
+  `EnvelopeValidator.ValidateChain` (across the outage's re-sends), decodes every body through
+  `ActionRecord`/`AckBody` and re-encodes it to the same bytes, and checks the session walked all
+  four states and all three ack statuses.** Every signature in the file was also confirmed with a
+  third, independent Ed25519 implementation (43 verify; the one tampered charter does not).
+- Tests: 1,792 checks (from 1,690). gcc, clang, `-Os`, gcc+ASan/UBSan (findings fatal).
+
+### Notes
+
+- One deliberate difference from the Pi: RunnerAnt defers non-ack downlink across the whole drain and
+  sorts it once; the device handles each exchange's batch as it arrives (stops first within the batch)
+  because it keeps no second copy of what came down. A stop that arrives in a later exchange than a
+  charter is therefore applied after it — the end state is the same, and both are audited.
+- The drain's progress test is "did anything get acknowledged", not "did the queue shrink": the acks a
+  stop provokes are queued during the drain, which would otherwise read as no progress.
+- The device generates no ids and no keys of its own here: `mm_device_config` takes an id source (a
+  UUID per call — the firmware plugs its RNG; the test a counter) and the 64-byte secret key. The
+  controller key is the one enrollment delivers.
+- Not yet in C: enrollment (an HTTP exchange, not an envelope — the ESP-IDF project's transport layer
+  owns it) and the hold/release timing of a real actuator (`ITimedDriver`), which belongs with the
+  drivers-as-executors on the board.
+
 ## v0.9.20 — M5: the kernel in C — the same authority boundary, decision for decision
 
 `Micromound.Capabilities` in C. Not a simplified kernel for a small device: the same thirteen checks

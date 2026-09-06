@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.20
+**Current version:** v0.9.21
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.20`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.21`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -121,12 +121,19 @@ signatures (`canonical-signed.txt`) that BouncyCastle and TweetNaCl both reprodu
 same thirteen checks in the same order, the three-tier limit intersection, duty cycle and rate across
 every capability a routine moves, clamping that says what narrowed, the evidence gate — pinned by a new
 golden fixture (`kernel-decisions.txt`) in which a C# test scripts 42 steps against a fixed device and the
-C kernel must reproduce every reason, detail, effective parameter, state and record. What's still ahead
-for M4 is only the board itself. End-to-end simulator missions run against an in-process controller that verifies every
+C kernel must reproduce every reason, detail, effective parameter, state and record, and — new in
+`v0.9.21` — **the device loop**: `mm_device` is the Runner Ant in C — signed, chained uplink on a bounded
+queue, the sync beat and its drain, downlink verified from the bytes as received and handled stops-first
+(stop → safe state + ack; charter → accepted or refused with reasons; anything else → `refused_unknown_kind`),
+acknowledgement-driven eviction, lease renewal on the acknowledged beat, quiesce on expiry. A whole
+scripted session against a fake controller is recorded as `device-session.txt`, which the C test replays
+byte for byte and a C# test verifies with the host's verifier, chain validator and typed contracts —
+**the controller now accepts what the C device sends.** What's still ahead for M4 is only the board
+itself. End-to-end simulator missions run against an in-process controller that verifies every
 byte. The v0 canonical bytes of every existing fixture are unchanged. The host has both a real digital
 line and a real analog channel available, but has not yet been run on a device against real hardware —
-that boundary finishes M4; the rest of the firmware (the device loop over the C kernel, the ESP-IDF
-project) is M5. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
+that boundary finishes M4; what remains of M5 is the ESP-IDF project that hosts `micromound-c` on a
+board — transport, drivers as executors, clock, key storage. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
 
 Releases continue as patch versions (`v0.9.2`, `v0.9.3`, …), including the internal M4 substrate
 slices; `v0.10.0` is reserved for the M4 boundary where the host actually runs on a device over real
@@ -169,7 +176,7 @@ src/Micromound.Reasoning/      optional reasoning provider, and the null default
 src/Micromound.Host/           the headless Linux/Pi daemon
 src/Micromound.Sim/            simulated mounds — the real kernel over fake hardware
 deploy/                        systemd unit, environment template, installer for a Pi
-firmware/micromound-c/         the C mirror: canonical bytes, digests, Ed25519, reduced-profile bodies (C99, host-tested)
+firmware/micromound-c/         the C mirror: wire format, reader, kernel and device loop of a reduced-profile mound (C99, host-tested)
 firmware/esp32/                reduced deterministic controller (ESP-IDF; placeholder that will consume micromound-c)
 tests/Micromound.Tests/        contract, authority, kernel, evidence, and golden-byte tests
 ```

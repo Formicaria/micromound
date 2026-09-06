@@ -1,15 +1,17 @@
-# micromound-c — the C mirror of the MICROMOUND wire format
+# micromound-c — a reduced-profile mound in C
 
-The first piece of the constrained-controller firmware (ROADMAP M5), built where it can be proven:
-a portable C99 library that produces the **exact canonical bytes** the C# runtime produces
-(`Micromound.Protocol`), digests and signs them the same way, and is checked byte for byte against
-the golden fixtures in [`tests/Micromound.Tests/Golden/files`](../../tests/Micromound.Tests/Golden/)
-by `gcc` and `clang` on the host. Nothing here needs a board. Everything here is what a board will
-run.
+The software of the constrained-controller firmware (ROADMAP M5), built where it can be proven: a
+portable C99 library that produces the **exact canonical bytes** the C# runtime produces
+(`Micromound.Protocol`), digests and signs them the same way, reads and validates what a device
+receives, decides exactly what the C# capability kernel decides, and runs the Runner Ant's loop —
+checked against the golden fixtures in [`tests/Micromound.Tests/Golden/files`](../../tests/Micromound.Tests/Golden/)
+by `gcc` and `clang` on the host, and, for the device loop, checked the other way: the host's own
+verifier accepts a whole session the C device recorded. Nothing here needs a board. Everything here
+is what a board will run.
 
 ```bash
 make            # build/libmicromound.a
-make test       # 1,600+ checks, including every golden file, byte for byte
+make test       # 1,700+ checks, including every golden file, byte for byte
 make CC=clang test
 ```
 
@@ -32,6 +34,7 @@ needed when the buffer was too small.
 | `mm_time` | `mm_time.h` | `yyyy-MM-ddTHH:mm:ssZ` ↔ epoch seconds; accepts the offset/fractional forms §2 asks readers to tolerate | `test_time.c` |
 | `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's reason lines character for character, views to re-encode | `canonical-signed.txt` |
 | `mm_kernel` | `mm_kernel.h` | **The capability kernel**: compiled capability/routine tables, `KernelAuthority` (charter, lease, stop, quiesce, device limits), the thirteen authorization checks in the host's order, hardware ∩ device ∩ charter, duty cycle and rate, clamping, execution through a function pointer, the evidence gate; the host's refusal reasons and detail text | `kernel-decisions.txt` |
+| `mm_device` | `mm_device.h` | **The device loop** (`RunnerAnt`): signed, chained uplink on a bounded queue, the beat and its acknowledgement-driven drain, downlink verified from the bytes as received and handled stops-first, acks, lease renewal on the acknowledged beat, quiesce, offline as a normal state | `device-session.txt` (written here, verified by the host) |
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
 A constrained controller runs compiled routines selected by charter; it never plans.
@@ -122,7 +125,7 @@ firmware/micromound-c/
   include/            the public headers (one per module)
   src/                the modules
   third_party/tweetnacl/   TweetNaCl, verbatim, with a provenance README
-  tests/              mm_test.h harness; one test file per module; test_golden.c and test_kernel.c read the six fixtures
+  tests/              mm_test.h harness; one test file per module; test_golden.c, test_kernel.c and test_device.c cover the seven fixtures
   Makefile
 ```
 
@@ -164,16 +167,52 @@ The record is an `mm_action_record_in`; `mm_action_record_bind` + `mm_body_actio
 envelope. `tests/test_kernel.c` runs the 42-step script in `kernel-decisions.txt` against exactly this
 API and matches every line the C# kernel wrote.
 
+## The device
+
+`mm_device` is the whole reduced-profile mound over the kernel — what `firmware/esp32`'s `app_main`
+will drive:
+
+```c
+mm_device_config cfg = {
+    my_mound_id, device_sk, controller_pk,          /* identity; the controller key from enrollment */
+    CAPS, 2, ROUTINES, 1,                           /* the compiled tables */
+    my_uuid_source, NULL,                           /* fresh envelope ids, from the board's RNG */
+    de_energize_everything, NULL                    /* the safe state, on stop and on quiesce */
+};
+static mm_device dev;                               /* ~40 KB: the queue is 16 × 2 KB */
+if (mm_device_init(&dev, &cfg, err, sizeof err) != 0) halt(err);
+mm_kernel_bind_executor(&dev.kernel, &relay_executor);
+
+for (;;) {                                          /* the service loop */
+    int64_t now = clock_now();
+    mm_device_tick(&dev, now);                      /* quiesce when the lease runs out */
+    if (due_for_a_beat(now)) {
+        mm_sync_outcome out;
+        mm_device_sync(&dev, now, https_exchange, &link, &out);   /* beat, drain, handle, renew */
+    }
+    if (routine_wants_to_act(now)) {
+        mm_action_record_in record;
+        mm_device_act(&dev, &request, now, &record);              /* through the kernel; recorded and queued */
+    }
+}
+```
+
+`https_exchange` is `ISyncTransport.TryExchange`: POST one envelope to `<controller>/micromound/v0/sync`,
+hand back the array that came down, return -1 when the link is down. `tests/test_device.c` runs this
+loop against a scripted controller and records the session as `device-session.txt`; the C#
+`DeviceSessionTests` then verifies that transcript with the host's verifier, chain validator and typed
+contracts — the controller accepts what the C device sends.
+
 ## What this is not, yet
 
-- **Not the device loop.** Downlink in → stop/charter/ack handled → the beat, the records and the
-  acks out, chained and signed — the glue over `mm_decode`, `mm_kernel` and `mm_envelope` — is the
-  next M5 slice, with compiled routines as executors.
+- **Not the board.** [`firmware/esp32`](../esp32/README.md) is still a placeholder. What it must add
+  is exactly what this library declines to guess at: an HTTPS transport and the enrollment exchange,
+  drivers as executors with real hold/release timing, a clock, and protected key storage.
 - **Not fast.** TweetNaCl signs in tens of milliseconds on an ESP32-class core; adequate for a sync
   beat, not for anything hotter. The backend sits behind `mm_ed25519.h` and the tests prove a swap
   did not change the bytes.
-- **Not the firmware.** [`firmware/esp32`](../esp32/README.md) is still a placeholder; when it
-  lands as an ESP-IDF project, this directory is its `mm_protocol` component.
+- **Not enrollment.** PROTOCOL.md §3 is an HTTP exchange, not an envelope; it belongs with the
+  transport on the board.
 
 ## Portability notes
 

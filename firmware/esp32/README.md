@@ -2,11 +2,12 @@
 
 Placeholder for the ESP-IDF project. Nothing in *this* directory compiles yet, by design: the
 firmware starts only once the protocol contracts are frozen and the Pi-class runtime has proven
-them. But its protocol half already exists and is host-tested —
-[`firmware/micromound-c`](../micromound-c/README.md) (`v0.9.18`): the canonical writer, .NET's
-number layout, SHA-256, Ed25519 with detached sign/verify, envelopes and the reduced-profile bodies,
-verified byte for byte against the golden fixtures. When this project lands, that library is its
-`mm_protocol` component. See [`docs/ROADMAP.md`](../../docs/ROADMAP.md).
+them. But the software of the controller already exists and is host-tested —
+[`firmware/micromound-c`](../micromound-c/README.md) (`v0.9.18`–`v0.9.21`): the wire format, the
+reader and validators, the capability kernel and the device loop, verified against the golden
+fixtures and, for the device loop, accepted by the host's own verifier. What this project adds is the
+board: an HTTPS transport and enrollment, drivers as executors, a clock, key storage, and `app_main`
+driving `mm_device`. See [`docs/ROADMAP.md`](../../docs/ROADMAP.md).
 
 ## What this firmware will be
 
@@ -39,11 +40,10 @@ compile into one image, so a controller mound renders in a colony view like any 
 firmware/esp32/
   main/            app_main, sync beat task, watchdog task
   components/
-    mm_protocol/   ../micromound-c — reduced-envelope encode + signing (C mirror of Micromound.Protocol; exists);
-                   the decode half (charter/stop/ack reader) is the next slice
-    mm_kernel/     capability kernel: limits, action classes, duty cycle, refusal reasons
-    mm_routines/   compiled routine table + clamped parameter ranges
-    mm_drivers/    GPIO, I2C, ADC
+    micromound_c/  ../micromound-c — wire format, reader, validators, kernel, device loop (exists, host-tested)
+    mm_routines/   the compiled capability/routine tables (mm_capability_desc / mm_routine_desc) for this board
+    mm_drivers/    GPIO, I2C, ADC as mm_executor implementations, with real hold/release timing
+    mm_link/       HTTPS transport (mm_exchange_fn) and the enrollment exchange (PROTOCOL.md §3)
   test/            Unity-based host tests for the protocol mirror
 ```
 
