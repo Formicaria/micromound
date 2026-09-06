@@ -18,9 +18,12 @@ every push with the same IDF version.
 |---|---|---|---|
 | **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,026,224 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
 | **Serial link** (`sdkconfig.defaults.serial`) | 295,940 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
+| **Port server** (`sdkconfig.defaults.ports`) | 259,360 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
 
-`libmicromound_c.a` is 38–39 KB of flash code either way; the static `mm_app` is 40 KB of DRAM
-(uplink queue of 8), plus 11 KB for the serial link's frame decoder in the serial image.
+In the first two the board is a mound: its own identity, its own enrollment, its own kernel
+(`libmicromound_c.a` is 38–39 KB of flash code; the static `mm_app` 40 KB of DRAM, plus 11 KB for
+the serial link's frame decoder). In the third it is the Pi's hands: no identity, no kernel — 12 KB
+of the library (`mm_ports`, `mm_frame`, the JSON writer/reader) and 9.5 KB of DRAM.
 
 ## What a board supplies
 
@@ -53,6 +56,15 @@ network stack at all, which is why that image is a third the size and why the he
 Wi-Fi image does not arise. By default the link is UART 0 — the USB-serial cable that flashes the
 board — so the console log is off in that configuration (it would corrupt the frames); use
 `CONFIG_MM_SERIAL_UART=1` with TX/RX pins to keep the console.
+
+**The port server** (`CONFIG_MM_LINK_PORTS`, PROTOCOL.md §12 "port requests") is the other
+arrangement: the Pi's own kernel is the only authority, and this board answers its bounded requests
+— `hello`, `write` a pin's logical level, `read` a channel in volts — over the same UART. What the
+board keeps for itself is exactly what a dumb expander would not: the CAPS table's `max_on_s` for
+the relay pin, enforced here (the pin is released by the board when the bound passes, whatever the
+Pi says), and a watchdog (`CONFIG_MM_PORTS_WATCHDOG_S`, 5 s) that drives every pin safe when the Pi
+goes quiet. A release write that fails trips the board: nothing is driven active again until reboot.
+`main/board.c` (`board_ports_init`) is where this board's pins and channels are offered.
 
 ## What the board does
 
@@ -89,6 +101,9 @@ idf.py build flash monitor
 
 # the serial-link image instead (no Wi-Fi; a Pi bridges — DEPLOY.md §7):
 idf.py -B build-serial -DSDKCONFIG=sdkconfig.serial -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.serial" build flash
+
+# the port-server image (the Pi's kernel drives this board's pins — DEPLOY.md §7):
+idf.py -B build-ports -DSDKCONFIG=sdkconfig.ports -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.ports" build flash
 ```
 
 `main/Kconfig.projbuild` holds the controller URL, the mound id, the enrollment token (bench
@@ -106,10 +121,11 @@ firmware/esp32/
   CMakeLists.txt                 the project; pulls protocol_examples_common for Wi-Fi; MM_DEVICE_QUEUE=8 project-wide
   sdkconfig.defaults             1.5 MB app partition, 32 KB main-task stack, task watchdog (panic → reboot → safe), TLS bundle
   sdkconfig.defaults.serial      overlay: the serial link on UART 0, console off
+  sdkconfig.defaults.ports       overlay: the port server on UART 0, console off
   main/
-    app_main.c                   boot order, clock wait, the tick loop, the watchdog
+    app_main.c                   boot order, clock wait, the tick loop, the watchdog; the port-server loop
     hal_esp32.c / .h             mm_hal over ESP-IDF — the only file that knows the board; both links live here
-    board.c / .h                 THIS board: capability tables, relay on a GPIO, probe on an ADC channel, the schedule
+    board.c / .h                 THIS board: capability tables, relay on a GPIO, probe on an ADC channel, the schedule; the port table
     Kconfig.projbuild            the menuconfig entries above
     certs/controller_ca.pem      optional private CA (empty = root bundle)
   components/micromound_c/       ../../micromound-c, compiled as an IDF component, unchanged
@@ -117,12 +133,8 @@ firmware/esp32/
 
 ## What is still ahead
 
-- **The bench run.** Flash, enroll against a controller, watch a beat, read the heap high-water mark
-  through a TLS exchange. The first slice of real hardware, and the one that turns this README's
-  "compiles" into "runs on".
-- **Routing through a Pi-class mound's own kernel.** The serial link makes a Pi the board's
-  transport; it does not make the Pi the board's authority. A board whose actions are requested by
-  a Pi's Forager and gated by the Pi's kernel — the "generic driver sends a bounded request to the
-  ESP32" of the acceptance bench — is a different arrangement, on top of this link, not yet designed.
+- **The bench run.** Flash one of the three images: enroll and beat (the mound images), or say hello
+  to the Pi's `--check-hardware` and take a bounded request (the port server). The first slice of
+  real hardware, and the one that turns this README's "compiles" into "runs on".
 - **Layer 0.** E-stops and interlocks wired outside the MCU's control, reported as observed facts
   only (SAFETY.md). Nothing here pretends to be one.

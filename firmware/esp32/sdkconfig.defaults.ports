@@ -1,0 +1,9 @@
+# Overlay for the port server: idf.py -B build-ports -DSDKCONFIG=sdkconfig.ports -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.ports" build
+# The board answers a Pi's bounded port requests over UART 0 (the USB-serial cable); no identity, no
+# network. The console log is off, because it shares that UART with the frames.
+CONFIG_MM_LINK_PORTS=y
+CONFIG_MM_LINK_WIFI=n
+CONFIG_MM_LINK_SERIAL=n
+CONFIG_MM_SERIAL_UART=0
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_ESP_CONSOLE_UART_NONE=y

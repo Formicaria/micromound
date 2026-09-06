@@ -42,6 +42,7 @@ void test_kernel(void);
 void test_device(void);
 void test_board(void);
 void test_frame(void);
+void test_ports(void);
 void test_golden(void);
 
 #endif

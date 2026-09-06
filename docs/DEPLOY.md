@@ -155,6 +155,23 @@ unplugged and plugged back. It can run beside the mound daemon (a second unit, a
 it does not need the mound's state directory or its identity. Provision the board's one-time token
 in its own NVS (`firmware/esp32/README.md`); the bridge never sees it as anything but bytes.
 
+**Or: the board as this mound's hands.** Flash the port-server image instead
+(`sdkconfig.defaults.ports`) and no bridge runs: the board has no identity and enrolls nowhere.
+This Pi's manifest names the board's pins and channels with a `link` setting, and this Pi's kernel
+authorizes every actuation exactly as it does for a local GPIO — the board only keeps its compiled
+`max_on_s` per pin and drives everything safe if this Pi goes quiet for 5 s (PROTOCOL.md §12, port
+requests). The same `stty` line applies; the daemon opens the device itself.
+
+```json
+{ "type": "digital_actuator", "settings": { "capability": "act.relay_1", "link": "/dev/ttyUSB0", "pin": 5, "max_on_s": "60" } },
+{ "type": "analog_sensor",    "settings": { "capability": "sense.temp",  "link": "/dev/ttyUSB0", "channel": 0, "scale": "100", "offset": "-50", "unit": "C" } }
+```
+
+`micromound --check-hardware` says hello to the board and refuses the manifest fail-closed if the
+board does not answer, does not offer the pin or channel, disagrees with `active_high`, or reports
+itself tripped. A pin's `max_on_s` in the manifest is the device tier; the board's compiled bound is
+the hardware tier below it, and the charter narrows both.
+
 ## Operating notes
 
 - **Stop.** ANTHILL's *Stop* on the fleet row is carried by the next beat; the mound de-energizes,

@@ -7,9 +7,11 @@ micromound-*.zip
 .vs/
 .idea/
 firmware/esp32/build/
-firmware/esp32/build-serial/
+firmware/esp32/build-*/
 firmware/esp32/sdkconfig.serial
 firmware/esp32/sdkconfig.serial.old
+firmware/esp32/sdkconfig.ports
+firmware/esp32/sdkconfig.ports.old
 firmware/micromound-c/build/
 firmware/esp32/sdkconfig
 firmware/esp32/sdkconfig.old

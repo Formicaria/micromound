@@ -12,6 +12,76 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.26 — M5: the board as the Pi's hands — port requests over the link, the Pi's kernel the only authority
+
+The last undesigned M5 item, chosen and built: the acceptance bench's "a generic driver sends a
+bounded request to the ESP32; the ESP32 acts deterministically". The board becomes a port server over
+the same §12 framing with the roles reversed; a Pi-class mound's own kernel authorizes everything and
+reaches the board's pins and channels through its existing generic drivers by one manifest setting.
+No envelope changes. No authority moves to the board — it holds no key and decides nothing — but two
+things it keeps for itself are new, and they are why this is safer than an I/O expander.
+
+### Added
+
+- **PROTOCOL.md §12, port requests.** `micromound/link/ports/hello` (discovery and the keepalive:
+  profile, firmware, watchdog, tripped, every pin with its polarity and compiled `max_on_s`, every
+  channel), `…/write` (`{"pin","level"}`, the level LOGICAL; the board applies polarity), `…/read`
+  (`{"channel"}` → volts). `404` unknown pin/channel, `400` malformed, `409` tripped, `503` a line that
+  would not drive or a sensor that would not read — never a zero. **The board's own tier:** a pin
+  driven active is released by the board when its compiled `max_on_s` passes, whatever the Pi says;
+  **the watchdog:** no request for `watchdog_s` drives every pin safe. A release that fails is a trip:
+  nothing is driven active again until reboot; driving safe and reading still work.
+- **`mm_ports`** (`firmware/micromound-c`): the server — pin and channel tables (a pin that will not
+  drive safe at bring-up is not offered), the three handlers with the refusals above, `mm_ports_service`
+  (bounds, watchdog, trip), `mm_ports_on_frame` (a request frame in, a response frame out). It needs
+  only a monotonic clock. **Fixture `port-exchange.txt`**, written by `test_ports.c` — 29 requests and the
+  board's exact answers: bring-up safe levels, hello, a write and its automatic release at the bound, an
+  active-low pin, every refusal in the board's words, a failed read, the watchdog firing once per quiet
+  period and re-arming on the next request, a line that would not drive active (no hold, no trip), a
+  line that would not release (the trip, 409 on the next active write, 503 on the retried release, the
+  retry succeeding, the trip standing) — plus the frames around it. 2,530 checks.
+- **`LinkPortsClient`** (`Micromound.Drivers`): the Pi side — the request bodies and response parsing the
+  fixture pins, `Hello`/`Write`/`Read` with the board's refusals as `LinkPortsException`, a keepalive
+  timer, one exchange at a time behind a gate that itself times out (a stuck exchange on a silent board
+  cannot make a safe-state write hang; it fails loudly and the host trips, while the board, hearing
+  nothing, drives itself safe). **`LinkDigitalOutput`** / **`LinkAnalogInput`**: the `IDigitalOutput` /
+  `IAnalogInput` behind the unchanged generic drivers. **`LinkPortsPool`**: one client per serial device,
+  discovery by hello, keepalive at a third of the board's watchdog. **The `link` setting** on both
+  hardware backings (`GpioChardevActuatorFactory`, `SysfsDigitalActuatorFactory`,
+  `Ads1115AnalogSensorFactory` read it first): a line or channel on the board, or the local port when
+  empty. Composition refuses fail-closed a board that does not answer, a pin or channel it does not
+  offer, a polarity its compiled table disagrees with, or a tripped board. `DriverSchemaCatalog` and
+  CONFIGURATION.md describe `link`; the schema test still proves every hardware backing reads exactly
+  the described settings. `LinkPortsTests`: the fixture both ways, a fake board over an in-memory
+  duplex (logical levels through an active-low pin, refusals, a silent board as a timeout, the keepalive),
+  and both factories composing by `link` alone.
+- **`firmware/esp32`: a third configuration**, `CONFIG_MM_LINK_PORTS` (`sdkconfig.defaults.ports`): no
+  identity, no NVS, no clock — `app_main` runs the port-server loop (UART bytes → `mm_frame` →
+  `mm_ports` → UART; bounds and the watchdog once a second on the uptime clock). `board_ports_init`
+  offers the relay pin with the CAPS table's hardware `max_on_s` and the probe's channel. Measured:
+  **259,360 bytes**, DRAM 12% (12 KB of the library, 9.5 KB of statics). CI builds all three images.
+- **`mm_version.h`** (`MM_VERSION`) — the library's version string, reported in the port server's
+  hello; `validate.sh` / `validate.ps1` now fail when it disagrees with `Directory.Build.props`.
+- `LinkFrame` / `LinkFrameDecoder` moved from `Micromound.Host` to `Micromound.Protocol` — a wire format
+  both the bridge and the port client speak, with no I/O of its own. `LinkBridge` stays in Host.
+
+### Notes
+
+- Which arrangement to use. The mound images (Wi-Fi, serial link) make the board a mound: its own key,
+  its own charter, its own records, its readings inline on its records. The port server makes it the
+  Pi's hands: the Pi's records name the Pi's capabilities, the Pi's evidence store holds the readings,
+  and the controller sees one mound with a longer reach. Both are M5; the bench decides which it wants,
+  and a board is one flash away from the other.
+- What the board still refuses on its own. `max_on_s` and the watchdog are not authority — the Pi's
+  kernel already clamped every request under the same bound — they are the board declining to trust a
+  silent or faulty master with a live load. That is SAFETY.md's rule for every layer: catching a fault
+  above you does not de-energize; make yourself fail-safe.
+- The serial device is opened as a plain file, as the bridge does; a board silent mid-exchange holds
+  that one exchange until bytes arrive, and every other caller times out at the gate (see
+  `LinkPortsPool`'s remarks). A timed serial layer can replace the opener without touching the rest.
+
+---
+
 ## v0.9.25 — M5: the Pi↔ESP32 link — the same exchanges, framed over a serial cable to a bridge
 
 The "compact versioned Pi↔ESP32 packet protocol" the roadmap has carried since M5 was named, now
@@ -31,8 +101,8 @@ something the other side refuses. No authority moves — the bridge holds no key
 - **Fixture `link-frames.txt`** (`tests/Micromound.Tests/Golden/LinkFramesTests.cs`): the CRC-32 of
   `123456789` and of nothing, and eleven frames — beats, an enrollment, the time, an empty body,
   nothing downlink, one envelope down, offline, refused, a controller error, a wrapped `seq` — as
-  `Micromound.Host.LinkFrame` encodes them. Added to the CI golden guard.
-- **`Micromound.Host.LinkFrame` / `LinkFrameDecoder`**: the codec and an incremental decoder that
+  `Micromound.Protocol.LinkFrame` encodes them. Added to the CI golden guard.
+- **`Micromound.Protocol.LinkFrame` / `LinkFrameDecoder`**: the codec and an incremental decoder that
   resynchronises on the magic and drops — and counts — the wrong version, an oversize length, a bad CRC.
   **`LinkBridge`**: the Pi side — reads request frames off any `Stream`, relays each to the controller
   over HTTPS byte for byte (`application/json`, the daemon's timeout), frames the status and body back,

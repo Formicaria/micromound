@@ -1,4 +1,5 @@
 using System.Text;
+using Micromound.Protocol;
 
 namespace Micromound.Host;
 

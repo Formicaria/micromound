@@ -114,6 +114,7 @@ port needs are simply ignored by the in-memory backing, so one manifest serves b
 | | `max_on_s`, `min_off_s`, `max_rate_per_h` | no | The hardware limit tier for this line |
 | | `pin` | with `--hardware` | The GPIO line (BCM numbering on a Pi): a chip line offset on the character device, the global number on sysfs |
 | | `chip` | no (`0`) | `/dev/gpiochip<chip>` (character device only; the Pi header is chip 0, chip 4 on a Pi 5 with an older kernel). The sysfs backing refuses a non-zero chip |
+| | `link` | no | A serial device (`/dev/ttyUSB0`): this line lives on a board running the port server over the link (PROTOCOL.md §12). `pin` is then the board's pin, `chip` is ignored, and `active_high` must match the board's compiled polarity — a mismatch refuses the manifest |
 | `analog_sensor` | `capability` | yes | The `sense.` capability this channel is (`sense.soil_moisture`) |
 | | `unit` | no | Unit recorded on every reading (`pct`, `V`, `C`) |
 | | `scale`, `offset` | no (`1`, `0`) | Linear calibration, `value = raw × scale + offset`; both must be finite |
@@ -121,6 +122,7 @@ port needs are simply ignored by the in-memory backing, so one manifest serves b
 | | `bus` | no (`1`) | I2C bus number: `/dev/i2c-<bus>`; the Pi's header bus is 1 |
 | | `address` | no (`0x48`) | 7-bit I2C address, decimal or `0x` hex; the ADS1115 offers `0x48`..`0x4B` by its ADDR pin |
 | | `gain` | no (`4.096`) | PGA full-scale range in volts: `6.144`, `4.096`, `2.048`, `1.024`, `0.512`, `0.256`. Resolution, not protection: inputs must stay below VDD + 0.3 V |
+| | `link` | no | A serial device: this channel is read from a board running the port server over the link (PROTOCOL.md §12), in volts, through the same `scale`/`offset`. `channel` is then the board's ADC channel; `bus`, `address` and `gain` are ignored |
 
 A real backing reads in **volts** before calibration. A malformed or missing setting a backing
 needs, or a chip that does not answer at its address, refuses the whole manifest at bring-up — the

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using Micromound.Host;
+using Micromound.Protocol;
 using Xunit;
 
 namespace Micromound.Tests;

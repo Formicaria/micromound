@@ -13,11 +13,20 @@ menu "MicroMound controller"
             bool "Wi-Fi + HTTPS (the board talks to the controller directly)"
         config MM_LINK_SERIAL
             bool "Serial link to a bridge (a Pi relays; the board has no network)"
+        config MM_LINK_PORTS
+            bool "Port server (a Pi's kernel drives this board's pins over the link; no identity, no enrollment)"
     endchoice
+
+    config MM_PORTS_WATCHDOG_S
+        int "Port server: seconds without a request before every pin goes safe"
+        depends on MM_LINK_PORTS
+        default 5
+        help
+            The Pi keeps the link alive at a third of this; a Pi that goes quiet loses its outputs.
 
     config MM_SERIAL_UART
         int "Link UART number"
-        depends on MM_LINK_SERIAL
+        depends on MM_LINK_SERIAL || MM_LINK_PORTS
         default 0
         help
             UART 0 is the USB-serial console on most dev boards: the bridge then runs on the same cable
@@ -25,17 +34,17 @@ menu "MicroMound controller"
 
     config MM_SERIAL_TX_GPIO
         int "Link UART TX GPIO (-1 = the UART's default pin)"
-        depends on MM_LINK_SERIAL
+        depends on MM_LINK_SERIAL || MM_LINK_PORTS
         default -1
 
     config MM_SERIAL_RX_GPIO
         int "Link UART RX GPIO (-1 = the UART's default pin)"
-        depends on MM_LINK_SERIAL
+        depends on MM_LINK_SERIAL || MM_LINK_PORTS
         default -1
 
     config MM_SERIAL_BAUD
         int "Link baud rate"
-        depends on MM_LINK_SERIAL
+        depends on MM_LINK_SERIAL || MM_LINK_PORTS
         default 115200
 
     config MM_CONTROLLER_URL

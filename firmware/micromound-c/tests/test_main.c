@@ -30,6 +30,7 @@ int main(int argc, char **argv)
     run("device: a whole session against a scripted controller (device-session.txt)", test_device);
     run("board: mm_app over a fake HAL — enrollment (enroll-exchange.txt), beats, drivers, reboot, stop, trip", test_board);
     run("link: mm_frame against link-frames.txt, the decoder's rules, mm_serial over a fake pipe", test_frame);
+    run("ports: the board as a port server — writes, reads, the board's own max_on_s, the watchdog, the trip (port-exchange.txt)", test_ports);
     run("golden fixtures: byte-for-byte against tests/Micromound.Tests/Golden/files", test_golden);
 
     printf("\n%d checks, %d failed\n", mm_test_checks, mm_test_failures);

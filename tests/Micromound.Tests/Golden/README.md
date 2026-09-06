@@ -13,10 +13,11 @@ feed the same fixed inputs and must produce byte-identical output.
 
 ## Working with them
 
-`device-session.txt` is the exception to "the C# test writes, the C test reads": `make -C
-firmware/micromound-c test` writes it when it is missing (and fails that run, like `GoldenFile`), and
-compares against it afterwards; the C# `DeviceSessionTests` only reads it. Regenerate it by deleting it
-and running the C tests twice, then read the diff as you would any other golden change.
+`device-session.txt` and `port-exchange.txt` are the exceptions to "the C# test writes, the C test
+reads": `make -C firmware/micromound-c test` writes them when missing (and fails that run, like
+`GoldenFile`), and compares against them afterwards; the C# `DeviceSessionTests` and `LinkPortsTests`
+only read them. Regenerate one by deleting it and running the C tests twice, then read the diff as you
+would any other golden change.
 
 A missing golden file fails the run rather than writing itself green — a fixture that
 regenerates on demand pins nothing. To bootstrap the files on a fresh checkout, or to accept an
@@ -55,7 +56,8 @@ test — it means the bytes a deployed mound would send no longer match what a d
 | `canonical-signed.txt` | four REAL signed wire envelopes (fixed test seeds): a device beat and a controller's charter/stop/ack chain | each verified from the bytes as received, decoded, re-encoded to the same body, re-signed to the same wire |
 | `kernel-decisions.txt` | the capability kernel's decisions: a fixed device, a fixed clock, 42 scripted steps — reason, detail, effective parameters, limits, state, record | `mm_kernel` replays the script and must match every line |
 | `device-session.txt` | **written by the C side** (`test_device.c`): a whole device↔controller session — every `up:` and `down:` wire envelope, an outage, re-sends | the C test compares its session to the file; `DeviceSessionTests` (C#) verifies every uplink envelope, the chain, and every body with the host's code |
-| `link-frames.txt` | the Pi↔ESP32 link framing (PROTOCOL.md §12): the CRC-32 on two inputs, and eleven request/response frames as `Micromound.Host.LinkFrame` encodes them | `mm_frame` encodes every case to the same `frame:` bytes and decodes each `frame:` to the same `payload:` (`test_frame.c`) |
+| `link-frames.txt` | the Pi↔ESP32 link framing (PROTOCOL.md §12): the CRC-32 on two inputs, and eleven request/response frames as `Micromound.Protocol.LinkFrame` encodes them | `mm_frame` encodes every case to the same `frame:` bytes and decodes each `frame:` to the same `payload:` (`test_frame.c`) |
+| `port-exchange.txt` | **written by the C side** (`test_ports.c`): the board as a port server — 29 requests (hello, writes, reads, every refusal, the watchdog, the trip) and the board's exact answers | the C test compares itself to the file; `LinkPortsTests` (C#) parses every `resp:` with the Pi's client and checks its own request bodies against the `req:` lines |
 | `enroll-exchange.txt` | the PROTOCOL.md §3 enrollment exchange as `HttpEnrollmentClient` performs it: the exact request body for a fixed device, and the verdict + detail line for fifteen scripted controller responses | `mm_enroll_request_body` must equal the `request:` line; `mm_enroll_read_response` must reach every `verdict:` in the `detail:` words (`test_board.c`) |
 
 The fixtures are **current** — they were regenerated when the v0 contracts were last amended

@@ -11,6 +11,7 @@
 
 #include "esp_log.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -25,6 +26,11 @@
 #include "board.h"
 #include "hal_esp32.h"
 #include "mm_app.h"
+#include "mm_version.h"
+#ifdef CONFIG_MM_LINK_PORTS
+#include "mm_frame.h"
+#include "mm_ports.h"
+#endif
 
 static const char *TAG = "micromound";
 
@@ -40,6 +46,36 @@ static void halt_safe(const char *why)
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
+
+#ifdef CONFIG_MM_LINK_PORTS
+/*
+ * The board as a port server (PROTOCOL.md §12, port requests): no identity, no enrollment, no clock of
+ * its own — a Pi's kernel is the only authority, and this loop answers its bounded requests while the
+ * board keeps two things for itself: the compiled max_on_s of every pin, and a watchdog that drives every
+ * pin safe when the Pi goes quiet. `now` is the monotonic uptime in seconds.
+ */
+static mm_ports ports;
+static mm_frame_decoder decoder;              /* large: MM_FRAME_MAX_PAYLOAD */
+
+static void serve_ports(void)
+{
+    uint8_t byte, out[MM_PORTS_RESPONSE_CAP + 32];
+    int64_t last_service = 0;
+    for (;;) {
+        int64_t now = esp_timer_get_time() / 1000000LL;
+        esp_task_wdt_reset();
+        if (mm_hal_esp32_uart_read_byte(NULL, &byte, 100) == 1 && mm_frame_feed(&decoder, byte)) {
+            size_t n = mm_ports_on_frame(&ports, &decoder, now, out, sizeof out);
+            if (n) mm_hal_esp32_uart_write(NULL, out, n);
+        }
+        if (now != last_service) {                           /* once a second: bounds and the watchdog */
+            last_service = now;
+            if (mm_ports_service(&ports, now) != 0 && (now % 30) == 0)
+                ESP_LOGE(TAG, "TRIPPED: a line would not release; nothing is driven active until reboot");
+        }
+    }
+}
+#endif
 
 void app_main(void)
 {
@@ -65,6 +101,14 @@ void app_main(void)
 
     if (mm_hal_esp32_init(&hal, controller) != 0) halt_safe("no protected storage or no link");
     if (board_init(&hal, &cfg) != 0) halt_safe("the relay line would not drive to its safe level");
+
+#ifdef CONFIG_MM_LINK_PORTS
+    (void)cfg; (void)error; (void)waited; (void)app;
+    if (board_ports_init(&hal, &ports, MM_VERSION, CONFIG_MM_PORTS_WATCHDOG_S) != 0) halt_safe("a port would not come up at its safe level");
+    mm_frame_decoder_init(&decoder);
+    ESP_LOGI(TAG, "port server: %u pin(s), %u channel(s), watchdog %d s", (unsigned)ports.n_pins, (unsigned)ports.n_channels, CONFIG_MM_PORTS_WATCHDOG_S);
+    serve_ports();                                           /* never returns */
+#endif
 
 #ifdef CONFIG_MM_LINK_WIFI
     ESP_ERROR_CHECK(esp_netif_init());

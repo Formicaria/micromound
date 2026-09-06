@@ -533,10 +533,13 @@ public sealed class DigitalActuatorFactory(Func<IReadOnlyDictionary<string, stri
 /// fake tree; on a device it defaults to <c>/sys/class/gpio</c>. A missing or non-integer <c>pin</c>
 /// throws at open time, which the driver turns into a fail-closed configuration refusal.</para>
 /// </summary>
-public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/gpio") : IDriverFactory
+public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/gpio", ILinkPortsProvider? links = null) : IDriverFactory
 {
     private readonly DigitalActuatorFactory _inner = new(settings =>
     {
+        // A `link` setting puts this line on a board over the serial link (PROTOCOL.md §12) instead of a local GPIO.
+        if (LinkSettings.TryLink(settings, out var link))
+            return LinkSettings.OpenOutput(links ?? LinkPortsPool.Shared, link, GpioSettings.Pin(settings, "a linked digital actuator"), GpioSettings.ActiveHigh(settings));
         var pin = GpioSettings.Pin(settings, "a sysfs digital actuator");
         // sysfs numbering is global (chip base + offset), so a manifest written for the character
         // device with a non-default chip means a DIFFERENT pin here — refuse rather than guess.
@@ -560,10 +563,13 @@ public sealed class SysfsDigitalActuatorFactory(string sysfsRoot = "/sys/class/g
 /// driver kind, capabilities, limits and polarity as the in-memory default — only the port backing
 /// changes. The system-call seam is injectable so the request encoding is tested against a fake.
 /// </summary>
-public sealed class GpioChardevActuatorFactory(int defaultChip = 0, ILinuxIo? io = null) : IDriverFactory
+public sealed class GpioChardevActuatorFactory(int defaultChip = 0, ILinuxIo? io = null, ILinkPortsProvider? links = null) : IDriverFactory
 {
     private readonly DigitalActuatorFactory _inner = new(settings =>
     {
+        // A `link` setting puts this line on a board over the serial link (PROTOCOL.md §12) instead of a local GPIO.
+        if (LinkSettings.TryLink(settings, out var link))
+            return LinkSettings.OpenOutput(links ?? LinkPortsPool.Shared, link, GpioSettings.Pin(settings, "a linked digital actuator"), GpioSettings.ActiveHigh(settings));
         var line = GpioSettings.Pin(settings, "a GPIO character-device actuator");
         var chip = GpioSettings.Chip(settings, defaultChip);
         return new GpioChardevOutput(line, initialHigh: GpioSettings.SafeLevel(settings), chip, io);
@@ -608,12 +614,11 @@ internal static class GpioSettings
 
     /// <summary>The SAFE level of the line — the opposite of its active level. Parsed exactly as the
     /// driver parses <c>active_high</c> (default true); an unparseable value is left to the driver to refuse.</summary>
-    public static bool SafeLevel(IReadOnlyDictionary<string, string> settings)
-    {
-        var activeHigh = !settings.TryGetValue("active_high", out var raw) || string.IsNullOrWhiteSpace(raw)
-                         || !bool.TryParse(raw, out var parsed) || parsed;
-        return !activeHigh;
-    }
+    public static bool ActiveHigh(IReadOnlyDictionary<string, string> settings) =>
+        !settings.TryGetValue("active_high", out var raw) || string.IsNullOrWhiteSpace(raw)
+        || !bool.TryParse(raw, out var parsed) || parsed;
+
+    public static bool SafeLevel(IReadOnlyDictionary<string, string> settings) => !ActiveHigh(settings);
 }
 
 /// <summary>
@@ -654,11 +659,16 @@ public sealed class Ads1115AnalogSensorFactory : IDriverFactory
     /// <param name="defaultBus">The I2C bus used when a slice does not name one. The Pi's is 1.</param>
     /// <param name="busFactory">How a bus is opened, injectable so the setting parsing can be tested
     /// with a fake device; defaults to <see cref="LinuxI2cBus"/>.</param>
-    public Ads1115AnalogSensorFactory(int defaultBus = 1, Func<int, int, II2cBus>? busFactory = null)
+    public Ads1115AnalogSensorFactory(int defaultBus = 1, Func<int, int, II2cBus>? busFactory = null, ILinkPortsProvider? links = null)
     {
         var openBus = busFactory ?? ((bus, address) => new LinuxI2cBus(bus, address));
         _inner = new AnalogSensorFactory(settings =>
         {
+            // A `link` setting puts this channel on a board over the serial link (PROTOCOL.md §12): the
+            // board's ADC, in volts, through the same calibration — no ADS1115 settings apply.
+            if (LinkSettings.TryLink(settings, out var link))
+                return LinkSettings.OpenInput(links ?? LinkPortsPool.Shared, link, RequiredInt(settings, "channel"));
+
             // Validate every setting BEFORE touching the bus: a slice with a bad channel or gain is
             // refused without opening (and then leaking) a device node.
             var channel = RequiredInt(settings, "channel");

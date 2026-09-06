@@ -1,5 +1,6 @@
 using System.Text;
 using Micromound.Host;
+using Micromound.Protocol;
 using Xunit;
 
 namespace Micromound.Tests;
@@ -18,7 +19,7 @@ public class LinkFramesTests
         var report = new StringBuilder();
         report.AppendLine("# MICROMOUND link frames — golden fixture");
         report.AppendLine("#");
-        report.AppendLine("# Frozen by tests/Micromound.Tests/Golden/LinkFramesTests.cs from Micromound.Host.LinkFrame (PROTOCOL.md §12).");
+        report.AppendLine("# Frozen by tests/Micromound.Tests/Golden/LinkFramesTests.cs from Micromound.Protocol.LinkFrame (PROTOCOL.md §12).");
         report.AppendLine("# frame = \"MM\" ver(1) type(1) seq(1) len(2 LE) payload crc32(4 LE); crc32 = IEEE 802.3 over magic..payload.");
         report.AppendLine("# The C mm_frame must encode every case to `frame:` and decode `frame:` back to `payload:`.");
         report.AppendLine();

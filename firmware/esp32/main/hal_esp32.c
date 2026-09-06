@@ -24,7 +24,7 @@
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
-#ifdef CONFIG_MM_LINK_SERIAL
+#if defined(CONFIG_MM_LINK_SERIAL) || defined(CONFIG_MM_LINK_PORTS)
 #include <sys/time.h>
 #include "driver/uart.h"
 #include "freertos/FreeRTOS.h"
@@ -73,18 +73,16 @@ static int hal_random(void *ctx, uint8_t *out, size_t n)
     return 0;
 }
 
-/* ---- the serial link (CONFIG_MM_LINK_SERIAL): the HAL's POST as frames to a bridge ------------ */
+/* ---- the link UART (CONFIG_MM_LINK_SERIAL and CONFIG_MM_LINK_PORTS) ------------------------------ */
 
-#ifdef CONFIG_MM_LINK_SERIAL
-static mm_serial_link the_link;             /* large: the frame decoder's buffer */
-
-static int uart_write_all(void *ctx, const uint8_t *bytes, size_t n)
+#if defined(CONFIG_MM_LINK_SERIAL) || defined(CONFIG_MM_LINK_PORTS)
+int mm_hal_esp32_uart_write(void *ctx, const uint8_t *bytes, size_t n)
 {
     (void)ctx;
     return uart_write_bytes(CONFIG_MM_SERIAL_UART, bytes, n) == (int)n ? 0 : -1;
 }
 
-static int uart_read_one(void *ctx, uint8_t *out, int timeout_ms)
+int mm_hal_esp32_uart_read_byte(void *ctx, uint8_t *out, int timeout_ms)
 {
     int n;
     (void)ctx;
@@ -92,10 +90,9 @@ static int uart_read_one(void *ctx, uint8_t *out, int timeout_ms)
     return n == 1 ? 1 : (n == 0 ? 0 : -1);
 }
 
-static int link_init(void)
+int mm_hal_esp32_uart_init(void)
 {
     uart_config_t cfg;
-    mm_serial_io io;
     memset(&cfg, 0, sizeof cfg);
     cfg.baud_rate = CONFIG_MM_SERIAL_BAUD;
     cfg.data_bits = UART_DATA_8_BITS;
@@ -109,9 +106,22 @@ static int link_init(void)
                      CONFIG_MM_SERIAL_TX_GPIO < 0 ? UART_PIN_NO_CHANGE : CONFIG_MM_SERIAL_TX_GPIO,
                      CONFIG_MM_SERIAL_RX_GPIO < 0 ? UART_PIN_NO_CHANGE : CONFIG_MM_SERIAL_RX_GPIO,
                      UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE) != ESP_OK) return -1;
+    return 0;
+}
+#endif
+
+/* ---- the serial link (CONFIG_MM_LINK_SERIAL): the HAL's POST as frames to a bridge ------------ */
+
+#ifdef CONFIG_MM_LINK_SERIAL
+static mm_serial_link the_link;             /* large: the frame decoder's buffer */
+
+static int link_init(void)
+{
+    mm_serial_io io;
+    if (mm_hal_esp32_uart_init() != 0) return -1;
     io.ctx = NULL;
-    io.write = uart_write_all;
-    io.read_byte = uart_read_one;
+    io.write = mm_hal_esp32_uart_write;
+    io.read_byte = mm_hal_esp32_uart_read_byte;
     mm_serial_init(&the_link, &io);
     return 0;
 }
@@ -137,7 +147,7 @@ int mm_hal_esp32_sync_clock(void)
 
 /* ---- HTTPS ---------------------------------------------------------------------------------- */
 
-#ifndef CONFIG_MM_LINK_SERIAL
+#ifdef CONFIG_MM_LINK_WIFI
 static int hal_http_post_json(void *ctx, const char *path, const char *body, size_t body_len,
                               char *resp, size_t cap, size_t *resp_len, int *status)
 {
@@ -323,9 +333,12 @@ int mm_hal_esp32_init(mm_hal *hal, const char *controller_url)
     hal->ctx = h;
     hal->now = hal_now;
     hal->random_bytes = hal_random;
-#ifdef CONFIG_MM_LINK_SERIAL
+#if defined(CONFIG_MM_LINK_SERIAL)
     if (link_init() != 0) { ESP_LOGE(TAG, "the link UART would not initialise"); return -1; }
     hal->http_post_json = serial_post;
+#elif defined(CONFIG_MM_LINK_PORTS)
+    if (mm_hal_esp32_uart_init() != 0) { ESP_LOGE(TAG, "the link UART would not initialise"); return -1; }
+    hal->http_post_json = NULL;                 /* a port server makes no exchanges of its own */
 #else
     hal->http_post_json = hal_http_post_json;
 #endif

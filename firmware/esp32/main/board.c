@@ -1,4 +1,5 @@
 #include "board.h"
+#include "mm_ports.h"
 #include "sdkconfig.h"
 
 #include <string.h>
@@ -53,4 +54,22 @@ int board_init(const mm_hal *hal, mm_app_config *cfg)
 void board_all_safe(void)
 {
     mm_relay_safe(&relay);
+}
+
+/*
+ * The same board as a port server (CONFIG_MM_LINK_PORTS): the relay pin with the CAPS table's hardware
+ * max_on_s as the bound the board keeps for itself, and the probe's ADC channel. The Pi's manifest names
+ * these by `link` + `pin` / `channel`, and its active_high must match the polarity compiled here.
+ */
+int board_ports_init(const mm_hal *hal, mm_ports *ports, const char *firmware, int64_t watchdog_s)
+{
+    mm_ports_init(ports, hal, "sense.temp,act.relay_1", firmware, watchdog_s);
+    if (mm_ports_add_pin(ports, CONFIG_MM_RELAY_GPIO,
+#ifdef CONFIG_MM_RELAY_ACTIVE_HIGH
+                         1,
+#else
+                         0,
+#endif
+                         CAPS[1].hardware.max_on_s.present ? CAPS[1].hardware.max_on_s.value : 0) != 0) return -1;
+    return mm_ports_add_channel(ports, CONFIG_MM_PROBE_ADC_CHANNEL);
 }

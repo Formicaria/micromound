@@ -543,7 +543,40 @@ network — the link carries the protocol, not the Pi's network.
 timeout that covers the bridge's HTTPS round trip and an inter-byte timeout for a stalled stream.
 A timeout is offline.
 
-Both ends are pinned by `link-frames.txt`: `Micromound.Host.LinkFrame` freezes the CRC and eleven
+Both ends are pinned by `link-frames.txt`: `Micromound.Protocol.LinkFrame` freezes the CRC and eleven
 frames; `firmware/micromound-c/mm_frame` must encode every case to the same bytes and decode every
 frame to the same payload. `mm_serial` is the board's HAL `http_post_json` over the link;
 `micromound --bridge <device> --controller <url>` is the Pi's side.
+
+### Port requests (the board as a subordinate)
+
+The same framing, the roles reversed: a Pi-class mound's **own kernel** authorizes every action
+(hardware ∩ device ∩ charter, the thirteen checks, evidence gating — all on the Pi), and its generic
+drivers reach the board's pins and channels as ports over the link. The board holds no key and
+decides nothing about authority. It keeps exactly two things for itself, because a board that
+merely obeyed would let a fault on the Pi become a fault in the world:
+
+- **its compiled `max_on_s` per pin** — the innermost limit tier, enforced by the board: a pin driven
+  active is released by the board when its bound passes, whatever the Pi says or fails to say;
+- **a link watchdog** — no request for `watchdog_s` drives every pin safe. Disconnection never
+  creates authority; a Pi that stopped talking cannot be assumed to still mean what it last said.
+  The Pi feeds the watchdog with `hello` at a third of the period.
+
+Three requests (bodies and answers are JSON objects; `status` as §12 above):
+
+| Path | Body | Answer |
+|---|---|---|
+| `micromound/link/ports/hello` | `{}` | `200 {"profile","firmware","watchdog_s","tripped","pins":[{"pin","active_high","max_on_s","level"}],"channels":[…]}` — discovery, and the keepalive |
+| `micromound/link/ports/write` | `{"pin":5,"level":true}` | `200 {"pin":5,"level":true}` — `level` is LOGICAL (active or not); the board applies its compiled polarity. `404` unknown pin, `409` tripped, `503` the line would not drive |
+| `micromound/link/ports/read` | `{"channel":0}` | `200 {"channel":0,"volts":0.75}` — volts, before the Pi's calibration. `404` unknown channel, `503` sensor read failed — a fault, never a zero |
+
+A malformed body is `400`; any other path `404`; every refusal carries `{"error":"…"}`. **A release
+that fails is a trip**: `tripped` goes true, nothing is driven active again until reboot, driving
+safe is still allowed, and reads still work. The Pi refuses to compose against a tripped board, a
+pin the board does not offer, or a polarity the board's compiled table disagrees with — a
+mismatched `active_high` would energize a load at what the Pi believes is the safe level.
+
+Both ends are pinned by `port-exchange.txt`, written by the C port server (`mm_ports`, every request
+and its exact answer) and read by the host's `LinkPortsClient` tests. On the Pi, a manifest device
+with a `link` setting (the serial device) puts that line or channel on the board; nothing else in
+the manifest, the kernel, or the record changes.

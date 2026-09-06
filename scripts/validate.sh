@@ -58,7 +58,12 @@ readme_ver="$(sed -n 's/^\*\*Current version:\*\* v\([0-9][0-9A-Za-z.-]*\).*/\1/
   echo "✗ README.md says v$readme_ver, Directory.Build.props says $ver."
   exit 1
 }
-echo "==> version $ver agrees across Directory.Build.props, README.md and CHANGELOG.md"
+c_ver="$(sed -n 's/^#define MM_VERSION "\([^"]*\)".*/\1/p' firmware/micromound-c/include/mm_version.h | head -1)"
+[ "$c_ver" = "$ver" ] || {
+  echo "✗ firmware/micromound-c/include/mm_version.h says $c_ver, Directory.Build.props says $ver."
+  exit 1
+}
+echo "==> version $ver agrees across Directory.Build.props, README.md, CHANGELOG.md and mm_version.h"
 
 # ── The build ───────────────────────────────────────────────────────────────
 echo "==> dotnet restore"

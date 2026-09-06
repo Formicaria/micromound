@@ -121,6 +121,13 @@ jobs:
           target: esp32
           path: firmware/esp32
           command: idf.py -B build-serial -DSDKCONFIG=sdkconfig.serial -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.serial" build
+      - name: idf.py build (port server)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.3.2
+          target: esp32
+          path: firmware/esp32
+          command: idf.py -B build-ports -DSDKCONFIG=sdkconfig.ports -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.ports" build
 
   docs-consistency:
     name: Docs consistency
@@ -189,7 +196,8 @@ jobs:
                    tests/Micromound.Tests/Golden/files/kernel-decisions.txt \
                    tests/Micromound.Tests/Golden/files/device-session.txt \
                    tests/Micromound.Tests/Golden/files/enroll-exchange.txt \
-                   tests/Micromound.Tests/Golden/files/link-frames.txt; do
+                   tests/Micromound.Tests/Golden/files/link-frames.txt \
+                   tests/Micromound.Tests/Golden/files/port-exchange.txt; do
             [ -s "$f" ] || { echo "::error::Golden file missing or empty: $f — the C firmware mirror has nothing to pin against"; exit 1; }
           done
           # validate.sh refuses to run under MICROMOUND_UPDATE_GOLDEN; no workflow may set it either.

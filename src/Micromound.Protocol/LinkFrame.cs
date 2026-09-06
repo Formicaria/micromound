@@ -1,11 +1,12 @@
 using System.Buffers.Binary;
 using System.Text;
 
-namespace Micromound.Host;
+namespace Micromound.Protocol;
 
 /// <summary>
 /// The Pi↔ESP32 link framing — PROTOCOL.md §12, mirrored byte for byte by
-/// <c>firmware/micromound-c/mm_frame</c>. A frame is
+/// <c>firmware/micromound-c/mm_frame</c>. Lives in Micromound.Protocol because it is a wire format
+/// (§12) both the bridge and the port client speak; it does no I/O. A frame is
 /// <c>"MM" ver(1) type(1) seq(1) len(2, LE) payload(len) crc32(4, LE)</c>, the CRC the IEEE 802.3
 /// (zlib) CRC-32 over everything before it. A request payload is <c>path '\n' body</c>; a response
 /// payload is <c>status '\n' body</c>, status 0 meaning the bridge could not exchange at all.

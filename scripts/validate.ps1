@@ -59,7 +59,16 @@ if ($readmeVer -ne $ver) {
     Write-Host "x README.md says v$readmeVer, Directory.Build.props says $ver." -ForegroundColor Red
     exit 1
 }
-Write-Host "==> version $ver agrees across Directory.Build.props, README.md and CHANGELOG.md" -ForegroundColor Cyan
+$cHeader = Get-Content -Raw firmware/micromound-c/include/mm_version.h -Encoding UTF8 -ErrorAction Stop
+if ($cHeader -notmatch '(?m)^#define MM_VERSION "([^"]*)"') {
+    Write-Host "x firmware/micromound-c/include/mm_version.h has no MM_VERSION define." -ForegroundColor Red
+    exit 1
+}
+if ($Matches[1] -ne $ver) {
+    Write-Host "x firmware/micromound-c/include/mm_version.h says $($Matches[1]), Directory.Build.props says $ver." -ForegroundColor Red
+    exit 1
+}
+Write-Host "==> version $ver agrees across Directory.Build.props, README.md, CHANGELOG.md and mm_version.h" -ForegroundColor Cyan
 
 Write-Host "==> dotnet restore" -ForegroundColor Cyan
 dotnet restore Micromound.sln

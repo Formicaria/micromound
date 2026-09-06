@@ -23,6 +23,11 @@ int mm_hal_esp32_init(mm_hal *hal, const char *controller_url);
 /* Serial link only: ask the bridge for the time and set the system clock. Returns 0, or -1 when it did not answer. */
 int mm_hal_esp32_sync_clock(void);
 
+/* The link UART (serial link and port server): mm_serial_io-shaped, so either role can be built on them. */
+int mm_hal_esp32_uart_init(void);
+int mm_hal_esp32_uart_write(void *ctx, const uint8_t *bytes, size_t n);
+int mm_hal_esp32_uart_read_byte(void *ctx, uint8_t *out, int timeout_ms);
+
 /* Bench provisioning: store the one-time token unless a token or a controller key is already stored. */
 void mm_hal_esp32_provision_token(const mm_hal *hal, const char *token);
 
