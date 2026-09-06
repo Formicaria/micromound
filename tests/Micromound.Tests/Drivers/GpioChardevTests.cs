@@ -28,6 +28,10 @@ public sealed class GpioChardevTests
         public HashSet<string> MissingChips { get; } = [];
         public HashSet<uint> BusyLines { get; } = [];
         public bool FailSetValues { get; set; }
+        public bool FailGetValues { get; set; }
+        /// <summary>What an input line reads, per line descriptor's requested offset.</summary>
+        public bool LineLevel { get; set; }
+        public List<int> ValueGets { get; } = [];
         public int Errno { get; private set; }
 
         private int _nextFd = 10;
@@ -68,6 +72,15 @@ public sealed class GpioChardevTests
                     if (FailSetValues) { Errno = 5; return -1; }   // EIO
                     var v = GpioChardevOutput.DecodeLineValues(buffer);
                     ValueSets.Add((fd, v.Bits, v.Mask));
+                    return 0;
+                }
+                case GpioChardevInput.GetValuesIoctl:
+                {
+                    if (!_lineFds.Contains(fd)) { Errno = 9; return -1; }
+                    if (FailGetValues) { Errno = 5; return -1; }   // EIO: the chip stopped answering
+                    if (buffer.Length != GpioChardevOutput.LineValuesSize) { Errno = 22; return -1; }
+                    ValueGets.Add(fd);
+                    GpioChardevInput.WriteSampledLevel(buffer, LineLevel);
                     return 0;
                 }
                 default:
@@ -425,5 +438,78 @@ public sealed class GpioChardevTests
         Assert.True(MoundHost.HardwareDriverFactories(GpioBackings.Sysfs).TryGet("digital_actuator", out var sysfs));
         Assert.IsType<SysfsDigitalActuatorFactory>(sysfs);
         Assert.Throws<ArgumentException>(() => MoundHost.HardwareDriverFactories("libgpiod"));
+    }
+
+    // ---- the input line ----
+
+    [Fact]
+    public void An_input_line_is_requested_as_an_input_with_a_bias_and_no_value_attribute()
+    {
+        var kernel = new FakeKernel();
+        using var line = new GpioChardevInput(23, GpioBias.PullUp, chip: 0, io: kernel);
+
+        Assert.Equal("/dev/gpiochip0", kernel.Opens.Single().Path);
+        var request = kernel.LineRequests.Single();
+        Assert.Equal(23u, request.Line);
+        Assert.Equal(GpioChardevOutput.Consumer, request.Consumer);
+        Assert.Equal(GpioChardevInput.FlagInput | GpioChardevInput.FlagBiasPullUp, request.Flags);
+        Assert.Equal(0u, request.NumAttrs);          // an input has no level to set
+        Assert.Equal(1u, request.NumLines);
+        Assert.Empty(kernel.OpenChipFds.Intersect(kernel.OpenLineFds));   // the chip fd was closed, the line fd stands
+        Assert.Single(kernel.Closed);
+    }
+
+    [Theory]
+    [InlineData(GpioBias.PullUp, GpioChardevInput.FlagBiasPullUp)]
+    [InlineData(GpioBias.PullDown, GpioChardevInput.FlagBiasPullDown)]
+    [InlineData(GpioBias.None, GpioChardevInput.FlagBiasDisabled)]
+    public void Every_bias_is_a_flag_the_kernel_understands(string bias, ulong flag)
+    {
+        var kernel = new FakeKernel();
+        using var line = new GpioChardevInput(4, bias, io: kernel);
+        Assert.Equal(GpioChardevInput.FlagInput | flag, kernel.LineRequests.Single().Flags);
+        Assert.False(GpioBias.IsKnown("floating"));
+        Assert.Throws<ArgumentException>(() => new GpioChardevInput(4, "floating", io: kernel));
+    }
+
+    [Fact]
+    public void A_read_returns_the_level_the_kernel_gave_and_a_failed_read_throws_rather_than_reading_false()
+    {
+        var kernel = new FakeKernel();
+        using var line = new GpioChardevInput(23, io: kernel);
+
+        kernel.LineLevel = true;
+        Assert.True(line.Read());
+        kernel.LineLevel = false;
+        Assert.False(line.Read());
+        Assert.Equal(2, kernel.ValueGets.Count);
+
+        // A chip that stopped answering must not read as "the switch is open".
+        kernel.FailGetValues = true;
+        var failure = Assert.Throws<IOException>(() => line.Read());
+        Assert.Contains("cannot read GPIO line 23", failure.Message);
+    }
+
+    [Fact]
+    public void A_line_another_process_holds_refuses_the_input_too()
+    {
+        var kernel = new FakeKernel();
+        kernel.BusyLines.Add(7);
+        var failure = Assert.Throws<IOException>(() => new GpioChardevInput(7, io: kernel));
+        Assert.Contains("EBUSY", failure.Message);
+        Assert.Empty(kernel.OpenChipFds.Except(kernel.Closed));   // the chip fd is never leaked behind a refusal
+    }
+
+    [Fact]
+    public void A_disposed_input_releases_its_line_and_refuses_further_reads()
+    {
+        var kernel = new FakeKernel();
+        var line = new GpioChardevInput(5, io: kernel);
+        var lineFd = kernel.OpenLineFds.Single();
+        line.Read();
+        line.Dispose();
+        line.Dispose();                                   // idempotent
+        Assert.Contains(lineFd, kernel.Closed);
+        Assert.Throws<ObjectDisposedException>(() => line.Read());
     }
 }

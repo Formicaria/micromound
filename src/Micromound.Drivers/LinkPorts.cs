@@ -8,8 +8,9 @@ namespace Micromound.Drivers;
 /// <summary>
 /// The Pi side of the port requests (PROTOCOL.md §12): the board as a port server, the Pi's own
 /// kernel as the only authority. Over the same framing the bridge uses, roles reversed — this client
-/// asks, the board answers — with three requests: <c>hello</c> (what the board offers), <c>write</c>
-/// (a pin's logical level) and <c>read</c> (a channel, in volts). Every request feeds the board's
+/// asks, the board answers — with four requests: <c>hello</c> (what the board offers), <c>write</c>
+/// (a pin's logical level), <c>read</c> (a channel, in volts) and <c>read_pin</c> (an input line's
+/// logical level — a limit switch, an interlock). Every request feeds the board's
 /// link watchdog; a board that stops hearing from us drives every pin safe on its own, and a pin the
 /// board's compiled <c>max_on_s</c> covers is released by the board whatever we say.
 ///
@@ -22,6 +23,7 @@ public sealed class LinkPortsClient : IDisposable
     public const string HelloPath = "micromound/link/ports/hello";
     public const string WritePath = "micromound/link/ports/write";
     public const string ReadPath = "micromound/link/ports/read";
+    public const string ReadPinPath = "micromound/link/ports/read_pin";
 
     private readonly Stream _link;
     private readonly bool _ownsLink;
@@ -48,6 +50,7 @@ public sealed class LinkPortsClient : IDisposable
     public static string HelloBody => "{}";
     public static string WriteBody(int pin, bool level) => $"{{\"pin\":{pin.ToString(CultureInfo.InvariantCulture)},\"level\":{(level ? "true" : "false")}}}";
     public static string ReadBody(int channel) => $"{{\"channel\":{channel.ToString(CultureInfo.InvariantCulture)}}}";
+    public static string ReadPinBody(int pin) => $"{{\"pin\":{pin.ToString(CultureInfo.InvariantCulture)}}}";
 
     // ---- response parsing (frozen by port-exchange.txt) ----
 
@@ -63,6 +66,13 @@ public sealed class LinkPortsClient : IDisposable
                     p.TryGetProperty("active_high", out var ah) && ah.GetBoolean(),
                     p.TryGetProperty("max_on_s", out var mo) && mo.ValueKind == JsonValueKind.Number ? mo.GetDouble() : 0,
                     p.TryGetProperty("level", out var lv) && lv.GetBoolean()));
+        var inputs = new List<LinkPortsInput>();
+        if (root.TryGetProperty("inputs", out var inputsEl) && inputsEl.ValueKind == JsonValueKind.Array)
+            foreach (var p in inputsEl.EnumerateArray())
+                inputs.Add(new LinkPortsInput(
+                    p.GetProperty("pin").GetInt32(),
+                    p.TryGetProperty("active_high", out var iah) && iah.GetBoolean(),
+                    p.TryGetProperty("level", out var ilv) && ilv.GetBoolean()));
         var channels = new List<int>();
         if (root.TryGetProperty("channels", out var chEl) && chEl.ValueKind == JsonValueKind.Array)
             foreach (var c in chEl.EnumerateArray()) channels.Add(c.GetInt32());
@@ -71,10 +81,17 @@ public sealed class LinkPortsClient : IDisposable
             root.TryGetProperty("firmware", out var fw) ? fw.GetString() ?? "" : "",
             root.TryGetProperty("watchdog_s", out var wd) && wd.ValueKind == JsonValueKind.Number ? wd.GetInt32() : 0,
             root.TryGetProperty("tripped", out var tr) && tr.GetBoolean(),
-            pins, channels);
+            pins, inputs, channels);
     }
 
     public static (int Pin, bool Level) ParseWrite(string body)
+    {
+        using var doc = JsonDocument.Parse(body);
+        return (doc.RootElement.GetProperty("pin").GetInt32(), doc.RootElement.GetProperty("level").GetBoolean());
+    }
+
+    /// <summary>An input line's answer: the pin and its LOGICAL level (asserted or not).</summary>
+    public static (int Pin, bool Level) ParseReadPin(string body)
     {
         using var doc = JsonDocument.Parse(body);
         return (doc.RootElement.GetProperty("pin").GetInt32(), doc.RootElement.GetProperty("level").GetBoolean());
@@ -127,6 +144,16 @@ public sealed class LinkPortsClient : IDisposable
         return volts;
     }
 
+    /// <summary>One sample of an input line: true when asserted. Throws on refusal or a line that could not be read.</summary>
+    public bool ReadPin(int pin)
+    {
+        var (status, body) = Exchange(ReadPinPath, ReadPinBody(pin));
+        if (status != 200) throw new LinkPortsException(status, ParseError(body), ReadPinPath);
+        var (echoPin, level) = ParseReadPin(body);
+        if (echoPin != pin) throw new LinkPortsException(status, $"the board answered pin {echoPin} to a read of pin {pin}", ReadPinPath);
+        return level;
+    }
+
     /// <summary>Feeds the board's watchdog on a timer, so a Pi that is merely idle does not lose its outputs.</summary>
     public void StartKeepalive(TimeSpan every)
     {
@@ -137,6 +164,13 @@ public sealed class LinkPortsClient : IDisposable
             catch (Exception ex) when (ex is IOException or LinkPortsException or TimeoutException) { _log?.Invoke($"link ports: keepalive: {ex.Message}"); }
         }, null, every, every);
     }
+
+    /// <summary>
+    /// One raw exchange, for a caller that speaks a path this client does not model — the board
+    /// simulator's own control paths (a real board answers those 404, which is the correct answer).
+    /// The three port requests above are the protocol; this is the seam under them.
+    /// </summary>
+    public (int Status, string Body) Request(string path, string body) => Exchange(path, body);
 
     private (int Status, string Body) Exchange(string path, string body)
     {
@@ -189,7 +223,10 @@ public sealed class LinkPortsClient : IDisposable
 
 public sealed record LinkPortsPin(int Pin, bool ActiveHigh, double MaxOnSeconds, bool Level);
 
-public sealed record LinkPortsHello(string Profile, string Firmware, int WatchdogSeconds, bool Tripped, IReadOnlyList<LinkPortsPin> Pins, IReadOnlyList<int> Channels);
+public sealed record LinkPortsInput(int Pin, bool ActiveHigh, bool Level);
+
+public sealed record LinkPortsHello(string Profile, string Firmware, int WatchdogSeconds, bool Tripped,
+    IReadOnlyList<LinkPortsPin> Pins, IReadOnlyList<LinkPortsInput> Inputs, IReadOnlyList<int> Channels);
 
 /// <summary>A refusal from the board, with its status and its own words.</summary>
 public sealed class LinkPortsException(int status, string error, string path) : IOException($"{path}: HTTP {status}: {error}")
@@ -233,6 +270,17 @@ public sealed class LinkAnalogInput(LinkPortsClient client, int channel) : IAnal
     public double Read() => client.Read(channel);
 }
 
+/// <summary>
+/// A digital input line on a board reached over the link. The board answers a LOGICAL level (asserted
+/// or not, through its own compiled polarity); this returns the PHYSICAL level the seam is defined in,
+/// so the driver above applies the manifest's polarity exactly as it does for a local line. The two
+/// polarities are checked against each other at bring-up.
+/// </summary>
+public sealed class LinkDigitalInput(LinkPortsClient client, int pin, bool activeHigh) : IDigitalInput
+{
+    public bool Read() => client.ReadPin(pin) == activeHigh;
+}
+
 /// <summary>How a factory reaches a board: one client per link path, shared by every port on that board.</summary>
 public interface ILinkPortsProvider
 {
@@ -266,7 +314,7 @@ public sealed class LinkPortsPool(Func<string, Stream>? open = null, Action<stri
             var client = new LinkPortsClient(_open(link), log: log);
             var hello = client.Hello();   // discovery: a board that does not answer is not a board we compose against
             _hellos[link] = hello;
-            log?.Invoke($"link ports: {link}: {hello.Profile} firmware {hello.Firmware}, {hello.Pins.Count} pin(s), {hello.Channels.Count} channel(s), watchdog {hello.WatchdogSeconds} s{(hello.Tripped ? " — TRIPPED" : "")}");
+            log?.Invoke($"link ports: {link}: {hello.Profile} firmware {hello.Firmware}, {hello.Pins.Count} pin(s), {hello.Inputs.Count} input(s), {hello.Channels.Count} channel(s), watchdog {hello.WatchdogSeconds} s{(hello.Tripped ? " — TRIPPED" : "")}");
             if (hello.WatchdogSeconds > 0) client.StartKeepalive(TimeSpan.FromSeconds(Math.Max(1, hello.WatchdogSeconds / 3.0)));
             _clients[link] = client;
             return client;
@@ -315,6 +363,18 @@ public static class LinkSettings
         if (hello.Tripped)
             throw new ArgumentException($"the board on {link} is tripped (a line would not release); reboot it before composing against it");
         return new LinkDigitalOutput(client, pin, activeHigh, initialHigh: !activeHigh);
+    }
+
+    /// <summary>An input line on the board named by <c>link</c>: offered, and with the polarity the manifest declares.</summary>
+    public static IDigitalInput OpenInputLine(ILinkPortsProvider links, string link, int pin, bool activeHigh)
+    {
+        var client = links.Open(link);
+        var hello = links is LinkPortsPool pool ? pool.Describe(link) : client.Hello();
+        var offered = hello.Inputs.FirstOrDefault(p => p.Pin == pin)
+            ?? throw new ArgumentException($"the board on {link} offers no input {pin} (it offers {string.Join(", ", hello.Inputs.Select(p => p.Pin))})");
+        if (offered.ActiveHigh != activeHigh)
+            throw new ArgumentException($"the board on {link} compiles input {pin} as active-{(offered.ActiveHigh ? "high" : "low")}; the manifest says active-{(activeHigh ? "high" : "low")} — a mismatch would read a closed switch as open");
+        return new LinkDigitalInput(client, pin, activeHigh);
     }
 
     public static IAnalogInput OpenInput(ILinkPortsProvider links, string link, int channel)

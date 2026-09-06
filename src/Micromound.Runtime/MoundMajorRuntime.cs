@@ -36,12 +36,33 @@ public sealed class MoundMajor : IMoundMajor
     /// queue reference on purpose: the coordinator must not know transport exists, or it would be
     /// one refactor away from consulting connectivity in an authority decision.
     /// </param>
+    /// <param name="settle">
+    /// How a step's <see cref="MissionStep.SettleSeconds"/> wait actually passes: given the requested
+    /// span and the current instant, it returns the instant the mission resumes at. The default really
+    /// sleeps, which is what a daemon on a device must do — the coil is energised and the valve is
+    /// travelling, and there is nothing to do but wait for it.
+    ///
+    /// <para>It is a seam because a deterministic run has no business sleeping: a simulator and the
+    /// acceptance harness advance a modelled world by the same span instead, and get the same
+    /// mission semantics with no wall clock in the loop. The runtime never learns which it got.</para>
+    /// </param>
     public MoundMajor(CapabilityKernel kernel, IEvidenceLookup? evidence = null,
-        Action<ActionRecord>? recorded = null)
+        Action<ActionRecord>? recorded = null,
+        Func<TimeSpan, DateTimeOffset, DateTimeOffset>? settle = null)
     {
         _kernel = kernel;
         _evidence = evidence;
         _recorded = recorded;
+        _settle = settle ?? RealSettle;
+    }
+
+    private readonly Func<TimeSpan, DateTimeOffset, DateTimeOffset> _settle;
+
+    /// <summary>The device's own settle: sleep the span, and report the clock moved by it.</summary>
+    private static DateTimeOffset RealSettle(TimeSpan span, DateTimeOffset at)
+    {
+        if (span > TimeSpan.Zero) Thread.Sleep(span);
+        return at + span;
     }
 
     public string MoundId => _kernel.Authority.MoundId;
@@ -168,6 +189,17 @@ public sealed class MoundMajor : IMoundMajor
         var halted = false;
         var sawUnverified = false;
 
+        // Which act steps a later verify step promises to confirm. The kernel needs this BEFORE it
+        // runs one: an honest actuator produces no evidence of its own, so the evidence gate would
+        // demote every actuation to `unverified` the moment it happened, and nothing may lift that
+        // afterwards. Told a confirmation is coming, the kernel holds the verdict open; anything
+        // still open when the walk ends is demoted below, before a single record is published.
+        var confirmedLater = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var s in mission.Steps)
+            if (s.Op == MissionStepOps.Verify && !string.IsNullOrWhiteSpace(s.Confirms) && !confirmedLater.ContainsKey(s.Confirms))
+                confirmedLater[s.Confirms] = s.StepId;
+        var awaitingConfirmation = new Dictionary<string, ActionRecord>(StringComparer.Ordinal);
+
         // The state of the FIRST step that went wrong. Suppressed later steps must not overwrite
         // it: a hardware fault followed by three unattempted actuations is a mission that FAILED,
         // and calling it `refused` because the suppression label happens to outrank `failed`
@@ -249,6 +281,30 @@ public sealed class MoundMajor : IMoundMajor
                 continue;
             }
 
+            // Let the world catch up before looking at it. Reached only by a step that is actually
+            // going to run: a skipped or suppressed step has nothing to wait for, and validation has
+            // already confined settle_s to `sense` and `verify` and bounded it.
+            //
+            // The wait moves the mission's own clock, so everything after it — the kernel's limit
+            // arithmetic, the record timestamps, the lease — sees the time that really passed. And the
+            // lease is re-checked on the far side: a settle that crosses the expiry must not be the
+            // one gap where an observation slips through on authority that ran out mid-wait.
+            // A mound that has already stopped or quiesced waits for nothing: the step below it is
+            // going to be refused either way, and the wait would only delay the honest refusal.
+            if (step.SettleSeconds > 0 && !_kernel.Authority.IsStopped && !_kernel.Authority.IsQuiesced)
+            {
+                now = _settle(TimeSpan.FromSeconds(step.SettleSeconds), now);
+                if (_kernel.Authority.QuiesceIfExpired(now))
+                {
+                    result.State = MissionStepStates.Refused;
+                    result.Detail = $"the lease expired during a {step.SettleSeconds:0.###}s settle; the mound quiesced mid-mission";
+                    report.Steps.Add(result);
+                    halted = true;
+                    haltState ??= MissionStepStates.Refused;
+                    continue;
+                }
+            }
+
             // Persist intent -> execute -> persist result. For an actuation, mark it in flight
             // BEFORE it reaches hardware and clear it AFTER its record is in hand. A death in that
             // gap is the ambiguous window: the actuation may or may not have physically happened, so
@@ -259,9 +315,17 @@ public sealed class MoundMajor : IMoundMajor
                 cache.Save(MissionCheckpoint.Key, checkpoint);
             }
 
-            var record = Dispatch(mission, step, now);
+            var record = Dispatch(mission, step, now, confirmedLater.ContainsKey(step.StepId));
             _actions.Add(record);
             dispatched.Add(record);
+            // Track exactly the records the kernel held OPEN on this coordinator's promise: a
+            // confirmation was expected, the outcome still asserts physical work, and no evidence of
+            // its own backed it. An action whose driver produced its own evidence was never held open
+            // — the gate passed it on that evidence — so a mission with no Witness registered leaves
+            // it exactly where it was, rather than being demoted for a judgment nobody was asked to make.
+            if (confirmedLater.ContainsKey(step.StepId) && record.EvidenceRefs.Count == 0 &&
+                ActionOutcomes.AssertPhysicalWork.Contains(record.Outcome))
+                awaitingConfirmation[step.StepId] = record;
 
             if (actuates && cache is not null)
             {
@@ -296,6 +360,7 @@ public sealed class MoundMajor : IMoundMajor
                 witness is not null && actions.TryGetValue(step.Confirms, out var confirmed))
             {
                 var outcome = witness.Confirm(confirmed, Items(record.EvidenceRefs), policy, now, out var why);
+                awaitingConfirmation.Remove(step.Confirms);   // judged, either way
 
                 if (!string.Equals(outcome, confirmed.Outcome, StringComparison.Ordinal))
                 {
@@ -325,6 +390,20 @@ public sealed class MoundMajor : IMoundMajor
 
             results[step.StepId] = result;
             report.Steps.Add(result);
+        }
+
+        // A promised confirmation that never happened — the verify step was skipped by a condition,
+        // refused, or never reached because the mission halted — leaves the action exactly where it
+        // would have been without the promise. The kernel held the verdict open on this coordinator's
+        // word; this is the coordinator keeping it, before anything is published.
+        foreach (var (stepId, record) in awaitingConfirmation)
+        {
+            record.Outcome = ActionOutcomes.Unverified;
+            record.Detail = string.IsNullOrEmpty(record.Detail)
+                ? "no confirming observation was made"
+                : $"{record.Detail}; no confirming observation was made";
+            sawUnverified = true;
+            if (results.TryGetValue(stepId, out var pending)) pending.Detail = record.Detail;
         }
 
         // Records leave the coordinator only after the walk is over, because a `verify` step can
@@ -375,7 +454,7 @@ public sealed class MoundMajor : IMoundMajor
     /// ceiling is the part that bites, because a Scout Ant declared `observe` cannot actuate even
     /// under a charter that would otherwise allow it.
     /// </summary>
-    private ActionRecord Dispatch(Mission mission, MissionStep step, DateTimeOffset now)
+    private ActionRecord Dispatch(Mission mission, MissionStep step, DateTimeOffset now, bool confirmationExpected = false)
     {
         var capability = step.Op == MissionStepOps.Routine ? step.RoutineId : step.Capability;
         var (worker, ceiling) = Target(mission, step);
@@ -385,7 +464,8 @@ public sealed class MoundMajor : IMoundMajor
             Capability = capability,
             MissionId = mission.MissionId,
             Worker = worker,
-            WorkerCeiling = ceiling
+            WorkerCeiling = ceiling,
+            ConfirmationExpected = confirmationExpected
         };
 
         foreach (var (name, value) in step.Parameters) request.Parameters[name] = value;

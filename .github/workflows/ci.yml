@@ -88,6 +88,13 @@ jobs:
       - name: Build and test against the golden fixtures
         run: make -C firmware/micromound-c CC=${{ matrix.cc }} test
 
+      # build/mm_board_sim — the same mm_ports and mm_frame the ESP32 image is built from, running
+      # as a host process with only the world below its HAL simulated. The acceptance run on the
+      # Linux validate leg drives it; this step keeps it compiling under both compilers with the
+      # same -Wall -Wextra -Werror -pedantic the library gets.
+      - name: Build the board simulator
+        run: make -C firmware/micromound-c CC=${{ matrix.cc }} tools
+
       # Every sanitizer finding is fatal; the one exemption (TweetNaCl's negative left shifts) is
       # named in the Makefile next to the SANITIZE flag set this step uses.
       - name: Sanitizers (ASan + UBSan, findings fatal)

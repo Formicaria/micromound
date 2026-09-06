@@ -168,6 +168,22 @@ half of `SENSE → ACT → SENSE AGAIN → VERIFY` cannot affect anything — wh
 Witness Ant exists to fix. Confirmation only ever lowers a verdict: a reading taken afterwards
 proves the state of the world afterwards, not that the command caused it.
 
+**Which is why the first pass has to be able to WAIT for the second** (`v0.9.27`). An honest
+actuator produces no evidence of its own — a command is not evidence — so the first pass would
+demote every actuation to `unverified` the instant it happened, and nothing may raise that
+afterwards. The verified path was unreachable for any real relay: only a driver that certified its
+own work could ever be believed, the exact opposite of what this rule is for. So a mission that
+promises a confirming observation tells the kernel so (`confirmation_expected`), and the kernel holds
+that one verdict **open** rather than demoting it. The promise is kept or the record is demoted:
+anything still open when the mission's walk ends becomes `unverified` before a single record is
+published. Nothing is loosened — the verdict is held open only for the walk that promised to close
+it, and only when the sole thing against the record was that nothing had looked yet.
+
+**And the thing that looks has to exist.** That is the third generic primitive, `digital_sensor`
+(`v0.9.27`): a limit switch, an interlock contact, a float — a line whose reading did not come from
+the actuation path. A mound with only actuators and analog probes cannot confirm anything about the
+lines it drives, however good its rules are.
+
 Pairings that make an outcome real:
 
 | Action | Evidence |

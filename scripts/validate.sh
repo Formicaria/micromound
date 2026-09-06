@@ -123,9 +123,21 @@ if [[ "${1:-}" == "--full" ]]; then
     echo "==> C mirror: make -C firmware/micromound-c test (byte-for-byte against the golden files)"
     make -C firmware/micromound-c clean >/dev/null
     make -C firmware/micromound-c test
+    echo "==> board simulator: make -C firmware/micromound-c tools"
+    make -C firmware/micromound-c tools
   else
     echo "==> C mirror skipped: no C toolchain on PATH (CI runs it; see firmware/micromound-c/README.md)"
   fi
+
+  # The acceptance sequence (docs/ACCEPTANCE.md): the ordered criteria docs/ROADMAP.md sets for a
+  # Generic Physical Mound, run against a real mound — real kernel, real ants, real drivers, real
+  # durable store, real signed wire — and, when the C tools built above are present, against the real
+  # port-server firmware in its own process on the other end of a real byte stream.
+  #
+  # It exits non-zero on the first unmet criterion, and its own report says which. This is the check
+  # that fails when something still passes every unit test but no longer adds up to a mound.
+  echo "==> acceptance sequence (docs/ACCEPTANCE.md)"
+  dotnet run --project src/Micromound.Acceptance -c Release --no-build
 fi
 
 echo "==> ALL VALIDATIONS PASSED (v$ver)"

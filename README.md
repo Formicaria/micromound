@@ -63,10 +63,10 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.26
+**Current version:** v0.9.27
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
-progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.26`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
+progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
 capability kernel with deterministic authorization, the Mound Major that walks missions — and now
 all six default ants as runtime services, a durable uplink queue whose chain is enforced at enqueue,
 restart recovery that never clears a stop, never extends a lease, and never silently resumes physical
@@ -141,8 +141,16 @@ link**: the board's exchanges framed over a serial cable to `micromound --bridge
 §12, pinned by `link-frames.txt` at both ends), and a second firmware image with no network stack at
 all — and, new in `v0.9.26`, **the board as the Pi's hands**: port requests over the same link, the Pi's
 own kernel the only authority, one manifest setting (`link`) putting a line or channel on the board, and
-a third image (259 KB) that keeps only its compiled `max_on_s` and a watchdog for itself. What's still
-ahead for M4 is only the board itself. End-to-end simulator missions run against an in-process controller that verifies every
+a third image (259 KB) that keeps only its compiled `max_on_s` and a watchdog for itself — and, new in
+`v0.9.27`, **the acceptance bench, in software**: a third generic primitive (`digital_sensor` — the
+independent observer a mound needs before any actuation it performs can honestly be called verified,
+over a real GPIO input line or a board's input over the link), `mm_board_sim` (the real port-server
+firmware as a host process, so a whole mound can be composed against real C over real framing with no
+board on the desk), and `src/Micromound.Acceptance` — the eighteen ROADMAP acceptance criteria as an
+executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen now met in software on
+both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
+any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
+same release. What's still ahead for M4 is only the board itself. End-to-end simulator missions run against an in-process controller that verifies every
 byte. The v0 canonical bytes of every existing fixture are unchanged. The host has both a real digital
 line and a real analog channel available, but has not yet been run on a device against real hardware —
 that boundary finishes M4; what remains of M5 is the bench run of `firmware/esp32`. See [`docs/ROADMAP.md`](docs/ROADMAP.md) and [`CHANGELOG.md`](CHANGELOG.md).
@@ -153,9 +161,11 @@ disk and drivers — not the automatic successor to `v0.9.x`.
 
 ```bash
 bash scripts/validate.sh                    # guards + restore + build + test
-bash scripts/validate.sh --full             # and the simulator smoke run, and the C mirror's tests
+bash scripts/validate.sh --full             # and the simulator smoke run, the C mirror, and the acceptance sequence
 dotnet test Micromound.sln                  # just the tests
 make -C firmware/micromound-c test          # just the C mirror against the golden fixtures (gcc or clang)
+make -C firmware/micromound-c tools         # build/mm_board_sim: the port-server firmware as a host process
+dotnet run --project src/Micromound.Acceptance   # the acceptance sequence (docs/ACCEPTANCE.md)
 ```
 
 On Windows without bash on PATH, `.\scripts\validate.ps1` runs the same steps.
@@ -187,8 +197,10 @@ src/Micromound.Sync/           Runner Ant transport (enrollment, sync beat, dura
 src/Micromound.Reasoning/      optional reasoning provider, and the null default
 src/Micromound.Host/           the headless Linux/Pi daemon
 src/Micromound.Sim/            simulated mounds — the real kernel over fake hardware
+src/Micromound.Acceptance/     the ROADMAP acceptance sequence, executable (docs/ACCEPTANCE.md)
 deploy/                        systemd unit, environment template, installer for a Pi
 firmware/micromound-c/         the C mirror: wire format, reader, kernel, device loop and board layer of a reduced-profile mound (C99, host-tested)
+                               tools/mm_board_sim.c — that same port server as a host process, for the acceptance run
 firmware/esp32/                the ESP-IDF project: three images — Wi-Fi mound, serial-link mound, port server (compile under IDF v5.3.2; not yet run)
 tests/Micromound.Tests/        contract, authority, kernel, evidence, and golden-byte tests
 ```
@@ -219,6 +231,7 @@ See [`docs/UPSTREAM.md`](docs/UPSTREAM.md).
 | [`docs/SAFETY.md`](docs/SAFETY.md) | Safety model. **Where documents disagree, this one wins** |
 | [`docs/UPSTREAM.md`](docs/UPSTREAM.md) | The controller contract, and ANTHILL as its reference integration |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Bringing a mound up on a Raspberry Pi: buses, install, check the wiring, enroll, charter, first mission |
+| [`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md) | The acceptance sequence: the eighteen criteria, why each is on the list, and how to run them |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Milestones and build order |
 
 ## Non-goals

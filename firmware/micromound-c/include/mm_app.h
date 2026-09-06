@@ -35,6 +35,7 @@ extern "C" {
 
 #define MM_APP_MAX_RELAYS 8
 #define MM_APP_MAX_PROBES 8
+#define MM_APP_MAX_SWITCHES 8
 #define MM_APP_MAX_SCHEDULE 8
 #define MM_APP_DEFAULT_SYNC_S 15
 #define MM_APP_ENROLL_RETRY_S 30
@@ -56,6 +57,7 @@ typedef struct mm_app_config {
     const mm_device_limit *device_limits; size_t n_device_limits;
     mm_relay *relays;   size_t n_relays;          /* initialised by the board (mm_relay_init) */
     mm_probe *probes;   size_t n_probes;          /* initialised by the board (mm_probe_init) */
+    mm_switch *switches; size_t n_switches;       /* initialised by the board (mm_switch_init) */
     const mm_schedule_entry *schedule; size_t n_schedule;
 } mm_app_config;
 

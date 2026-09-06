@@ -27,6 +27,13 @@ static mm_port_pin *find_pin(mm_ports *p, int pin)
     return NULL;
 }
 
+static mm_port_input *find_input(mm_ports *p, int pin)
+{
+    size_t i;
+    for (i = 0; i < p->n_inputs; i++) if (p->inputs[i].pin == pin) return &p->inputs[i];
+    return NULL;
+}
+
 static int has_channel(const mm_ports *p, int channel)
 {
     size_t i;
@@ -37,7 +44,7 @@ static int has_channel(const mm_ports *p, int channel)
 int mm_ports_add_pin(mm_ports *p, int pin, int active_high, double max_on_s)
 {
     mm_port_pin *slot;
-    if (p->n_pins >= MM_PORTS_MAX_PINS || find_pin(p, pin)) return -1;
+    if (p->n_pins >= MM_PORTS_MAX_PINS || find_pin(p, pin) || find_input(p, pin)) return -1;
     slot = &p->pins[p->n_pins];
     memset(slot, 0, sizeof *slot);
     slot->pin = pin;
@@ -45,6 +52,19 @@ int mm_ports_add_pin(mm_ports *p, int pin, int active_high, double max_on_s)
     slot->max_on_s = (max_on_s > 0 && isfinite(max_on_s)) ? max_on_s : 0;
     if (drive(p, slot, 0) != 0) return -1;              /* the line comes up at its SAFE level or the pin is not offered */
     p->n_pins++;
+    return 0;
+}
+
+int mm_ports_add_input(mm_ports *p, int pin, int active_high)
+{
+    int level = 0;
+    if (p->n_inputs >= MM_PORTS_MAX_INPUTS || find_input(p, pin) || find_pin(p, pin)) return -1;
+    /* a line the board cannot read at bring-up is not offered: better an absent port than a phantom switch */
+    if (p->hal->gpio_read(p->hal->ctx, pin, &level) != 0) return -1;
+    p->inputs[p->n_inputs].pin = pin;
+    p->inputs[p->n_inputs].active_high = active_high ? 1 : 0;
+    p->inputs[p->n_inputs].reads = 0;
+    p->n_inputs++;
     return 0;
 }
 
@@ -171,6 +191,19 @@ int mm_ports_handle(mm_ports *p, const char *path, size_t path_len, const char *
             mm_json_object_end(&w);
         }
         mm_json_array_end(&w);
+        mm_json_key(&w, "inputs");
+        mm_json_array_begin(&w);
+        for (i = 0; i < p->n_inputs; i++) {
+            int lvl = 0;
+            int ok = p->hal->gpio_read(p->hal->ctx, p->inputs[i].pin, &lvl) == 0;
+            mm_json_object_begin(&w);
+            mm_json_kv_int(&w, "pin", p->inputs[i].pin);
+            mm_json_kv_bool(&w, "active_high", p->inputs[i].active_high);
+            /* a line that will not read reports false and says so on its own read; hello never invents a level */
+            mm_json_kv_bool(&w, "level", ok && (lvl != 0) == (p->inputs[i].active_high != 0));
+            mm_json_object_end(&w);
+        }
+        mm_json_array_end(&w);
         mm_json_key(&w, "channels");
         mm_json_array_begin(&w);
         for (i = 0; i < p->n_channels; i++) mm_json_int(&w, p->channels[i]);
@@ -207,6 +240,30 @@ int mm_ports_handle(mm_ports *p, const char *path, size_t path_len, const char *
         mm_json_object_begin(&w);
         mm_json_kv_int(&w, "pin", pin);
         mm_json_kv_bool(&w, "level", target->active);
+        mm_json_object_end(&w);
+        return respond(200, mm_json_finish(&w), resp_len);
+    }
+
+    if (IS_PATH(MM_PORTS_PATH_READ_PIN)) {
+        mm_port_input *in;
+        char msg[96];
+        int level = 0;
+        if (!has_pin) { p->rejected++; return respond(400, error_body("read_pin needs 'pin'", resp, cap), resp_len); }
+        in = find_input(p, pin);
+        if (!in) {
+            p->rejected++;
+            snprintf(msg, sizeof msg, "pin %d is not an input of this board", pin);
+            return respond(404, error_body(msg, resp, cap), resp_len);
+        }
+        if (p->hal->gpio_read(p->hal->ctx, pin, &level) != 0) {
+            p->rejected++;
+            return respond(503, error_body("the line could not be read", resp, cap), resp_len);   /* a fault, never a 'false' */
+        }
+        in->reads++;
+        mm_json_init(&w, resp, cap);
+        mm_json_object_begin(&w);
+        mm_json_kv_int(&w, "pin", pin);
+        mm_json_kv_bool(&w, "level", (level != 0) == (in->active_high != 0));
         mm_json_object_end(&w);
         return respond(200, mm_json_finish(&w), resp_len);
     }

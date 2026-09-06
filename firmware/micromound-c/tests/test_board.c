@@ -136,6 +136,14 @@ static int f_gpio(void *ctx, int pin, int level)
     return 0;
 }
 
+static int f_gpio_read(void *ctx, int pin, int *level)
+{
+    fake *f = (fake *)ctx;
+    if (pin < 0 || pin >= 48 || pin == f->gpio_fail_pin) return -1;
+    *level = f->gpio[pin];
+    return 0;
+}
+
 static int f_adc(void *ctx, int channel, double *volts)
 {
     fake *f = (fake *)ctx;
@@ -263,7 +271,7 @@ static void hal_bind(mm_hal *hal, fake *f)
 {
     hal->ctx = f;
     hal->now = f_now; hal->random_bytes = f_random; hal->http_post_json = f_http;
-    hal->kv_get = f_kv_get; hal->kv_set = f_kv_set; hal->gpio_write = f_gpio; hal->adc_read = f_adc;
+    hal->kv_get = f_kv_get; hal->kv_set = f_kv_set; hal->gpio_write = f_gpio; hal->gpio_read = f_gpio_read; hal->adc_read = f_adc;
 }
 
 static size_t kv_len(fake *f, const char *key) { kv_entry *e = kv_find(f, key, 0); return e ? e->n : (size_t)-1; }

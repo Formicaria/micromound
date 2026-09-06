@@ -499,6 +499,165 @@ public sealed class AnalogSensorDriver : GenericDriverBase
 }
 
 /// <summary>
+/// The third generic primitive: one digital INPUT line reported as a <c>sense.</c> capability — a
+/// limit switch, an interlock contact, a float, a door. It is what independent confirmation is made
+/// of. A command is not evidence (SAFETY.md); a relay driver produces none on purpose; the thing that
+/// can say an actuation actually happened is a separate line that a separate piece of hardware moved.
+///
+/// <para>The reading is 1 when the line is ASSERTED and 0 when it is not, where "asserted" is the
+/// physical level the manifest's <c>active_high</c> declares — a switch that pulls its line to ground
+/// when it closes is <c>active_high=false</c>. It rides the wire as the same <c>reading</c> evidence
+/// item an analog sensor produces (PROTOCOL.md §6), so a mission's condition, the evidence gate and
+/// the Witness all treat it identically: nothing downstream knows this number came from a contact.</para>
+///
+/// <para>A line that cannot be sampled is a FAULT with no reading, never a 0. An open switch and an
+/// unreachable switch are different facts, and the second one must not be able to satisfy a
+/// condition — which is exactly the failure that would let a mound believe a valve closed because
+/// the wire to the switch fell off.</para>
+/// </summary>
+public sealed class DigitalSensorDriver : GenericDriverBase
+{
+    private readonly Func<IReadOnlyDictionary<string, string>, IDigitalInput> _lineBuilder;
+    private IDigitalInput? _line;
+    private string _capability = "";
+    private string _unit = "";
+    private bool _activeHigh = true;
+    private CapabilityDescriptor? _descriptor;
+    private Executor? _executor;
+
+    /// <summary>The line is built from the manifest's settings at configure time; the builder MUST
+    /// return a fresh line per call and should THROW if the hardware is not there.</summary>
+    public DigitalSensorDriver(Func<IReadOnlyDictionary<string, string>, IDigitalInput> lineBuilder) =>
+        _lineBuilder = lineBuilder;
+
+    /// <summary>Convenience for a line that needs no settings and owns no device node (tests, the simulator).</summary>
+    public DigitalSensorDriver(IDigitalInput line) : this(_ => line) { }
+
+    public override string DriverId => "digital_sensor:" + _capability;
+    public override string Bus => BusKinds.Gpio;
+
+    /// <summary>The polarity in force, for a test or a health view.</summary>
+    public bool ActiveHigh => _activeHigh;
+
+    public override IReadOnlyList<CapabilityDescriptor> Capabilities => _descriptor is null ? [] : [_descriptor];
+    public override IReadOnlyList<ICapabilityExecutor> Executors => _executor is null ? [] : [_executor];
+
+    protected override void Reset()
+    {
+        _capability = "";
+        _unit = "";
+        _activeHigh = true;
+        _descriptor = null;
+        _executor = null;
+        (_line as IDisposable)?.Dispose();   // a reconfigure must not leak the descriptor a prior attempt claimed
+        _line = null;
+    }
+
+    protected override void OnConfigure(IReadOnlyDictionary<string, string> settings, List<string> errors)
+    {
+        var capability = Required(settings, "capability", errors);
+        var wellFormed = ValidCapability(capability, "sense.", "a digital sensor", errors);
+
+        _unit = settings.TryGetValue("unit", out var unit) ? unit : "";
+        _activeHigh = GpioSettings.ActiveHigh(settings);
+
+        if (errors.Count > 0 || !wellFormed)
+            return;
+
+        try
+        {
+            _line = _lineBuilder(settings);
+        }
+        catch (Exception ex)
+        {
+            errors.Add("could not open the sensor's line: " + ex.Message);
+            return;
+        }
+
+        _capability = capability!;
+        _descriptor = new CapabilityDescriptor
+        {
+            Id = capability!,
+            Class = ActionClass.Observe,
+            Description = "digital sensor " + capability
+        };
+        _executor = new Executor(this);
+    }
+
+    public override void EnterSafeState() { /* an input has no output to make safe */ }
+
+    private sealed class Executor(DigitalSensorDriver driver) : ICapabilityExecutor
+    {
+        public string CapabilityId => driver._capability;
+        public bool IsAvailable => driver.Health == DriverHealth.Healthy;
+
+        public ExecutionOutcome Execute(CapabilityExecution execution)
+        {
+            bool level;
+            try
+            {
+                level = driver._line!.Read();
+            }
+            catch (Exception ex)
+            {
+                return ExecutionOutcome.Fault("input read failed: " + ex.Message);
+            }
+
+            var asserted = level == driver._activeHigh;
+            var item = EvidenceReadings.Create(
+                Guid.NewGuid().ToString(), driver._capability, asserted ? 1 : 0,
+                execution.StartedAt, unit: driver._unit, source: driver.DriverId);
+
+            driver.Publish?.Invoke(item);
+            return ExecutionOutcome.Ok([item]);
+        }
+    }
+}
+
+/// <summary>
+/// Builds <see cref="DigitalSensorDriver"/> instances over an injected line builder — an in-memory
+/// line in the simulator and tests, a real GPIO input on a device, a board's input over the link.
+/// </summary>
+public sealed class DigitalSensorFactory(Func<IReadOnlyDictionary<string, string>, IDigitalInput> lineBuilder) : IDriverFactory
+{
+    /// <summary>Defaults to a fresh in-memory line per driver, for the simulator and tests.</summary>
+    public DigitalSensorFactory() : this(_ => new InMemoryDigitalInput()) { }
+
+    /// <summary>A settings-free line factory, adapted to the builder shape.</summary>
+    public DigitalSensorFactory(Func<IDigitalInput> lineFactory) : this(_ => lineFactory()) { }
+
+    public string DriverType => "digital_sensor";
+    public IDriver Create() => new DigitalSensorDriver(lineBuilder);
+    public DriverTypeSchema Schema => DriverSchemaCatalog.DigitalSensor;
+}
+
+/// <summary>
+/// The hardware-backed digital-sensor factory: each sensor over a real GPIO input line on the Linux
+/// character device (<see cref="GpioChardevInput"/>), or — with a <c>link</c> setting — over an input
+/// line of a board running the port server (PROTOCOL.md §12). Same driver kind, same capability, same
+/// polarity setting as the in-memory default; only the line backing changes.
+/// </summary>
+public sealed class GpioChardevSensorFactory(int defaultChip = 0, ILinuxIo? io = null, ILinkPortsProvider? links = null) : IDriverFactory
+{
+    private readonly DigitalSensorFactory _inner = new(settings =>
+    {
+        if (LinkSettings.TryLink(settings, out var link))
+            return LinkSettings.OpenInputLine(links ?? LinkPortsPool.Shared, link,
+                GpioSettings.Pin(settings, "a linked digital sensor"), GpioSettings.ActiveHigh(settings));
+        var line = GpioSettings.Pin(settings, "a GPIO character-device sensor");
+        var chip = GpioSettings.Chip(settings, defaultChip);
+        var bias = settings.TryGetValue("bias", out var raw) && !string.IsNullOrWhiteSpace(raw) ? raw.Trim() : GpioBias.PullUp;
+        if (!GpioBias.IsKnown(bias))
+            throw new ArgumentException($"'bias' must be {GpioBias.PullUp}, {GpioBias.PullDown} or {GpioBias.None}, not '{bias}'");
+        return new GpioChardevInput(line, bias, chip, io);
+    });
+
+    public string DriverType => _inner.DriverType;
+    public IDriver Create() => _inner.Create();
+    public DriverTypeSchema Schema => _inner.Schema;
+}
+
+/// <summary>
 /// Builds <see cref="DigitalActuatorDriver"/> instances. Each driver opens its output line from the
 /// manifest settings at configure time via the injected <em>port builder</em> — an in-memory line in
 /// the simulator and tests, a real GPIO line (<see cref="SysfsDigitalOutput"/>) on a device — so this

@@ -28,6 +28,14 @@ static int fb_gpio(void *ctx, int pin, int level)
     return 0;
 }
 
+static int fb_gpio_read(void *ctx, int pin, int *level)
+{
+    fake_board *b = (fake_board *)ctx;
+    if (pin < 0 || pin >= 48 || pin == b->gpio_fail_pin) return -1;
+    *level = b->gpio[pin];
+    return 0;
+}
+
 static int fb_adc(void *ctx, int channel, double *volts)
 {
     fake_board *b = (fake_board *)ctx;
@@ -120,7 +128,8 @@ void test_ports(void)
     board.gpio_fail_pin = -1;
     board.adc[0] = 0.75;
     memset(&hal, 0, sizeof hal);
-    hal.ctx = &board; hal.now = fb_now; hal.random_bytes = fb_random; hal.gpio_write = fb_gpio; hal.adc_read = fb_adc;
+    hal.ctx = &board; hal.now = fb_now; hal.random_bytes = fb_random; hal.gpio_write = fb_gpio;
+    hal.gpio_read = fb_gpio_read; hal.adc_read = fb_adc;
     n_lines = 0;
 
     /* bring-up: pins come up SAFE (pin 6 is active-low, so its safe level is high) */
@@ -130,14 +139,21 @@ void test_ports(void)
     CHECK(mm_ports_add_pin(&ports, 6, 0, 0) == 0 && board.gpio[6] == 1);
     CHECK(mm_ports_add_pin(&ports, 5, 1, 30) == -1);                   /* a duplicate */
     CHECK(mm_ports_add_channel(&ports, 0) == 0 && mm_ports_add_channel(&ports, 0) == -1);
+    board.gpio[12] = 1;                                                /* an active-low limit switch, open: the line is pulled high */
+    CHECK(mm_ports_add_input(&ports, 12, 0) == 0 && ports.n_inputs == 1);
+    CHECK(mm_ports_add_input(&ports, 12, 0) == -1);                    /* a duplicate */
+    CHECK(mm_ports_add_input(&ports, 5, 1) == -1);                     /* already an output: one line, one direction */
+    CHECK(mm_ports_add_pin(&ports, 12, 1, 10) == -1);                  /* and the other way round */
     board.gpio_fail_pin = 9;
     CHECK(mm_ports_add_pin(&ports, 9, 1, 10) == -1 && ports.n_pins == 2);   /* a pin that will not drive safe is not offered */
+    CHECK(mm_ports_add_input(&ports, 9, 1) == -1 && ports.n_inputs == 1);   /* nor a line that will not read */
     board.gpio_fail_pin = -1;
 
     /* discovery */
     CHECK(ask(&ports, MM_PORTS_PATH_HELLO, "{}", 100, resp, sizeof resp) == 200);
     CHECK_STR_EQ("{\"profile\":\"sense.temp,act.relay_1,act.relay_2\",\"firmware\":\"bench-1\",\"watchdog_s\":60,\"tripped\":false,"
                  "\"pins\":[{\"pin\":5,\"active_high\":true,\"max_on_s\":30,\"level\":false},{\"pin\":6,\"active_high\":false,\"max_on_s\":0,\"level\":false}],"
+                 "\"inputs\":[{\"pin\":12,\"active_high\":false,\"level\":false}],"
                  "\"channels\":[0]}", resp);
     CHECK(ask(&ports, MM_PORTS_PATH_HELLO, "", 100, resp, sizeof resp) == 200);   /* an empty body reads as {} */
 
@@ -176,6 +192,28 @@ void test_ports(void)
     CHECK(ask(&ports, MM_PORTS_PATH_READ, "{\"channel\":0}", 146, resp, sizeof resp) == 503);
     CHECK_STR_EQ("{\"error\":\"sensor read failed\"}", resp);
     board.adc_fail = 0;
+
+    /* the input line: a limit switch, read as asserted or not, with the board's polarity applied */
+    CHECK(ask(&ports, MM_PORTS_PATH_READ_PIN, "{\"pin\":12}", 147, resp, sizeof resp) == 200);
+    CHECK_STR_EQ("{\"pin\":12,\"level\":false}", resp);              /* open: the line is high, the switch is active-low */
+    board.gpio[12] = 0;                                                 /* the switch closes */
+    CHECK(ask(&ports, MM_PORTS_PATH_READ_PIN, "{\"pin\":12}", 148, resp, sizeof resp) == 200);
+    CHECK_STR_EQ("{\"pin\":12,\"level\":true}", resp);
+    CHECK(ports.inputs[0].reads == 2);
+    CHECK(ask(&ports, MM_PORTS_PATH_HELLO, "{}", 149, resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"inputs\":[{\"pin\":12,\"active_high\":false,\"level\":true}]") != NULL);
+    CHECK(ask(&ports, MM_PORTS_PATH_READ_PIN, "{\"pin\":5}", 150, resp, sizeof resp) == 404);   /* an output is not an input */
+    CHECK_STR_EQ("{\"error\":\"pin 5 is not an input of this board\"}", resp);
+    CHECK(ask(&ports, MM_PORTS_PATH_WRITE, "{\"pin\":12,\"level\":true}", 150, resp, sizeof resp) == 404);   /* nor the reverse */
+    CHECK(ask(&ports, MM_PORTS_PATH_READ_PIN, "{}", 150, resp, sizeof resp) == 400);
+    CHECK_STR_EQ("{\"error\":\"read_pin needs 'pin'\"}", resp);
+    board.gpio_fail_pin = 12;
+    CHECK(ask(&ports, MM_PORTS_PATH_READ_PIN, "{\"pin\":12}", 151, resp, sizeof resp) == 503);   /* a fault, never a 'false' */
+    CHECK_STR_EQ("{\"error\":\"the line could not be read\"}", resp);
+    CHECK(ask(&ports, MM_PORTS_PATH_HELLO, "{}", 152, resp, sizeof resp) == 200);
+    CHECK(strstr(resp, "\"inputs\":[{\"pin\":12,\"active_high\":false,\"level\":false}]") != NULL);   /* hello never invents a level */
+    board.gpio_fail_pin = -1;
+    board.gpio[12] = 1;                                                 /* the switch opens again */
 
     /* the watchdog: a Pi that goes quiet loses its outputs; the next request re-arms */
     CHECK(ask(&ports, MM_PORTS_PATH_WRITE, "{\"pin\":5,\"level\":true}", 200, resp, sizeof resp) == 200 && board.gpio[5] == 1);

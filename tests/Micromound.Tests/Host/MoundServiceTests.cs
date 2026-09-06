@@ -349,6 +349,55 @@ public sealed class MoundServiceTests : IDisposable
         }
     }
 
+    /// <remarks>
+    /// A lease is a promise about TIME, so it runs out on an idle mound exactly as it does on a busy
+    /// one — and the mound has to notice by itself, because the scenario the lease exists for is the
+    /// one where nobody is left to tell it. Before this the expiry was only ever checked when a
+    /// mission arrived, so a mound nobody asked anything sat 'chartered' with its line hot for as
+    /// long as the silence lasted. Nothing in this test asks the mound to do anything: it is a
+    /// service tick and a clock.
+    /// </remarks>
+    [Fact]
+    public void An_idle_tick_past_the_lease_quiesces_the_mound_and_de_energizes_it()
+    {
+        var line = new InMemoryDigitalOutput();
+        var host = Host("mm-s5", line, Ed25519KeyPair.Generate());
+        var service = new MoundService(host);
+        host.Major.AcceptCharter(Charter("mm-s5"), Now);
+        line.Write(true);
+
+        var expiry = host.Authority.LeaseExpiresAt;
+        service.Tick(expiry.AddSeconds(-1));
+        Assert.Equal("chartered", host.State);   // inside the lease, nothing changes
+
+        service.Tick(expiry.AddSeconds(1));
+
+        Assert.Equal("quiesced", host.State);
+        Assert.False(line.State);
+    }
+
+    /// <summary>And it is durable: a restart comes back quiesced, not briefly re-authorized.</summary>
+    [Fact]
+    public void The_quiesce_an_idle_tick_reached_survives_a_restart()
+    {
+        var keys = Ed25519KeyPair.Generate();
+        var host = Host("mm-s6", new InMemoryDigitalOutput(), keys);
+        var service = new MoundService(host);
+        host.Major.AcceptCharter(Charter("mm-s6"), Now);
+        var after = host.Authority.LeaseExpiresAt.AddSeconds(1);
+
+        service.Tick(after);
+
+        var reborn = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Manifest("mm-s6"), StateDirectory = _dir,
+            Drivers = FactoriesWith(new InMemoryDigitalOutput())
+        });
+        reborn.Restore(after);
+
+        Assert.Equal("quiesced", reborn.State);
+    }
+
     [Fact]
     public void A_graceful_shutdown_is_safe_and_resumes_un_stopped()
     {

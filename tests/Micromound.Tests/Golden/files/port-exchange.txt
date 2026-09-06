@@ -6,15 +6,15 @@
 # checks the client's own request bodies against the `req:` lines. A change here is a protocol change.
 
 req:  micromound/link/ports/hello {}
-resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"channels":[0]}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":false}],"channels":[0]}
 req:  micromound/link/ports/hello 
-resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"channels":[0]}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":false}],"channels":[0]}
 req:  micromound/link/ports/write {"pin":5,"level":true}
 resp: 200 {"pin":5,"level":true}
 req:  micromound/link/ports/read {"channel":0}
 resp: 200 {"channel":0,"volts":0.75}
 req:  micromound/link/ports/hello {}
-resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"channels":[0]}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":false}],"channels":[0]}
 req:  micromound/link/ports/write {"pin":6,"level":true}
 resp: 200 {"pin":6,"level":true}
 req:  micromound/link/ports/write {"pin":6,"level":false}
@@ -39,12 +39,28 @@ req:  micromound/link/ports/write {"pin":5,"level":false}
 resp: 200 {"pin":5,"level":false}
 req:  micromound/link/ports/read {"channel":0}
 resp: 503 {"error":"sensor read failed"}
+req:  micromound/link/ports/read_pin {"pin":12}
+resp: 200 {"pin":12,"level":false}
+req:  micromound/link/ports/read_pin {"pin":12}
+resp: 200 {"pin":12,"level":true}
+req:  micromound/link/ports/hello {}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":true}],"channels":[0]}
+req:  micromound/link/ports/read_pin {"pin":5}
+resp: 404 {"error":"pin 5 is not an input of this board"}
+req:  micromound/link/ports/write {"pin":12,"level":true}
+resp: 404 {"error":"pin 12 is not a port of this board"}
+req:  micromound/link/ports/read_pin {}
+resp: 400 {"error":"read_pin needs 'pin'"}
+req:  micromound/link/ports/read_pin {"pin":12}
+resp: 503 {"error":"the line could not be read"}
+req:  micromound/link/ports/hello {}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":false}],"channels":[0]}
 req:  micromound/link/ports/write {"pin":5,"level":true}
 resp: 200 {"pin":5,"level":true}
 req:  micromound/link/ports/write {"pin":6,"level":true}
 resp: 200 {"pin":6,"level":true}
 req:  micromound/link/ports/hello {}
-resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"channels":[0]}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":false,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":false},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":false}],"channels":[0]}
 req:  micromound/link/ports/write {"pin":5,"level":true}
 resp: 200 {"pin":5,"level":true}
 req:  micromound/link/ports/write {"pin":5,"level":false}
@@ -54,7 +70,7 @@ resp: 503 {"error":"the line would not drive active"}
 req:  micromound/link/ports/write {"pin":5,"level":true}
 resp: 200 {"pin":5,"level":true}
 req:  micromound/link/ports/hello {}
-resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":true,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":true},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"channels":[0]}
+resp: 200 {"profile":"sense.temp,act.relay_1,act.relay_2","firmware":"bench-1","watchdog_s":60,"tripped":true,"pins":[{"pin":5,"active_high":true,"max_on_s":30,"level":true},{"pin":6,"active_high":false,"max_on_s":0,"level":false}],"inputs":[{"pin":12,"active_high":false,"level":false}],"channels":[0]}
 req:  micromound/link/ports/write {"pin":6,"level":true}
 resp: 409 {"error":"tripped: a line would not release; nothing is driven active until reboot"}
 req:  micromound/link/ports/write {"pin":5,"level":false}

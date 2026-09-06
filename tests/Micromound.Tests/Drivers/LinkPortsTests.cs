@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using Micromound.Capabilities;
 using Micromound.Drivers;
 using Micromound.Protocol;
 using Xunit;
@@ -52,6 +53,7 @@ public class LinkPortsTests
         var exchange = LoadExchange();
         Assert.True(exchange.Count >= 25, $"only {exchange.Count} exchanges in the fixture");
         var statuses = new HashSet<int>();
+        var readPinLevels = new List<bool>();
 
         foreach (var (path, reqBody, status, respBody) in exchange)
         {
@@ -66,6 +68,7 @@ public class LinkPortsTests
                         Assert.Equal(60, hello.WatchdogSeconds);
                         Assert.Contains(hello.Pins, p => p.Pin == 5 && p.ActiveHigh && p.MaxOnSeconds == 30);
                         Assert.Contains(hello.Pins, p => p.Pin == 6 && !p.ActiveHigh && p.MaxOnSeconds == 0);
+                        Assert.Contains(hello.Inputs, p => p.Pin == 12 && !p.ActiveHigh);
                         Assert.Equal([0], hello.Channels);
                         Assert.True(reqBody is "{}" or "");
                         break;
@@ -82,6 +85,12 @@ public class LinkPortsTests
                         Assert.Equal(0.75, volts);
                         Assert.Equal(reqBody, LinkPortsClient.ReadBody(channel));
                         break;
+                    case LinkPortsClient.ReadPinPath:
+                        var (inputPin, asserted) = LinkPortsClient.ParseReadPin(respBody);
+                        Assert.Equal(12, inputPin);
+                        Assert.Equal(reqBody, LinkPortsClient.ReadPinBody(inputPin));
+                        readPinLevels.Add(asserted);
+                        break;
                     default:
                         Assert.Fail($"a 200 for an unknown path {path}");
                         break;
@@ -97,6 +106,11 @@ public class LinkPortsTests
         Assert.Equal(new[] { 200, 400, 404, 409, 503 }.Order(), statuses.Order());
         Assert.Contains(exchange, e => e.Status == 409 && e.RespBody.Contains("tripped"));
         Assert.Contains(exchange, e => e.Status == 503 && e.RespBody.Contains("sensor read failed"));
+        // The switch was read open and closed, and a line that would not read was a fault, not a "false".
+        Assert.Contains(true, readPinLevels);
+        Assert.Contains(false, readPinLevels);
+        Assert.Contains(exchange, e => e.Status == 503 && e.RespBody.Contains("the line could not be read"));
+        Assert.Contains(exchange, e => e.Status == 404 && e.RespBody.Contains("is not an input of this board"));
     }
 
     // ---- a fake board over an in-memory duplex ----
@@ -132,6 +146,7 @@ public class LinkPortsTests
         private volatile bool _stop;
         public bool Silent;
         public readonly Dictionary<int, bool> Levels = new() { [5] = false, [6] = true };   // physical levels: safe
+        public bool SwitchClosed;                     // input 12, active-low: closed pulls the line down
         public int Hellos, Writes, Reads;
 
         public FakeBoard()
@@ -162,7 +177,9 @@ public class LinkPortsTests
             {
                 case LinkPortsClient.HelloPath:
                     Hellos++;
-                    return (200, "{\"profile\":\"bench\",\"firmware\":\"0.9.26\",\"watchdog_s\":3,\"tripped\":false,\"pins\":[{\"pin\":5,\"active_high\":true,\"max_on_s\":30,\"level\":false},{\"pin\":6,\"active_high\":false,\"max_on_s\":0,\"level\":false}],\"channels\":[0]}");
+                    return (200, "{\"profile\":\"bench\",\"firmware\":\"bench-1\",\"watchdog_s\":3,\"tripped\":false," +
+                                 "\"pins\":[{\"pin\":5,\"active_high\":true,\"max_on_s\":30,\"level\":false},{\"pin\":6,\"active_high\":false,\"max_on_s\":0,\"level\":false}]," +
+                                 $"\"inputs\":[{{\"pin\":12,\"active_high\":false,\"level\":{(SwitchClosed ? "true" : "false")}}}],\"channels\":[0]}}");
                 case LinkPortsClient.WritePath:
                     Writes++;
                     using (var doc = JsonDocument.Parse(body))
@@ -172,6 +189,13 @@ public class LinkPortsTests
                         if (!Levels.ContainsKey(pin)) return (404, $"{{\"error\":\"pin {pin} is not a port of this board\"}}");
                         Levels[pin] = pin == 5 ? level : !level;   // pin 6 is active-low: active = physical low
                         return (200, LinkPortsClient.WriteBody(pin, level));
+                    }
+                case LinkPortsClient.ReadPinPath:
+                    using (var doc = JsonDocument.Parse(body))
+                    {
+                        var pin = doc.RootElement.GetProperty("pin").GetInt32();
+                        if (pin != 12) return (404, $"{{\"error\":\"pin {pin} is not an input of this board\"}}");
+                        return (200, $"{{\"pin\":12,\"level\":{(SwitchClosed ? "true" : "false")}}}");
                     }
                 case LinkPortsClient.ReadPath:
                     Reads++;
@@ -214,7 +238,52 @@ public class LinkPortsTests
         Assert.Equal(404, refused.Status);
         Assert.Contains("pin 9", refused.Error);
         Assert.Throws<LinkPortsException>(() => client.Read(3));
-        Assert.Equal(6, client.Requests);
+
+        // the switch: asserted or not, never a level the board did not give
+        Assert.False(client.ReadPin(12));
+        board.SwitchClosed = true;
+        Assert.True(client.ReadPin(12));
+        var noSuchInput = Assert.Throws<LinkPortsException>(() => client.ReadPin(5));
+        Assert.Equal(404, noSuchInput.Status);
+        Assert.Equal(9, client.Requests);
+    }
+
+    [Fact]
+    public void A_linked_input_reads_the_switch_through_the_boards_polarity_and_refuses_a_mismatch()
+    {
+        using var board = new FakeBoard();
+        var provider = new FakeProvider(board);
+
+        // input 12 is active-LOW on the board: closed pulls the line down, so a closed switch is physically false
+        var line = LinkSettings.OpenInputLine(provider, "board", 12, activeHigh: false);
+        Assert.True(line.Read());               // open: the pull-up holds it high
+        board.SwitchClosed = true;
+        Assert.False(line.Read());              // closed: pulled down
+
+        var mismatch = Assert.Throws<ArgumentException>(() => LinkSettings.OpenInputLine(provider, "board", 12, activeHigh: true));
+        Assert.Contains("active-low", mismatch.Message);
+        Assert.Throws<ArgumentException>(() => LinkSettings.OpenInputLine(provider, "board", 99, activeHigh: false));
+        Assert.Throws<ArgumentException>(() => LinkSettings.OpenInputLine(provider, "board", 5, activeHigh: true));   // an output is not an input
+
+        // and the whole way through the driver: a sensor whose reading is the switch, 1 when asserted
+        var sensors = new GpioChardevSensorFactory(links: provider);
+        var sensor = sensors.Create();
+        var configured = sensor.Configure(new Dictionary<string, string>
+        {
+            ["capability"] = "sense.valve_closed", ["link"] = "/dev/ttyUSB0", ["pin"] = "12", ["active_high"] = "false"
+        });
+        Assert.True(configured.IsValid, string.Join("; ", configured.Errors));
+        var executor = sensor.Executors.Single();
+        var outcome = executor.Execute(new CapabilityExecution
+        {
+            CapabilityId = "sense.valve_closed",
+            Parameters = new Dictionary<string, double>(),
+            StartedAt = DateTimeOffset.Parse("2026-09-06T12:00:00Z"),
+            EffectiveLimits = new CapabilityLimits()
+        });
+        Assert.True(outcome.Succeeded);
+        Assert.True(EvidenceReadings.TryRead(outcome.Evidence.Single(), out var value));
+        Assert.Equal(1, value);                 // the switch is closed, and that is what the mound records
     }
 
     [Fact]

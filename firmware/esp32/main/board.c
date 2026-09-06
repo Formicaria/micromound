@@ -71,5 +71,16 @@ int board_ports_init(const mm_hal *hal, mm_ports *ports, const char *firmware, i
                          0,
 #endif
                          CAPS[1].hardware.max_on_s.present ? CAPS[1].hardware.max_on_s.value : 0) != 0) return -1;
+#if CONFIG_MM_SWITCH_GPIO >= 0
+    /* The independent observer: without a line the actuation path did not drive, nothing the Pi does
+       to the relay above can ever be confirmed, and every actuation is honestly `unverified`. */
+    if (mm_ports_add_input(ports, CONFIG_MM_SWITCH_GPIO,
+#ifdef CONFIG_MM_SWITCH_ACTIVE_HIGH
+                           1
+#else
+                           0
+#endif
+                           ) != 0) return -1;
+#endif
     return mm_ports_add_channel(ports, CONFIG_MM_PROBE_ADC_CHANNEL);
 }

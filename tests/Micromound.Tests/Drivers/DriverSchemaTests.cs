@@ -136,6 +136,53 @@ public sealed class DriverSchemaTests : IDisposable
     public void The_in_memory_sensor_reads_exactly_the_settings_the_catalog_describes() =>
         InMemoryDriverReadsWhatIsDescribed(new AnalogSensorFactory());
 
+    [Fact]
+    public void The_in_memory_digital_sensor_reads_exactly_the_settings_the_catalog_describes() =>
+        InMemoryDriverReadsWhatIsDescribed(new DigitalSensorFactory());
+
+    /// <summary>A kernel that hands out line descriptors and answers a value read — enough for the chardev input.</summary>
+    private sealed class LineKernel : ILinuxIo
+    {
+        private int _next = 30;
+        private readonly HashSet<int> _lines = [];
+        public int Open(string path, int flags) => _next++;
+        public int Ioctl(int fd, uint request, byte[] buffer)
+        {
+            if (request == GpioChardevInput.GetLineIoctl)
+            {
+                var lineFd = _next++;
+                _lines.Add(lineFd);
+                GpioChardevOutput.WriteRequestedFd(buffer, lineFd);
+                return 0;
+            }
+            if (request == GpioChardevInput.GetValuesIoctl && _lines.Contains(fd))
+            {
+                GpioChardevInput.WriteSampledLevel(buffer, true);
+                return 0;
+            }
+            return -1;
+        }
+        public int Ioctl(int fd, uint request, ulong argument) => -1;
+        public nint Write(int fd, byte[] buffer, int count) => count;
+        public nint Read(int fd, byte[] buffer, int count) => 0;
+        public int Close(int fd) => 0;
+        public int LastErrno() => 25;
+    }
+
+    [Fact]
+    public void The_hardware_digital_sensor_reads_exactly_the_settings_the_catalog_describes()
+    {
+        var factory = new GpioChardevSensorFactory(io: new LineKernel());
+        var schema = factory.Schema;
+        var settings = new RecordingSettings(FullSettings(schema, "sense.valve_closed"));
+
+        var result = factory.Create().Configure(settings);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+        Assert.True(schema.SettingNames().ToHashSet().SetEquals(settings.Asked),
+            $"described: {string.Join(",", schema.SettingNames())} / read: {string.Join(",", settings.Asked)}");
+    }
+
     private static void InMemoryDriverReadsWhatIsDescribed(IDriverFactory factory)
     {
         var schema = factory.Schema;
@@ -191,6 +238,7 @@ public sealed class DriverSchemaTests : IDisposable
         {
             (new SysfsDigitalActuatorFactory(_sysfs), "act.valve"),
             (new Ads1115AnalogSensorFactory(busFactory: (_, _) => new IdleChip()), "sense.level"),
+            (new GpioChardevSensorFactory(io: new LineKernel()), "sense.valve_closed"),
         };
         foreach (var (factory, capability) in cases)
         {

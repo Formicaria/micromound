@@ -12,6 +12,94 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.27 — M5: the acceptance bench, in software — the third primitive, the firmware as a process, and eighteen criteria that run
+
+The largest slice in the line so far, and one phase rather than three: **make the ROADMAP's
+acceptance sequence executable before the bench day, against real code all the way down.** Three
+parts, in the order they had to be built.
+
+**The wire changed, additively:** a mission step gains `settle_s` (default `0`). `canonical-bodies.txt`
+and `canonical-envelopes.txt` are regenerated; the mission envelope's digest changes with it. The C
+mirror models no mission steps, so nothing in `firmware/micromound-c` moves. **Authority narrows in
+one place and widens in none** — see the two defects below.
+
+### Added
+
+- **A third generic primitive: `digital_sensor`** — a line you read a *fact* from. `IDigitalInput`
+  (`Read()` returns the PHYSICAL level and **throws** when the line cannot be sampled: "the switch is
+  open" and "I could not see the switch" are different facts, and a backing that returned `false` for
+  both would turn a dead input into a confident measurement), `GpioChardevInput` (Linux uapi v2:
+  `GET_LINE` as INPUT with a bias, `GET_VALUES` per sample; layout pinned against `linux/gpio.h` and a
+  fake kernel), `GpioBias` (`pull_up` default — the wiring of nearly every limit switch — `pull_down`,
+  `none`; a floating input is not a reading, it is noise that looks like one), `DigitalSensorDriver`
+  (reading `1` when the physical level matches the manifest's `active_high`, a failed read a **fault
+  with no reading**), `DigitalSensorFactory` / `GpioChardevSensorFactory`, `link` support, and the
+  `DriverSchemaCatalog` entry. **Why it is a primitive and not a convenience:** an actuator produces
+  no evidence of its own, so until a mound could read something *the actuation path did not produce*,
+  every actuation it performed was honestly `unverified` however well it worked.
+- **The same primitive on the board.** `micromound/link/ports/read_pin` and an `inputs` array in
+  `hello` (PROTOCOL.md §12): `mm_ports_add_input` (refusing a duplicate, a line already an output, or
+  a line that will not read at bring-up), the `read_pin` handler with `400`/`404`/`503` in the board's
+  own words, `mm_switch` in `mm_drivers` (the C `DigitalSensorDriver`), an eighth HAL function
+  `gpio_read`, and `LinkDigitalInput` / `LinkSettings.OpenInputLine` on the Pi (which refuses a
+  polarity the board's compiled table disagrees with, as the output side already did).
+  `port-exchange.txt` regenerated with the input scenarios; **2,567 C checks**.
+- **`firmware/micromound-c/tools/mm_board_sim`** (`make tools`): the real port server — `mm_ports`,
+  `mm_frame`, the same handlers, refusals, compiled `max_on_s` and link watchdog — as a host process
+  speaking §12 frames over stdin/stdout, with only the world below its HAL modelled (pins, inputs that
+  follow a pin after a travel delay, channels that rise while a pin is driven, injectable faults) and a
+  clock that only moves when it is told to. CI builds it under gcc and clang with the library's own
+  `-Wall -Wextra -Werror -pedantic`.
+- **`firmware/esp32`: `gpio_read` bound, and an optional switch input.** `hal_esp32.c` claims an
+  input line with a pull-up on first read (a dry contact to ground is the usual wiring; an output
+  pin is refused as an input), and `CONFIG_MM_SWITCH_GPIO` (`-1`, off by default) offers it as
+  `sense.valve_closed` on the port server. All three images still build under ESP-IDF v5.3.2:
+  1,026,704 B Wi-Fi, 296,560 B serial, 260,560 B port server (+128 B with a switch configured).
+- **`src/Micromound.Acceptance`** and **[`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)**: the eighteen
+  criteria of ROADMAP's "The target", numbered and executable, run against a real `MoundHost` on a real
+  `FileStateStore`, real drivers, real ants, a real signed wire — and, on the firmware leg, against
+  `mm_board_sim` over a real `LinkPortsClient`. **All eighteen are met on both legs.** Criterion 7 is a
+  reflection scan of the five core assemblies for appliance-named public types, because "configuration,
+  never a fork" is the property the whole design rests on. `scripts/validate.sh --full`,
+  `scripts/validate.ps1 -Full` and CI run it.
+- **`settle_s` on a mission step** (PROTOCOL.md §9): a bounded wait before a `sense` or `verify` step,
+  so the physical world can catch up with the step before it. Nothing physical is instantaneous, and a
+  `verify` that read its switch in the same instant the `act` energised the coil could never confirm
+  anything. Bounded at **10 s** because the wait blocks the service tick — heartbeat, hold release,
+  watchdog kick — and must stay far inside the default 30 s heartbeat timeout; anything slower is two
+  missions. The wait moves the **mission's** clock, and the lease is re-checked on the far side. How the
+  wait passes is a seam (`HostOptions.Settle`), so a deterministic bench advances a modelled world
+  instead of sleeping.
+
+### Fixed — two defects the acceptance run found, both of which every unit test was green through
+
+- **The `verified` outcome was unreachable for any honest actuator.** `EvidenceGate` demoted any
+  record with no evidence refs to `unverified`, and nothing may raise an `unverified` verdict
+  afterwards — so a digital actuator, which produces no evidence by design, was `unverified` the
+  instant it acted and the confirming read could never lift it. Only a driver that certified its own
+  work could be believed, the exact opposite of the rule's purpose. **Fix:** `CapabilityRequest`
+  gains `confirmation_expected`; told by the mission that a `verify` step will confirm this action,
+  the kernel holds the verdict **open** rather than demoting it, and the Witness settles it. The
+  strict rule is untouched — the verdict is held open only for the walk that promised to close it,
+  only when the sole thing against the record was that nothing had looked yet, and the Mound Major
+  demotes anything still open when the walk ends, **before a single record is published**. A record
+  demoted for any other reason, or carrying evidence of its own, is never reopened.
+- **A lease only expired when somebody asked.** `QuiesceIfExpired` was called on the mission path and
+  at restore, and nowhere else, so an idle mound sat `chartered` with its outputs live for as long as
+  nobody happened to send it a mission. A lease is a promise about *time*, and the scenario it exists
+  for is precisely the one where nobody is left to ask. **Fix:** `MoundHost.QuiesceIfLeaseExpired`,
+  called on every `MoundService.Tick` before the sync beat — de-energizing the hardware and persisting
+  the quiesce, so a restart comes back quiesced rather than briefly re-authorized. **This narrows
+  authority**, and it is the direction that narrowing should go.
+
+### Changed
+
+- `MoundMajor` and `MoundComposition.Build` take an optional settle seam; `MoundHost.DefaultDriverFactories`
+  and `HardwareDriverFactories` register the digital sensor; `GpioSettings.ActiveHigh` extracted so the
+  actuator's safe level and the sensor's polarity read the same setting the same way.
+- `Micromound.Acceptance` added to `Micromound.sln`. `make -C firmware/micromound-c tools` added to
+  both validate scripts and the C-mirror CI job.
+
 ## v0.9.26 — M5: the board as the Pi's hands — port requests over the link, the Pi's kernel the only authority
 
 The last undesigned M5 item, chosen and built: the acceptance bench's "a generic driver sends a

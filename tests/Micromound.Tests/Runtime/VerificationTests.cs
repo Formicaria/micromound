@@ -185,9 +185,9 @@ public class VerificationTests
     private readonly KernelHarness _h = new();
     private static DateTimeOffset Now => KernelHarness.Now;
 
-    private MoundMajor Colony(bool withWitness = true)
+    private MoundMajor Colony(bool withWitness = true, Action<ActionRecord>? record = null)
     {
-        var major = new MoundMajor(_h.Kernel, _h.Evidence);
+        var major = new MoundMajor(_h.Kernel, _h.Evidence, recorded: record);
         major.Workers.Register(new ScoutAnt(_h.Kernel, _h.Evidence));
         major.Workers.Register(new ForagerAnt(_h.Kernel, _h.Evidence));
         if (withWitness) major.Workers.Register(new WitnessAnt(new EvidenceCorrelator(_h.Evidence)));
@@ -291,19 +291,72 @@ public class VerificationTests
     }
 
     /// <remarks>
+    /// The path that makes `verified` reachable for an honest actuator at all. A digital actuator
+    /// produces no evidence of its own — a command is not evidence — so the gate would demote every
+    /// actuation the instant it happened, and nothing may lift an `unverified` verdict afterwards.
+    /// Told by the mission that a confirming observation is coming, the kernel holds the verdict OPEN
+    /// instead of demoting it, and the Witness's judgment is what settles it. Without this a mound
+    /// wired to real hardware could never report a verified actuation, however well it worked.
+    /// </remarks>
+    [Fact]
+    public void An_actuator_that_produces_no_evidence_is_verified_by_the_confirming_observation()
+    {
+        _h.RelayExecutor.ProducesEvidence = false;   // an honest relay: it drove a line, it saw nothing
+        _h.SensorExecutor.Reading = 42;              // and something independent looked afterwards
+        var major = Colony();
+
+        var report = major.Execute(Watering(Now), Now);
+        var watered = Watered(major);
+
+        Assert.Equal(ActionOutcomes.Succeeded, watered.Outcome);
+        Assert.Equal(MissionStates.Completed, report.State);
+        Assert.Contains(watered.EvidenceRefs, r => r.StartsWith("ev-" + KernelHarness.Sensor));
+    }
+
+    /// <remarks>
+    /// The other half of the same rule, and the one that keeps it honest: the verdict is held open
+    /// only for the walk that promised to close it. A promise the mission never kept — the verify
+    /// step skipped, refused, or never reached — leaves the action exactly where it would have been
+    /// without the promise, and the demotion happens before a single record is published.
+    /// </remarks>
+    [Fact]
+    public void A_promised_confirmation_that_never_happens_demotes_the_action_before_it_is_published()
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.ProducesEvidence = false;   // the mound looks and sees nothing
+        var published = new List<string>();
+        var major = Colony(record: r => published.Add(r.Outcome));
+
+        var report = major.Execute(Watering(Now), Now);
+
+        Assert.Equal(ActionOutcomes.Unverified, Watered(major).Outcome);
+        Assert.Contains("no confirming observation", Watered(major).Detail);
+        Assert.Equal(MissionStates.Unverified, report.State);
+        Assert.DoesNotContain(ActionOutcomes.Succeeded, published);   // nothing left claiming success
+    }
+
+    /// <remarks>
     /// Not a rule this implementation applies — a property of the gate. It returns the record's
     /// own outcome unless that outcome asserts physical work, so nothing can talk an `unverified`
     /// action back into having succeeded. A later reading proves the world's state later; it does
-    /// not prove the command caused it.
+    /// not prove the command caused it. The confirmation-expected path above does not weaken this:
+    /// it only ever holds a verdict open, and only when the ONLY thing against the record was that
+    /// nothing had looked yet. A record demoted for any other reason is never reopened.
     /// </remarks>
     [Fact]
     public void A_confirmation_cannot_upgrade_an_action_that_was_already_unverified()
     {
-        _h.RelayExecutor.ProducesEvidence = false;   // the work happened, nothing watched it
-        _h.SensorExecutor.Reading = 42;              // and then a perfectly good reading arrives
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.Reading = 42;
         var major = Colony();
 
-        major.Execute(Watering(Now), Now);
+        // The action is dispatched with no confirmation promised — a mission that acts and never
+        // looks — so the gate demotes it there and then, and the reading that follows is just a
+        // reading. Nothing may lift it.
+        var acting = Watering(Now);
+        acting.Steps[1].Confirms = "";
+
+        major.Execute(acting, Now);
 
         Assert.Equal(ActionOutcomes.Unverified, Watered(major).Outcome);
     }

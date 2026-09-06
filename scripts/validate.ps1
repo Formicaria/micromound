@@ -127,9 +127,21 @@ if ($Full) {
         & make -C firmware/micromound-c clean | Out-Null
         & make -C firmware/micromound-c test
         if ($LASTEXITCODE -ne 0) { Write-Host "x C mirror tests failed" -ForegroundColor Red; exit 1 }
+
+        Write-Host "==> board simulator: make -C firmware/micromound-c tools" -ForegroundColor Cyan
+        & make -C firmware/micromound-c tools
+        if ($LASTEXITCODE -ne 0) { Write-Host "x board simulator build failed" -ForegroundColor Red; exit 1 }
     } else {
         Write-Host "==> C mirror skipped: no make + C compiler on PATH (CI runs it; see firmware/micromound-c/README.md)" -ForegroundColor Yellow
     }
+
+    # The acceptance sequence (docs/ACCEPTANCE.md): the ordered criteria docs/ROADMAP.md sets for a
+    # Generic Physical Mound, run against a real mound, and — when the C tools above are present —
+    # against the real port-server firmware in its own process. It exits non-zero on the first unmet
+    # criterion and its own report says which. Without a C toolchain it runs the in-memory leg alone.
+    Write-Host "==> acceptance sequence (docs/ACCEPTANCE.md)" -ForegroundColor Cyan
+    dotnet run --project src/Micromound.Acceptance -c Release --no-build
+    if ($LASTEXITCODE -ne 0) { Write-Host "x acceptance sequence unmet" -ForegroundColor Red; exit 1 }
 }
 
 Write-Host "==> ALL VALIDATIONS PASSED (v$ver)" -ForegroundColor Green

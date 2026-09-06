@@ -397,7 +397,8 @@ execution representation stays executable with no language model in the loop.
     { "step_id": "soil_after", "op": "sense", "capability": "sense.soil_moisture",
       "parameters": {}, "condition": null, "evidence_tag": "soil_after" },
     { "step_id": "confirm", "op": "verify", "capability": "sense.soil_moisture",
-      "confirms": "water", "parameters": {}, "condition": null, "evidence_tag": "" }
+      "confirms": "water", "parameters": {}, "condition": null, "evidence_tag": "",
+      "settle_s": 3 }
   ],
   "required_evidence": ["soil_before", "watering_action", "soil_after"],
   "safe_state": "all_actuators_off",
@@ -436,6 +437,22 @@ execution representation stays executable with no language model in the loop.
   everything wherever it appears.
 - A step whose condition did not hold is `skipped` and its `evidence_tag` was never due. A mission
   that correctly declines to act is `completed`, not `unverified`.
+- **`settle_s` (added in `v0.9.27`) waits before a step runs**, so the physical world can catch up
+  with the step before it. Zero — the default, and what an omitted field means — runs immediately.
+  Nothing physical is instantaneous: a `verify` that reads its limit switch in the same instant the
+  `act` energised the coil reads the world before the actuator moved, and honestly reports that
+  nothing confirmed the actuation. `settle_s` is how a mission states the travel time of the thing
+  it is confirming.
+  - Legal only on `sense` and `verify`. A wait before actuating is just a mission that starts later.
+  - Bounded at **10 seconds**. The wait happens on the mission's own thread inside the service tick,
+    delaying the heartbeat, the hold release and the watchdog kick for its whole duration; the bound
+    keeps any settle far inside the daemon's default 30 s heartbeat timeout, so a mission can never
+    talk a runtime into looking dead. Something slower than that is two missions, not one with a
+    pause in it.
+  - The wait moves the **mission's clock**, so every record made after it carries the time that
+    really passed, and the lease is re-checked on the far side: a settle that crosses the expiry
+    quiesces the mound and refuses the step rather than observing on authority that ran out.
+  - A step the mission skipped or suppressed is not waited out. There is nothing to see.
 
 ### Verification (normative)
 
@@ -450,6 +467,19 @@ distinguishes `verify` from `sense`, and it is what makes the second half of the
   synced record reaches the same verdict the mound did.
 - When the verify step produces no resolvable observation, the confirmed action degrades to
   `unverified` — "without it the outcome is `unverified` no matter what the driver returned".
+- **A promised confirmation holds the verdict open (`v0.9.27`).** An honest actuator produces no
+  evidence of its own — a command is not evidence — so the evidence gate would demote every
+  actuation to `unverified` the instant it happened, and nothing may raise it afterwards. Told by
+  the mission that a `verify` step will confirm this action, the mound holds the verdict OPEN
+  rather than demoting it, and the confirming observation is what settles it. Without this the
+  `verified` path was unreachable for any real relay: only a driver that certified its own work
+  could ever be believed, which is the opposite of what the rule is for.
+  - The verdict is held open only for **the walk that promised to close it**, and only when the
+    single thing against the record was that nothing had looked yet. A record demoted for any other
+    reason, or one carrying evidence of its own, is never reopened.
+  - A promise the mission does not keep — the verify step skipped, refused, or never reached —
+    demotes the action to `unverified` **before any record is published**. Nothing leaves a mound
+    claiming a success that is still waiting to be confirmed.
 - **Confirmation can only lower a verdict, never raise one.** A reading taken afterwards proves
   the state of the world afterwards; it does not prove the command caused it. An action already
   `unverified` stays `unverified`, and a `refused` or `stopped` action needs no proof at all —
@@ -562,13 +592,21 @@ merely obeyed would let a fault on the Pi become a fault in the world:
   creates authority; a Pi that stopped talking cannot be assumed to still mean what it last said.
   The Pi feeds the watchdog with `hello` at a third of the period.
 
-Three requests (bodies and answers are JSON objects; `status` as §12 above):
+Four requests (bodies and answers are JSON objects; `status` as §12 above):
 
 | Path | Body | Answer |
 |---|---|---|
-| `micromound/link/ports/hello` | `{}` | `200 {"profile","firmware","watchdog_s","tripped","pins":[{"pin","active_high","max_on_s","level"}],"channels":[…]}` — discovery, and the keepalive |
+| `micromound/link/ports/hello` | `{}` | `200 {"profile","firmware","watchdog_s","tripped","pins":[{"pin","active_high","max_on_s","level"}],"inputs":[{"pin","active_high","level"}],"channels":[…]}` — discovery, and the keepalive |
 | `micromound/link/ports/write` | `{"pin":5,"level":true}` | `200 {"pin":5,"level":true}` — `level` is LOGICAL (active or not); the board applies its compiled polarity. `404` unknown pin, `409` tripped, `503` the line would not drive |
 | `micromound/link/ports/read` | `{"channel":0}` | `200 {"channel":0,"volts":0.75}` — volts, before the Pi's calibration. `404` unknown channel, `503` sensor read failed — a fault, never a zero |
+| `micromound/link/ports/read_pin` | `{"pin":12}` | `200 {"pin":12,"level":true}` — a digital INPUT line, sampled now; `level` is LOGICAL, as on `write`. `400` without `pin`, `404` a pin that is not an input of this board (an OUTPUT pin is not an input), `503` the line could not be read — a fault, never a `false` |
+
+**Inputs, added in `v0.9.27`.** `read_pin` and the `inputs` array are what let a mound confirm an
+actuation with something other than its own command: a limit switch, an interlock contact, a float.
+A line is an input or an output, never both — `add_input` refuses a pin already claimed as an
+output, and vice versa — and a line that will not read at bring-up is refused there rather than
+reporting a level nobody measured. In `hello`, an input that cannot be read reports `false` and says
+so on its own `read_pin`; hello never invents a level.
 
 A malformed body is `400`; any other path `404`; every refusal carries `{"error":"…"}`. **A release
 that fails is a trip**: `tripped` goes true, nothing is driven active again until reboot, driving
@@ -577,6 +615,9 @@ pin the board does not offer, or a polarity the board's compiled table disagrees
 mismatched `active_high` would energize a load at what the Pi believes is the safe level.
 
 Both ends are pinned by `port-exchange.txt`, written by the C port server (`mm_ports`, every request
-and its exact answer) and read by the host's `LinkPortsClient` tests. On the Pi, a manifest device
+and its exact answer — including the input scenarios) and read by the host's `LinkPortsClient` tests.
+`firmware/micromound-c/tools/mm_board_sim` runs that same port server as a host process with only the
+world below its HAL simulated, which is what lets `docs/ACCEPTANCE.md` drive real firmware over real
+framing without a board on the desk. On the Pi, a manifest device
 with a `link` setting (the serial device) puts that line or channel on the board; nothing else in
 the manifest, the kernel, or the record changes.

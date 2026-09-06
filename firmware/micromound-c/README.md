@@ -12,6 +12,7 @@ is what a board will run.
 ```bash
 make            # build/libmicromound.a
 make test       # 2,500+ checks, including every golden file, byte for byte
+make tools      # build/mm_board_sim — this port server as a host process (see below)
 make CC=clang test
 ```
 
@@ -35,14 +36,40 @@ needed when the buffer was too small.
 | `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's reason lines character for character, views to re-encode | `canonical-signed.txt` |
 | `mm_kernel` | `mm_kernel.h` | **The capability kernel**: compiled capability/routine tables, `KernelAuthority` (charter, lease, stop, quiesce, device limits), the thirteen authorization checks in the host's order, hardware ∩ device ∩ charter, duty cycle and rate, clamping, execution through a function pointer, the evidence gate; the host's refusal reasons and detail text | `kernel-decisions.txt` |
 | `mm_device` | `mm_device.h` | **The device loop** (`RunnerAnt`): signed, chained uplink on a bounded queue, the beat and its acknowledgement-driven drain, downlink verified from the bytes as received and handled stops-first, acks, lease renewal on the acknowledged beat, quiesce, offline as a normal state | `device-session.txt` (written here, verified by the host) |
-| `mm_hal` | `mm_hal.h` | **What a board supplies**, and nothing else: clock, entropy, one HTTPS POST, protected key/value storage, a digital output, an analog input — seven function pointers | `test_board.c`'s fake of it |
+| `mm_hal` | `mm_hal.h` | **What a board supplies**, and nothing else: clock, entropy, one HTTPS POST, protected key/value storage, a digital output, an analog input, and — since `v0.9.27` — a digital input (`gpio_read`; a line that cannot be read is a fault, never a `0`): eight function pointers | `test_board.c`'s fake of it |
 | `mm_enroll` | `mm_enroll.h` | PROTOCOL.md §3 as `HttpEnrollmentClient` does it: the same request body, the same reading of the response, the same verdicts in the same words; persists the controller key before anything else | `enroll-exchange.txt` |
 | `mm_link` | `mm_link.h` | `HttpSyncTransport`: POST one envelope, split the JSON array that comes down into slices the device verifies; non-2xx is a failed exchange, no exchange is offline | `test_board.c` |
-| `mm_drivers` | `mm_drivers.h` | The two generic drivers as executors: `mm_relay` = `DigitalActuatorDriver` (safe at bring-up, held for the clamped `on_s`, released by `mm_relay_service` or any stop, **no evidence — a command is not evidence**); `mm_probe` = `AnalogSensorDriver` (volts × scale + offset, a `reading` evidence item; a failed read is a fault, never a zero) | `test_board.c` |
+| `mm_drivers` | `mm_drivers.h` | The three generic drivers as executors: `mm_relay` = `DigitalActuatorDriver` (safe at bring-up, held for the clamped `on_s`, released by `mm_relay_service` or any stop, **no evidence — a command is not evidence**); `mm_probe` = `AnalogSensorDriver` (volts × scale + offset, a `reading` evidence item; a failed read is a fault, never a zero); `mm_switch` = `DigitalSensorDriver` (`v0.9.27`: a digital input read through the manifest's polarity as a `reading` of 1 or 0 — the independent observation that lets an actuation be confirmed at all; a failed read is a fault with no reading) | `test_board.c` |
 | `mm_frame` | `mm_frame.h` | The Pi↔ESP32 link framing (PROTOCOL.md §12): `"MM" ver type seq len payload crc32`, request/response payloads, an incremental decoder that resynchronises and counts what it drops | `link-frames.txt` |
 | `mm_serial` | `mm_serial.h` | The HAL's `http_post_json` over a byte stream to a bridge — the same exchanges, framed; timeouts are offline; the bridge's clock on request | `test_frame.c` (a fake pipe, a scripted bridge) |
-| `mm_ports` | `mm_ports.h` | **The board as a port server** (PROTOCOL.md §12, port requests): hello/write/read over the link with the Pi's kernel as the only authority — and the two things the board keeps: each pin's compiled `max_on_s`, released by the board itself, and a link watchdog that drives everything safe when the Pi goes quiet; a failed release trips it | `port-exchange.txt` (written here, read by the host's `LinkPortsTests`) |
+| `mm_ports` | `mm_ports.h` | **The board as a port server** (PROTOCOL.md §12, port requests): hello/write/read/**read_pin** over the link with the Pi's kernel as the only authority — and the two things the board keeps: each pin's compiled `max_on_s`, released by the board itself, and a link watchdog that drives everything safe when the Pi goes quiet; a failed release trips it. A line is an input or an output, never both, and one that will not read at bring-up is not offered | `port-exchange.txt` (written here, read by the host's `LinkPortsTests`) |
 | `mm_app` | `mm_app.h` | **The firmware above the HAL**: identity from protected storage (created once from the board's RNG), enrollment with a one-time token, the service loop — holds released first, quiesce, the beat on the charter's cadence, the compiled schedule through the kernel — and the trip (a relay that will not release stops the mound) | `test_board.c` |
+
+## `tools/mm_board_sim` — this port server, as a host process
+
+`make tools` builds `build/mm_board_sim`: the real `mm_ports` and `mm_frame` above — the same
+handlers, the same refusals, the same compiled `max_on_s` and link watchdog — speaking §12 frames
+over stdin/stdout, with only the world **below** its HAL modelled. It is not a re-implementation of
+the board; it is the board, with a fake multimeter attached.
+
+```bash
+make tools
+build/mm_board_sim --profile bench --watchdog 60 \
+  --pin 5:high:30 --input 12:low:follows=5:delay=2 --channel 0:0.20:rises=5@0.05
+```
+
+- `--pin PIN[:low][:MAX_ON_S]` an output line and the board's own bound for it
+- `--input PIN[:low][:follows=PIN][:delay=S]` an input line, optionally a switch that closes S
+  seconds after an output is driven — an actuator's travel time
+- `--channel CH[:VOLTS][:rises=PIN@RATE]` an ADC channel, optionally rising while a pin is driven
+
+Three paths the simulator answers itself, before the board ever sees them (a real board answers
+them `404`, which is the correct answer): `micromound/link/sim/advance` `{"seconds":N}` moves the
+clock one simulated second at a time, running the physics and `mm_ports_service` each second;
+`…/sim/world` returns what a multimeter and a stopwatch would say; `…/sim/fault` injects a line that
+will not drive, one that will not read, or a dead ADC. **The clock only moves when it is told to**,
+which is what makes [`docs/ACCEPTANCE.md`](../../docs/ACCEPTANCE.md) deterministic: no sleeps, no
+wall clock, no flakes. CI builds it under gcc and clang with the same `-Werror` the library gets.
 
 Deliberately absent, per PROTOCOL.md §8: `mission`, `mission_report`, `evidence_bundle`, `config`.
 A constrained controller runs compiled routines selected by charter; it never plans. Its readings
@@ -216,13 +243,14 @@ contracts — the controller accepts what the C device sends.
 
 ## The board layer
 
-Above `mm_device` sits everything a board runs, written against seven function pointers:
+Above `mm_device` sits everything a board runs, written against eight function pointers:
 
 ```c
 #include "mm_app.h"
 
 static mm_relay relay;  static mm_probe probe;  static mm_app app;      /* static; nothing allocates */
-mm_hal hal = { &board, board_now, board_random, board_https_post, board_kv_get, board_kv_set, board_gpio_write, board_adc_read };
+mm_hal hal = { &board, board_now, board_random, board_https_post, board_kv_get, board_kv_set,
+               board_gpio_write, board_adc_read, board_gpio_read };
 
 mm_relay_init(&relay, &hal, "act.relay_1", 5, 1);                     /* the line comes up at its SAFE level */
 mm_probe_init(&probe, &hal, "sense.temp", 0, 100.0, -50.0, "C");     /* volts × 100 − 50 → degrees */

@@ -10,6 +10,10 @@
  * mm_probe  = AnalogSensorDriver: one ADC channel, volts × scale + offset, reported as a `reading`
  *             evidence item ({"value":…,"unit":…,"capability":…}, PROTOCOL.md §6) captured at the
  *             read. A failed read is a fault with no reading — never a zero.
+ * mm_switch = DigitalSensorDriver: one input line — a limit switch, an interlock, a float — read as
+ *             1 (asserted) or 0, reported as the same `reading` item. This is what independent
+ *             confirmation of an actuation is made of: a command is not evidence, a switch is.
+ *             A line that will not read is a fault with no reading — never a 0.
  */
 #ifndef MM_DRIVERS_H
 #define MM_DRIVERS_H
@@ -54,6 +58,18 @@ typedef struct mm_probe {
 } mm_probe;
 
 void mm_probe_init(mm_probe *p, const mm_hal *hal, const char *capability, int channel, double scale, double offset, const char *unit);
+
+typedef struct mm_switch {
+    const mm_hal *hal;
+    const char *capability;
+    int pin;
+    int active_high;                    /* the physical level that means asserted */
+    const char *unit;
+    int n;                              /* reads taken, for evidence ids */
+    mm_executor executor;
+} mm_switch;
+
+void mm_switch_init(mm_switch *s, const mm_hal *hal, const char *capability, int pin, int active_high, const char *unit);
 
 /* The `reading` payload as EvidenceReadings.Create writes it. Returns the length or 0. */
 size_t mm_reading_payload(double value, const char *unit, const char *capability, char *out, size_t cap);

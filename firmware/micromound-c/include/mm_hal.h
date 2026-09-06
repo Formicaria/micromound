@@ -46,6 +46,9 @@ typedef struct mm_hal {
     /* A digital output line. level 1 = high. */
     int (*gpio_write)(void *ctx, int pin, int level);
 
+    /* A digital input line, sampled now: *level 1 = high. A line that cannot be read is a fault, never a 0. */
+    int (*gpio_read)(void *ctx, int pin, int *level);
+
     /* One analog sample, in volts. */
     int (*adc_read)(void *ctx, int channel, double *volts);
 } mm_hal;

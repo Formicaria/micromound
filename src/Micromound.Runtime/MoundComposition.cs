@@ -79,7 +79,8 @@ public static class MoundComposition
         int evidenceCapacity = 2000,
         int? evidenceHardCeiling = null,
         IEvidenceStore? evidenceStore = null,
-        double heartbeatEvidenceIntervalSeconds = 60)
+        double heartbeatEvidenceIntervalSeconds = 60,
+        Func<TimeSpan, DateTimeOffset, DateTimeOffset>? settle = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(moundId);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -119,7 +120,8 @@ public static class MoundComposition
         RunnerAnt runner = null!;
 
         var major = new MoundMajor(kernel, evidenceStore,
-            recorded: record => runner.Publish(EnvelopeKinds.ActionRecord, record, ParseOrNow(record.EndedAt)));
+            recorded: record => runner.Publish(EnvelopeKinds.ActionRecord, record, ParseOrNow(record.EndedAt)),
+            settle: settle);
 
         runner = new RunnerAnt(major, queue, transport, signer, verifier, evidenceStore);
 

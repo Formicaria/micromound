@@ -48,6 +48,13 @@ public sealed class HostOptions
     /// between — the dominant write on a durable store. 0 = every poll (the old behaviour). Default 60 s.
     /// </summary>
     public double HeartbeatEvidenceIntervalSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// How a mission step's <c>settle_s</c> wait passes (PROTOCOL.md §9). Null — the default — really
+    /// sleeps, which is what a device does while a valve travels. A deterministic bench supplies its
+    /// own so a modelled world advances by the same span with no wall clock in the loop.
+    /// </summary>
+    public Func<TimeSpan, DateTimeOffset, DateTimeOffset>? Settle { get; init; }
 }
 
 /// <summary>
@@ -111,6 +118,27 @@ public sealed class MoundHost
 
     /// <summary>Refresh watchdog health (heartbeat staleness) between missions. Returns the health evidence.</summary>
     public IReadOnlyList<EvidenceItem> PollHealth(DateTimeOffset now) => Guard.Poll(now);
+
+    /// <summary>
+    /// The lease clock, checked against the device's own time. When the lease has run out the mound
+    /// quiesces, its hardware is driven to the declared safe state, and the change is persisted — so a
+    /// restart comes back quiesced rather than briefly re-authorized.
+    ///
+    /// <para><b>Why this is on the tick and not only in the mission path.</b> The lease is a promise
+    /// about TIME, not about work: authority granted for an hour is gone at the end of that hour
+    /// whether or not anyone asks the mound to do something. Checking it only when a mission arrives
+    /// meant an idle mound sat "chartered" with its outputs live for as long as nobody happened to ask
+    /// it anything — and the whole point of a lease is that a mound whose controller has gone silent
+    /// goes safe by itself, unattended. This is the unattended half.</para>
+    ///
+    /// <para>Returns true only on the transition, so a caller can log the moment once.</para>
+    /// </summary>
+    public bool QuiesceIfLeaseExpired(DateTimeOffset now)
+    {
+        var crossed = WatchingForSafeState(() => Authority.QuiesceIfExpired(now));
+        if (crossed) Cache.SaveAuthority(Authority);
+        return crossed;
+    }
 
     /// <summary>
     /// Drive every driver to its declared safe state — the physical half of "enter safe state". The
@@ -267,7 +295,8 @@ public sealed class MoundHost
                 options.Transport ?? new OfflineTransport(),
                 options.GuardHeartbeatTimeoutSeconds,
                 evidenceStore: evidence,
-                heartbeatEvidenceIntervalSeconds: options.HeartbeatEvidenceIntervalSeconds);
+                heartbeatEvidenceIntervalSeconds: options.HeartbeatEvidenceIntervalSeconds,
+                settle: options.Settle);
 
             // Wire each evidence-source driver's readings into the shared sink.
             foreach (var driver in resolution.Drivers)
@@ -299,6 +328,7 @@ public sealed class MoundHost
         var factories = new DriverFactoryRegistry();
         factories.Register(new AnalogSensorFactory());
         factories.Register(new DigitalActuatorFactory());
+        factories.Register(new DigitalSensorFactory());
         return factories;
     }
 
@@ -310,15 +340,20 @@ public sealed class MoundHost
     /// a slice that names hardware this host does not have refuses bring-up rather than pretending.
     /// </summary>
     /// <param name="gpioBacking">One of <see cref="GpioBackings"/>; the daemon's <c>--gpio</c>.</param>
-    public static DriverFactoryRegistry HardwareDriverFactories(string gpioBacking = GpioBackings.Chardev)
+    /// <param name="links">How a <c>link</c> setting reaches a board running the port server
+    /// (PROTOCOL.md §12). Null uses the process-wide pool, which opens the named serial device; the
+    /// acceptance harness injects its own so a whole mound can be composed against the firmware
+    /// running as a host process.</param>
+    public static DriverFactoryRegistry HardwareDriverFactories(string gpioBacking = GpioBackings.Chardev, ILinkPortsProvider? links = null)
     {
         if (!GpioBackings.IsKnown(gpioBacking))
             throw new ArgumentException($"'{gpioBacking}' is not a GPIO backing; use {GpioBackings.Chardev} or {GpioBackings.Sysfs}", nameof(gpioBacking));
         var factories = new DriverFactoryRegistry();
-        factories.Register(new Ads1115AnalogSensorFactory());
+        factories.Register(new Ads1115AnalogSensorFactory(links: links));
         factories.Register(gpioBacking == GpioBackings.Sysfs
-            ? new SysfsDigitalActuatorFactory()
-            : new GpioChardevActuatorFactory());
+            ? new SysfsDigitalActuatorFactory(links: links)
+            : new GpioChardevActuatorFactory(links: links));
+        factories.Register(new GpioChardevSensorFactory(links: links));
         return factories;
     }
 

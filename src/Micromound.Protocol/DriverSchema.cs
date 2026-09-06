@@ -200,8 +200,43 @@ public static class DriverSchemaCatalog
         ]
     };
 
+    /// <summary>
+    /// The third generic primitive: one digital input line as a <c>sense.</c> capability — a limit
+    /// switch, an interlock, a float. What independent confirmation of an actuation is made of.
+    /// </summary>
+    public static readonly DriverTypeSchema DigitalSensor = new()
+    {
+        DriverType = "digital_sensor",
+        Label = "Digital sensor (switch, contact, float, interlock)",
+        Summary = "Reads one input line as asserted or not and records it as a reading of 1 or 0. Wire the thing that OBSERVES a " +
+                  "movement here — a limit switch on a valve, a float in a tank — not the thing that causes it: a command is not " +
+                  "evidence, and this is what lets a mission confirm that what it asked for actually happened.",
+        Role = DriverRoles.Sensor,
+        CapabilityPrefix = "sense.",
+        HardwareBacking = "One GPIO input line on the Linux character device (/dev/gpiochipN, uapi v2), with a bias, or an input line of a board over the link.",
+        Settings =
+        [
+            new() { Name = "capability", Label = "What this input is", Kind = SettingKinds.Capability, Required = true, Choices = ["sense."],
+                    Help = "The sense. capability name a mission reads, e.g. sense.valve_closed." },
+            new() { Name = "pin", Label = "GPIO pin", Kind = SettingKinds.Integer, Required = true, HardwareOnly = true, Min = 0,
+                    Help = "The GPIO number (BCM numbering, not the header position) the contact is on. Ignored without --hardware." },
+            new() { Name = "chip", Label = "GPIO chip", Kind = SettingKinds.Integer, Default = "0", HardwareOnly = true, Advanced = true, Min = 0,
+                    Help = "/dev/gpiochip<chip>. The Raspberry Pi header is chip 0 (chip 4 on a Pi 5 with an older 6.1/6.6 kernel)." },
+            new() { Name = "bias", Label = "Bias", Kind = SettingKinds.Choice, Default = "pull_up", HardwareOnly = true, Advanced = true,
+                    Choices = ["pull_up", "pull_down", "none"],
+                    Help = "What holds the line when nothing drives it. A dry contact to ground wants pull_up (nearly every limit switch); "
+                         + "a contact to the supply wants pull_down; a line already biased on the board wants none. A floating input is noise that looks like a reading." },
+            new() { Name = "link", Label = "Board link", Kind = SettingKinds.Text, Default = "", HardwareOnly = true, Advanced = true,
+                    Help = "Set to a serial device (/dev/ttyUSB0) to read this line from a board running the port server over the link (PROTOCOL.md §12) instead of a local GPIO; 'pin' is then the board's input pin and 'chip'/'bias' are the board's." },
+            new() { Name = "active_high", Label = "Asserted when high", Kind = SettingKinds.Boolean, Default = "true", Advanced = true,
+                    Help = "true if a HIGH level means the switch is closed / the condition holds. A dry contact to ground with a pull-up is false." },
+            new() { Name = "unit", Label = "Unit", Kind = SettingKinds.Text, Default = "",
+                    Help = "Recorded on every reading. Informational; the value itself is always 1 or 0." },
+        ]
+    };
+
     /// <summary>Every driver type this build ships, in the order a form should list them.</summary>
-    public static readonly IReadOnlyList<DriverTypeSchema> Shipped = [DigitalActuator, AnalogSensor];
+    public static readonly IReadOnlyList<DriverTypeSchema> Shipped = [DigitalActuator, AnalogSensor, DigitalSensor];
 
     /// <summary>The schema for a driver type, or null if this build does not ship it.</summary>
     public static DriverTypeSchema? Find(string driverType) =>

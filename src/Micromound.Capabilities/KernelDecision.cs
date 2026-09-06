@@ -26,6 +26,21 @@ public sealed class CapabilityRequest
     /// charter ceiling, so a Scout Ant cannot actuate even under a charter that would allow it.
     /// </summary>
     public ActionClass? WorkerCeiling { get; init; }
+
+    /// <summary>
+    /// The submitter will observe this action's effect with a SEPARATE sensor before the record
+    /// leaves the mound — a mission with a <c>verify</c> step whose <c>confirms</c> names this step.
+    ///
+    /// <para>It changes exactly one thing: an outcome the evidence gate would demote to
+    /// <c>unverified</c> for want of any referenced evidence is held at its decided value, with
+    /// "awaiting an independent observation" on the record, so the Witness still has something to
+    /// confirm. Without it the verified path is unreachable for any honest actuator: a digital
+    /// actuator produces no evidence (a command is not evidence), the gate demotes it the instant
+    /// it runs, and <c>unverified</c> is terminal — nothing may lift it. Every other demotion still
+    /// stands, the record is published only after the walk, and a mission that never made the
+    /// observation demotes the record itself. Nothing claims more than something saw.</para>
+    /// </summary>
+    public bool ConfirmationExpected { get; init; }
 }
 
 /// <summary>

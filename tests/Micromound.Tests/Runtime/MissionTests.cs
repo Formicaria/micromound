@@ -403,6 +403,70 @@ public class MissionTests
         Assert.Contains(_major.CharterNotes, n => n.Contains("try to widen the hardware bound"));
     }
 
+    // -------------------------------------------------------------------------------------
+    // settle_s — the bounded wait for the physical world
+    // -------------------------------------------------------------------------------------
+
+    /// <remarks>
+    /// The wait moves the MISSION's clock, not just the calling thread's, so everything after it —
+    /// the kernel's limit arithmetic, the record timestamps, the lease check — sees the time that
+    /// really passed. A settle the runtime slept through but did not account for would put every
+    /// later record's timestamp in the past.
+    /// </remarks>
+    [Fact]
+    public void A_settle_advances_the_missions_own_clock()
+    {
+        var waits = new List<double>();
+        var major = new MoundMajor(_h.Kernel, _h.Evidence,
+            settle: (span, at) => { waits.Add(span.TotalSeconds); return at + span; });
+        major.AcceptCharter(KernelHarness.NewCharter(Now), Now);
+
+        var report = major.Execute(Watering(Now, m => m.Steps[2].SettleSeconds = 4), Now);
+
+        Assert.Equal([4], waits);
+        Assert.Equal(MissionStates.Completed, report.State);
+
+        // The reading after the settle was taken four seconds later than the mission started.
+        var after = major.Actions.Last(a => a.Capability == KernelHarness.Sensor);
+        Assert.True(ProtocolTime.TryParse(after.StartedAt, out var taken));
+        Assert.True(taken >= Now.AddSeconds(4), $"the post-settle reading is stamped {after.StartedAt}");
+    }
+
+    /// <remarks>
+    /// A settle is time passing, and time is what a lease is made of. Waiting across the expiry must
+    /// not be the one gap where an observation slips through on authority that ran out mid-wait.
+    /// </remarks>
+    [Fact]
+    public void A_settle_that_crosses_the_lease_expiry_quiesces_the_mound_mid_mission()
+    {
+        var major = new MoundMajor(_h.Kernel, _h.Evidence, settle: (span, at) => at + span);
+        major.AcceptCharter(KernelHarness.NewCharter(Now, c => c.LeaseTtlSeconds = 2), Now);
+
+        var report = major.Execute(Watering(Now, m => m.Steps[2].SettleSeconds = 5), Now);
+
+        Assert.Equal(MissionStepStates.Refused, Step(report, "soil_after").State);
+        Assert.Contains("lease expired during", Step(report, "soil_after").Detail);
+        Assert.Equal(MoundStates.Quiesced, _h.Authority.State);
+    }
+
+    /// <summary>Nothing to see: a step the mission skipped or suppressed is not waited out.</summary>
+    [Fact]
+    public void A_skipped_step_does_not_wait()
+    {
+        var waits = 0;
+        var major = new MoundMajor(_h.Kernel, _h.Evidence, settle: (span, at) => { waits++; return at + span; });
+        major.AcceptCharter(KernelHarness.NewCharter(Now), Now);
+        _h.SensorExecutor.Reading = 80;    // wet soil: the conditional step does not run
+
+        major.Execute(Watering(Now, m =>
+        {
+            m.Steps[2].SettleSeconds = 5;
+            m.Steps[2].Condition = new StepCondition { SourceStep = "soil_before", Op = ConditionOps.LessThan, Value = 20 };
+        }), Now);
+
+        Assert.Equal(0, waits);
+    }
+
     [Fact]
     public void An_invalid_manifest_leaves_the_previous_device_limits_in_force()
     {

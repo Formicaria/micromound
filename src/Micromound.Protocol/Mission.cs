@@ -103,6 +103,41 @@ public sealed class MissionStep
     /// deterministic packets §9 says they are: one source, named, no matching rules to learn.
     /// </summary>
     [JsonPropertyName("confirms")] public string Confirms { get; set; } = "";
+
+    /// <summary>
+    /// Seconds to wait BEFORE this step runs, so the physical world can catch up with the step before
+    /// it. Zero — the default — means run immediately.
+    ///
+    /// <para><b>Why the protocol needs this at all.</b> Nothing physical is instantaneous. A solenoid
+    /// takes tens of milliseconds; a motorised ball valve takes seconds. A <c>verify</c> step that
+    /// reads its limit switch in the same instant the <c>act</c> step energised the coil reads the
+    /// world before the actuator moved, and reports honestly that nothing confirmed the actuation — so
+    /// a mound with perfectly good hardware could never reach <c>verified</c> at all. The settle
+    /// window is the missing half of "act, then confirm": it is how a mission states the travel time
+    /// of the thing it is confirming.</para>
+    ///
+    /// <para><b>Why it is bounded at <see cref="MissionLimits.MaxSettleSeconds"/>.</b> The wait happens
+    /// on the mission's own thread, inside the service tick, so it delays the heartbeat, the hold
+    /// release and the watchdog kick for exactly as long as it lasts. The bound keeps any settle far
+    /// inside the daemon's default 30 s heartbeat timeout, so a mission can never talk the runtime
+    /// into looking dead. Something that takes longer than that to move is not one mission with a long
+    /// pause in the middle — it is two missions, and the controller schedules the second.</para>
+    ///
+    /// <para>Only <c>sense</c> and <c>verify</c> steps may carry one: a wait before acting is just a
+    /// mission that starts later. A settle on a step whose condition did not hold, or that a halt
+    /// suppressed, is not waited out — there is nothing to see.</para>
+    /// </summary>
+    [JsonPropertyName("settle_s")] public double SettleSeconds { get; set; }
+}
+
+/// <summary>Numeric bounds a mission is validated against — one place, so validator and docs agree.</summary>
+public static class MissionLimits
+{
+    /// <summary>
+    /// The longest <see cref="MissionStep.SettleSeconds"/> a step may ask for. Well inside the daemon's
+    /// default 30 s guard heartbeat timeout (<c>--heartbeat-s</c>), because the wait blocks the tick.
+    /// </summary>
+    public const double MaxSettleSeconds = 10;
 }
 
 /// <summary>

@@ -81,6 +81,14 @@ public sealed class MoundService(MoundHost host)
     {
         host.Beat(now);
         RespondToWatchdog(now);        // observe any watchdog/interlock trip first, via the Guard lock barrier
+
+        // The lease, before the sync beat. A lease is a promise about time, so it runs out on an idle
+        // mound exactly as it does on a busy one — and the mound has to notice by itself, because the
+        // scenario the lease exists for is the one where nobody is left to tell it. Checking it here
+        // (rather than only when a mission arrives) is what makes quiescing unattended; doing it
+        // BEFORE the sync means the beat that goes up already carries the quiesced state.
+        host.QuiesceIfLeaseExpired(now);
+
         if (SyncDue(now))
         {
             host.Sync(now);

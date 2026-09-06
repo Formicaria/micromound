@@ -3,8 +3,8 @@
 The ESP-IDF project that puts [`firmware/micromound-c`](../micromound-c/README.md) on a board. The
 software of the controller is finished and host-tested — the wire format, the reader and validators,
 the capability kernel, the device loop, and (since `v0.9.22`) the board layer: enrollment, the sync
-transport, the relay and probe drivers as kernel executors, and the service loop, all written over a
-seven-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal.h)) and proven on
+transport, the relay, probe and switch drivers as kernel executors, and the service loop, all written over an
+eight-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal.h)) and proven on
 the host against a fake of it (`tests/test_board.c`). What this directory adds is the one file that
 knows it is on an ESP32 — `main/hal_esp32.c` — plus the board description and `app_main`.
 
@@ -16,14 +16,15 @@ every push with the same IDF version.
 
 | Configuration | Image | DRAM at link | What the board needs |
 |---|---|---|---|
-| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,026,224 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
-| **Serial link** (`sdkconfig.defaults.serial`) | 295,940 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
-| **Port server** (`sdkconfig.defaults.ports`) | 259,360 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
+| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,026,704 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
+| **Serial link** (`sdkconfig.defaults.serial`) | 296,560 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
+| **Port server** (`sdkconfig.defaults.ports`) | 260,560 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
 
 In the first two the board is a mound: its own identity, its own enrollment, its own kernel
 (`libmicromound_c.a` is 38–39 KB of flash code; the static `mm_app` 40 KB of DRAM, plus 11 KB for
 the serial link's frame decoder). In the third it is the Pi's hands: no identity, no kernel — 12 KB
-of the library (`mm_ports`, `mm_frame`, the JSON writer/reader) and 9.5 KB of DRAM.
+of the library (`mm_ports`, `mm_frame`, the JSON writer/reader) and 9.5 KB of DRAM. Configuring a
+limit switch (`CONFIG_MM_SWITCH_GPIO`, off by default) costs 128 B.
 
 ## What a board supplies
 
@@ -59,7 +60,9 @@ board — so the console log is off in that configuration (it would corrupt the 
 
 **The port server** (`CONFIG_MM_LINK_PORTS`, PROTOCOL.md §12 "port requests") is the other
 arrangement: the Pi's own kernel is the only authority, and this board answers its bounded requests
-— `hello`, `write` a pin's logical level, `read` a channel in volts — over the same UART. What the
+— `hello`, `write` a pin's logical level, `read` a channel in volts, `read_pin` a digital input's
+logical level (`v0.9.27`; a line that cannot be sampled answers `503`, never a `false`) — over the
+same UART. A line is an input or an output, never both. What the
 board keeps for itself is exactly what a dumb expander would not: the CAPS table's `max_on_s` for
 the relay pin, enforced here (the pin is released by the board when the bound passes, whatever the
 Pi says), and a watchdog (`CONFIG_MM_PORTS_WATCHDOG_S`, 5 s) that drives every pin safe when the Pi
@@ -135,6 +138,10 @@ firmware/esp32/
 
 - **The bench run.** Flash one of the three images: enroll and beat (the mound images), or say hello
   to the Pi's `--check-hardware` and take a bounded request (the port server). The first slice of
-  real hardware, and the one that turns this README's "compiles" into "runs on".
+  real hardware, and the one that turns this README's "compiles" into "runs on". Everything about
+  that run except the wiring is already proven: since `v0.9.27` the port server also builds as a host
+  process (`firmware/micromound-c/tools/mm_board_sim`), and [`docs/ACCEPTANCE.md`](../../docs/ACCEPTANCE.md)
+  drives a whole real mound against it over real §12 framing, meeting all eighteen acceptance
+  criteria. The bench day is the same sequence with a soldering iron.
 - **Layer 0.** E-stops and interlocks wired outside the MCU's control, reported as observed facts
   only (SAFETY.md). Nothing here pretends to be one.

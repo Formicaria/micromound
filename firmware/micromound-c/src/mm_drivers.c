@@ -144,3 +144,50 @@ void mm_probe_init(mm_probe *p, const mm_hal *hal, const char *capability, int c
     p->executor.ctx = p;
     p->executor.available = 1;
 }
+
+/* ---- switch -------------------------------------------------------------------------------- */
+
+static int switch_run(void *ctx, const mm_execution *x, mm_outcome *out)
+{
+    mm_switch *s = (mm_switch *)ctx;
+    int level = 0;
+    mm_evidence_produced *item;
+
+    if (s->hal->gpio_read(s->hal->ctx, s->pin, &level) != 0) {
+        out->succeeded = 0;
+        strcpy(out->detail, "input read failed");   /* a fault with NO reading, never a 0 */
+        return 0;
+    }
+
+    s->n++;
+    item = &out->evidence[0];
+    snprintf(item->id, sizeof item->id, "e-%s-%d", s->capability, s->n);
+    mm_time_format(x->started_at, item->captured_at, sizeof item->captured_at);
+    strcpy(item->type, "reading");
+    snprintf(item->source, sizeof item->source, "%s", s->capability);
+    if (mm_reading_payload((level != 0) == (s->active_high != 0) ? 1 : 0, s->unit, s->capability,
+                           item->payload_json, sizeof item->payload_json) == 0) {
+        out->succeeded = 0;
+        strcpy(out->detail, "switch reading does not fit its payload");
+        return 0;
+    }
+    out->n_evidence = 1;
+    out->succeeded = 1;
+    out->has_ended_at = 1;
+    out->ended_at = x->started_at;
+    return 0;
+}
+
+void mm_switch_init(mm_switch *s, const mm_hal *hal, const char *capability, int pin, int active_high, const char *unit)
+{
+    memset(s, 0, sizeof *s);
+    s->hal = hal;
+    s->capability = capability;
+    s->pin = pin;
+    s->active_high = active_high ? 1 : 0;
+    s->unit = unit ? unit : "";
+    s->executor.capability_id = capability;
+    s->executor.run = switch_run;
+    s->executor.ctx = s;
+    s->executor.available = 1;
+}

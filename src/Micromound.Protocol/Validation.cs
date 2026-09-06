@@ -158,6 +158,21 @@ public static class MissionValidator
                                $"(op '{mission.Steps[confirmedIndex].Op}')");
             }
 
+            // A settle window is a bounded wait for the physical world, not a scheduling primitive.
+            // Bounded because it blocks the service tick (heartbeat, hold release, watchdog kick) for
+            // its whole duration; observation-only because a wait before actuating buys nothing and
+            // holds the actuation window open for no reason a later reading could check.
+            if (step.SettleSeconds != 0)
+            {
+                if (double.IsNaN(step.SettleSeconds) || double.IsInfinity(step.SettleSeconds) || step.SettleSeconds < 0)
+                    errors.Add($"{where}: settle_s must be a finite, non-negative number of seconds");
+                else if (step.SettleSeconds > MissionLimits.MaxSettleSeconds)
+                    errors.Add($"{where}: settle_s {step.SettleSeconds:0.###}s exceeds the {MissionLimits.MaxSettleSeconds:0.###}s bound; " +
+                               "a longer wait blocks the service tick past its heartbeat, so it belongs in a second mission");
+                else if (step.Op is not (MissionStepOps.Sense or MissionStepOps.Verify))
+                    errors.Add($"{where}: only a 'sense' or 'verify' step may settle first; this one is '{step.Op}'");
+            }
+
             if (step.Condition is not { } condition) continue;
 
             if (!ConditionOps.All.Contains(condition.Op))

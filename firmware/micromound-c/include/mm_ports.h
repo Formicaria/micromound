@@ -15,9 +15,14 @@
  *              what it last said.
  *
  * Paths (request payloads are JSON objects; responses are JSON objects with an HTTP-style status):
- *   micromound/link/ports/hello  {}                         -> 200 {"profile","firmware","watchdog_s","tripped","pins":[{"pin","active_high","max_on_s","level"}],"channels":[n,…]}
- *   micromound/link/ports/write  {"pin":5,"level":true}     -> 200 {"pin":5,"level":true} | 404 unknown pin | 409 tripped | 503 the line would not drive
- *   micromound/link/ports/read   {"channel":0}              -> 200 {"channel":0,"volts":0.75}   | 404 unknown channel | 503 sensor read failed
+ *   micromound/link/ports/hello     {}                      -> 200 {"profile","firmware","watchdog_s","tripped","pins":[{"pin","active_high","max_on_s","level"}],"inputs":[{"pin","active_high","level"}],"channels":[n,…]}
+ *   micromound/link/ports/write     {"pin":5,"level":true}  -> 200 {"pin":5,"level":true} | 404 unknown pin | 409 tripped | 503 the line would not drive
+ *   micromound/link/ports/read      {"channel":0}           -> 200 {"channel":0,"volts":0.75}   | 404 unknown channel | 503 sensor read failed
+ *   micromound/link/ports/read_pin  {"pin":12}              -> 200 {"pin":12,"level":true}      | 404 unknown input | 503 the line could not be read
+ *
+ * `level` is always LOGICAL — asserted or not — on writes and on reads alike: the board owns the
+ * polarity of every line it offers, and the Pi's manifest must agree with it (a disagreement would
+ * energize a load, or read a closed switch as open, at what the Pi believes is the safe level).
  * Anything else -> 404. A malformed body -> 400. Every request feeds the watchdog.
  *
  * Fixture: tests/Micromound.Tests/Golden/files/port-exchange.txt is WRITTEN by test_ports.c (every
@@ -39,7 +44,9 @@ extern "C" {
 #define MM_PORTS_PATH_HELLO "micromound/link/ports/hello"
 #define MM_PORTS_PATH_WRITE "micromound/link/ports/write"
 #define MM_PORTS_PATH_READ "micromound/link/ports/read"
+#define MM_PORTS_PATH_READ_PIN "micromound/link/ports/read_pin"
 #define MM_PORTS_MAX_PINS 16
+#define MM_PORTS_MAX_INPUTS 16
 #define MM_PORTS_MAX_CHANNELS 8
 #define MM_PORTS_RESPONSE_CAP 1024
 
@@ -53,12 +60,21 @@ typedef struct mm_port_pin {
     unsigned writes, auto_releases;
 } mm_port_pin;
 
+/* An input line the board offers: a limit switch, an interlock, a level float. Never written. */
+typedef struct mm_port_input {
+    int pin;
+    int active_high;                       /* the physical level that means "asserted" */
+    unsigned reads;
+} mm_port_input;
+
 typedef struct mm_ports {
     const mm_hal *hal;
     const char *profile;
     const char *firmware;
     mm_port_pin pins[MM_PORTS_MAX_PINS];
     size_t n_pins;
+    mm_port_input inputs[MM_PORTS_MAX_INPUTS];
+    size_t n_inputs;
     int channels[MM_PORTS_MAX_CHANNELS];
     size_t n_channels;
     int64_t watchdog_s;                    /* 0 = no watchdog (not recommended) */
@@ -70,8 +86,10 @@ typedef struct mm_ports {
 
 void mm_ports_init(mm_ports *p, const mm_hal *hal, const char *profile, const char *firmware, int64_t watchdog_s);
 
-/* Adds a pin (driven to its safe level now) or a channel. Returns 0, or -1 (table full, duplicate, or the safe write failed). */
+/* Adds an output pin (driven to its safe level now), an input line, or a channel. Returns 0, or -1
+   (table full, duplicate, a line already offered the other way, or the safe write failed). */
 int mm_ports_add_pin(mm_ports *p, int pin, int active_high, double max_on_s);
+int mm_ports_add_input(mm_ports *p, int pin, int active_high);
 int mm_ports_add_channel(mm_ports *p, int channel);
 
 /*

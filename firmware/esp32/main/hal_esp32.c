@@ -45,6 +45,7 @@ typedef struct hal_ctx {
     char base_url[160];
     nvs_handle_t nvs;
     uint64_t gpio_configured;                 /* bit per pin already set up as an output */
+    uint64_t gpio_input_configured;           /* bit per pin already set up as an input */
     adc_oneshot_unit_handle_t adc;
     adc_cali_handle_t cali[ADC_CHANNELS];
     int channel_ready[ADC_CHANNELS];
@@ -253,6 +254,33 @@ static int hal_gpio_write(void *ctx, int pin, int level)
     return gpio_set_level((gpio_num_t)pin, level ? 1 : 0) == ESP_OK ? 0 : -1;
 }
 
+/*
+ * A digital input line, sampled now. A pull-up is enabled: nearly every limit switch and interlock
+ * contact on a board like this is a dry contact to ground, and a floating input is not a reading —
+ * it is noise that looks like one. A pin this chip cannot use as an input is a failure, never a 0:
+ * "the switch is open" and "I could not see the switch" are different facts (SAFETY.md), and the
+ * driver above turns the failure into a fault with no reading rather than a measurement.
+ */
+static int hal_gpio_read(void *ctx, int pin, int *level)
+{
+    hal_ctx *h = (hal_ctx *)ctx;
+    if (!level || pin < 0 || pin >= 64 || !GPIO_IS_VALID_GPIO(pin)) return -1;
+    if (h->gpio_configured & (1ULL << pin)) return -1;         /* an output is not an input */
+    if (!(h->gpio_input_configured & (1ULL << pin))) {
+        gpio_config_t io;
+        memset(&io, 0, sizeof io);
+        io.pin_bit_mask = 1ULL << pin;
+        io.mode = GPIO_MODE_INPUT;
+        io.pull_up_en = GPIO_PULLUP_ENABLE;
+        io.pull_down_en = GPIO_PULLDOWN_DISABLE;
+        io.intr_type = GPIO_INTR_DISABLE;
+        if (gpio_config(&io) != ESP_OK) return -1;
+        h->gpio_input_configured |= 1ULL << pin;
+    }
+    *level = gpio_get_level((gpio_num_t)pin) ? 1 : 0;
+    return 0;
+}
+
 /* ---- ADC ------------------------------------------------------------------------------------ */
 
 static int adc_channel_ready(hal_ctx *h, int channel)
@@ -346,6 +374,7 @@ int mm_hal_esp32_init(mm_hal *hal, const char *controller_url)
     hal->kv_set = hal_kv_set;
     hal->gpio_write = hal_gpio_write;
     hal->adc_read = hal_adc_read;
+    hal->gpio_read = hal_gpio_read;
     return 0;
 }
 

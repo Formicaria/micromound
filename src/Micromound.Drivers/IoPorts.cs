@@ -33,6 +33,20 @@ public interface IDigitalOutput
     void Write(bool high);
 }
 
+/// <summary>
+/// One digital input line — the seam a digital-sensor primitive reads a fact from: a limit switch, an
+/// interlock contact, a float, a door. <see cref="Read"/> returns the line's PHYSICAL level, as
+/// <see cref="IDigitalOutput.Write"/> takes one; the driver above applies the polarity the manifest
+/// declares. An implementation that cannot sample the line THROWS: "the switch is open" and "I could
+/// not see the switch" are different facts, and a backing that returned false for both would turn a
+/// dead input into a confident measurement.
+/// </summary>
+public interface IDigitalInput
+{
+    /// <summary>Sample the line now. Throws when the hardware could not be read.</summary>
+    bool Read();
+}
+
 /// <summary>One analog input channel — the seam an analog-sensor primitive reads a number from.</summary>
 public interface IAnalogInput
 {
@@ -52,6 +66,25 @@ public sealed class InMemoryDigitalOutput : IDigitalOutput
     {
         State = high;
         Writes++;
+    }
+}
+
+/// <summary>An in-memory digital line whose level a test or harness sets — the simulator's switch.</summary>
+public sealed class InMemoryDigitalInput : IDigitalInput
+{
+    /// <summary>The physical level the fake world currently holds.</summary>
+    public bool Level { get; set; }
+
+    /// <summary>Set to make the line unreadable, as a disconnected sensor is.</summary>
+    public bool Faulted { get; set; }
+
+    public int Reads { get; private set; }
+
+    public bool Read()
+    {
+        if (Faulted) throw new IOException("the line could not be read");
+        Reads++;
+        return Level;
     }
 }
 

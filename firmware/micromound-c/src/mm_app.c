@@ -115,6 +115,11 @@ int mm_app_init(mm_app *app, const mm_hal *hal, const mm_app_config *cfg, char *
             snprintf(error, error_cap, "probe '%s' names no compiled capability", cfg->probes[i].capability);
             return -1;
         }
+    for (i = 0; i < cfg->n_switches; i++)
+        if (mm_kernel_bind_executor(&app->device.kernel, &cfg->switches[i].executor) != 0) {
+            snprintf(error, error_cap, "switch '%s' names no compiled capability", cfg->switches[i].capability);
+            return -1;
+        }
     if (cfg->n_schedule > MM_APP_MAX_SCHEDULE) { set_str(error, error_cap, "too many schedule entries"); return -1; }
 
     mm_link_init(&app->link, hal);

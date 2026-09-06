@@ -102,9 +102,10 @@ driver that cannot make sense of its settings fails to initialize rather than in
 
 ## The shipped driver types and their settings
 
-Two generic primitives ship today. Each is one driver type whatever backs it: in-memory in the
-simulator and tests, real Linux ports when the daemon runs with `--hardware`. The settings a real
-port needs are simply ignored by the in-memory backing, so one manifest serves both.
+Three generic primitives ship today — a line you drive, a number you read, and a fact you read.
+Each is one driver type whatever backs it: in-memory in the simulator and tests, real Linux ports
+when the daemon runs with `--hardware`. The settings a real port needs are simply ignored by the
+in-memory backing, so one manifest serves both.
 
 | Driver type | Setting | Required | Meaning |
 |---|---|---|---|
@@ -123,10 +124,26 @@ port needs are simply ignored by the in-memory backing, so one manifest serves b
 | | `address` | no (`0x48`) | 7-bit I2C address, decimal or `0x` hex; the ADS1115 offers `0x48`..`0x4B` by its ADDR pin |
 | | `gain` | no (`4.096`) | PGA full-scale range in volts: `6.144`, `4.096`, `2.048`, `1.024`, `0.512`, `0.256`. Resolution, not protection: inputs must stay below VDD + 0.3 V |
 | | `link` | no | A serial device: this channel is read from a board running the port server over the link (PROTOCOL.md §12), in volts, through the same `scale`/`offset`. `channel` is then the board's ADC channel; `bus`, `address` and `gain` are ignored |
+| `digital_sensor` | `capability` | yes | The `sense.` capability this line is (`sense.valve_closed`) |
+| | `active_high` | no (`true`) | Whether a closed contact reads high. The reading is `1` when the line's physical level matches this, `0` otherwise — so an active-low switch to ground is `false` here and still reads `1` when closed |
+| | `unit` | no | Unit recorded on every reading (`closed`, `open`, `bool`) |
+| | `pin` | with `--hardware` | The GPIO line to sample (BCM numbering on a Pi) |
+| | `chip` | no (`0`) | `/dev/gpiochip<chip>`, as for the actuator |
+| | `bias` | no (`pull_up`) | What holds the line when nothing drives it: `pull_up`, `pull_down`, `none`. A dry contact to ground wants `pull_up` — the wiring of nearly every limit switch; a contact to the supply wants `pull_down`; a line already biased on the board wants `none`. A floating input is not a reading, it is noise that looks like one |
+| | `link` | no | A serial device: this line is an INPUT of a board running the port server (PROTOCOL.md §12). `pin` is then the board's input pin, `chip` and `bias` are ignored, and `active_high` must match the board's compiled polarity — a mismatch refuses the manifest |
 
-A real backing reads in **volts** before calibration. A malformed or missing setting a backing
-needs, or a chip that does not answer at its address, refuses the whole manifest at bring-up — the
-daemon never comes up with a phantom sensor or an unbacked line.
+A real analog backing reads in **volts** before calibration. A malformed or missing setting a
+backing needs, or a chip that does not answer at its address, refuses the whole manifest at
+bring-up — the daemon never comes up with a phantom sensor or an unbacked line.
+
+**Why the digital sensor is a primitive rather than a convenience** (`v0.9.27`). A digital actuator
+produces no evidence of its own: a command is not evidence. Until a mound can read a fact that
+something *other than the actuation path* observed — a limit switch, an interlock contact, a float —
+every actuation it performs is honestly `unverified`, however well the hardware works. The
+`digital_sensor` is that second observer, and it is why the `verify` step in a mission has something
+to read. A line that cannot be sampled raises a **fault with no reading**, never a `0`: "the switch
+is open" and "I could not see the switch" are different facts, and a backing that returned `false`
+for both would turn a dead input into a confident measurement.
 
 This table is also **machine-readable**: `Micromound.Protocol.DriverSchemaCatalog` carries the same
 settings with labels, help text, kinds, defaults, bounds, and an `advanced` flag, per driver type.

@@ -83,6 +83,22 @@ menu "MicroMound controller"
         bool "Relay is energized by a HIGH level"
         default y
 
+    config MM_SWITCH_GPIO
+        int "Limit-switch input GPIO (sense.valve_closed), -1 for none"
+        default -1
+        help
+            A digital INPUT the Pi can read with micromound/link/ports/read_pin — a limit switch, an
+            interlock contact, a float. This is what lets a mound confirm an actuation with something
+            other than its own command, so a bench with a relay and no switch can never report a
+            verified actuation. The line is pulled up here, which is the wiring of nearly every dry
+            contact to ground; -1 offers no input at all. A pin may be an input or an output, never
+            both, and one that will not read at bring-up is refused rather than reported as open.
+
+    config MM_SWITCH_ACTIVE_HIGH
+        bool "The switch reads HIGH when closed"
+        default n
+        depends on MM_SWITCH_GPIO >= 0
+
     config MM_PROBE_ADC_CHANNEL
         int "Probe ADC1 channel (sense.temp)"
         default 0

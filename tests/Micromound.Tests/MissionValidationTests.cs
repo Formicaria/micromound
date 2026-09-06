@@ -468,6 +468,72 @@ public class MissionValidationTests
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
     }
 
+    // ---- settle_s: the bounded wait for the physical world (PROTOCOL.md §9) ------------------
+
+    /// <remarks>
+    /// The reason the field exists. Nothing physical is instantaneous, so a `verify` that reads its
+    /// switch in the same instant the `act` energized the coil reads the world before the actuator
+    /// moved. A mission states the travel time; the runtime waits it out.
+    /// </remarks>
+    [Fact]
+    public void An_observation_may_wait_for_the_world_to_catch_up()
+    {
+        var mission = ValidMission();
+        mission.Steps[^2].SettleSeconds = 3;
+
+        var result = Validate(mission);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    /// <remarks>
+    /// The wait happens on the mission's own thread, inside the service tick, so it delays the
+    /// heartbeat, the hold release and the watchdog kick for its whole duration. A mission that could
+    /// name any number would be a mission that could talk the runtime into looking dead.
+    /// </remarks>
+    [Fact]
+    public void A_settle_longer_than_the_bound_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps[^2].SettleSeconds = MissionLimits.MaxSettleSeconds + 1;
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("settle_s") && e.Contains("second mission"));
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    public void A_settle_that_is_not_a_finite_span_is_refused(double settle)
+    {
+        var mission = ValidMission();
+        mission.Steps[^2].SettleSeconds = settle;
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("settle_s") && e.Contains("finite"));
+    }
+
+    /// <remarks>
+    /// A wait before ACTING buys nothing — it is just a mission that starts later — and it would hold
+    /// the actuation window open for a stretch no later reading can account for.
+    /// </remarks>
+    [Fact]
+    public void Only_an_observation_may_settle_first()
+    {
+        var mission = ValidMission();
+        mission.Steps[1].SettleSeconds = 2;      // the routine step
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("settle") && e.Contains("'routine'"));
+    }
+
     [Fact]
     public void Rejections_carry_full_error_lists_never_just_the_first()
     {

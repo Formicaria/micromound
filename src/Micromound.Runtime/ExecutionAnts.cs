@@ -67,7 +67,8 @@ public sealed class ScoutAnt(CapabilityKernel kernel, IEvidenceLookup? evidence 
             Capability = request.Capability,
             MissionId = request.MissionId,
             Worker = descriptor.Name,
-            WorkerCeiling = descriptor.Ceiling
+            WorkerCeiling = descriptor.Ceiling,
+            ConfirmationExpected = request.ConfirmationExpected
         };
 
         foreach (var (name, value) in request.Parameters) bound.Parameters[name] = value;

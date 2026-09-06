@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>micromound-acceptance</AssemblyName>
+    <RootNamespace>Micromound.Acceptance</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Micromound.Protocol\Micromound.Protocol.csproj" />
+    <ProjectReference Include="..\Micromound.Crypto\Micromound.Crypto.csproj" />
+    <ProjectReference Include="..\Micromound.Capabilities\Micromound.Capabilities.csproj" />
+    <ProjectReference Include="..\Micromound.Drivers\Micromound.Drivers.csproj" />
+    <ProjectReference Include="..\Micromound.Evidence\Micromound.Evidence.csproj" />
+    <ProjectReference Include="..\Micromound.Runtime\Micromound.Runtime.csproj" />
+    <ProjectReference Include="..\Micromound.Sync\Micromound.Sync.csproj" />
+    <ProjectReference Include="..\Micromound.Host\Micromound.Host.csproj" />
+    <ProjectReference Include="..\Micromound.Sim\Micromound.Sim.csproj" />
+  </ItemGroup>
+
+</Project>

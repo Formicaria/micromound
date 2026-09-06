@@ -89,6 +89,14 @@ Also at this layer:
 ## Layer 2 — Authority (charters and leases)
 
 - No charter → `observe` only. Expired lease → `safe_state`. Ambiguity → downward.
+- **The expiry is checked on every service tick, whether or not anything is happening** (`v0.9.27`).
+  A lease is a promise about TIME, so it runs out on an idle mound exactly as it does on a busy one,
+  and the scenario the lease exists for is precisely the one where nobody is left to ask the mound
+  anything. Before this it was checked only when a mission arrived or a process restarted, which left
+  an idle mound `chartered` with its outputs live for as long as the silence lasted.
+  `MoundService.Tick` calls `MoundHost.QuiesceIfLeaseExpired` before the sync beat; crossing the
+  expiry de-energizes every driver and persists the quiesce, so a restart comes back quiesced rather
+  than briefly re-authorized.
 - Disconnection never widens authority; nothing on-device can extend a lease. Renewal happens only
   when the controller acknowledges a sync beat.
 - Reconnection resumes nothing. A quiesced mound reports its state and waits for fresh authority.
@@ -103,7 +111,12 @@ Also at this layer:
 
 ## Layer 3 — Controller oversight
 
-- Every actuation is audited with evidence; `unverified` actions gate missions as failures.
+- Every actuation is audited with evidence; `unverified` actions gate missions as failures. An
+  actuator's own report is never that evidence — a command is not evidence — so what makes an
+  actuation verifiable at all is a **second, independent observation**: the `digital_sensor`
+  primitive (a limit switch, an interlock contact, a float) read by a mission's `verify` step. A
+  mission may promise that observation up front, which holds the verdict open until it arrives; a
+  promise not kept demotes the record to `unverified` before it is published (PROTOCOL.md §9).
 - Stops: physical (Layer 0), per-mound, and global. Stop processing precedes all other downlink
   and needs no valid charter. Clearing a stop restores nothing — the mound returns to
   observe-only and waits for a fresh charter.

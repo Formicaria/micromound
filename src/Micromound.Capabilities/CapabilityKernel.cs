@@ -346,15 +346,35 @@ public sealed class CapabilityKernel(
         var gated = EvidenceGate.Gate(record, Authority.EffectiveEvidencePolicy(), view, now, out var reason);
         if (!string.Equals(gated, record.Outcome, StringComparison.Ordinal))
         {
-            // Append rather than replace. A clamped action demoted to `unverified` must still name
-            // the limit that narrowed it — SAFETY.md requires the clamp to carry its reason, and
-            // losing it because a sensor also failed would hide two facts behind one.
-            record.Outcome = gated;
-            record.Detail = string.IsNullOrEmpty(record.Detail) ? reason : $"{record.Detail}; {reason}";
+            // One demotion is held open, and only one: "nothing referenced any evidence", when the
+            // submitter has promised to observe this action with a separate sensor before the record
+            // leaves the mound (CapabilityRequest.ConfirmationExpected). An honest actuator produces
+            // no evidence of its own — a command is not evidence — so without this the gate demotes
+            // every actuation the instant it runs, and `unverified` is terminal: the Witness's early
+            // return means no later observation could ever lift it, and the verified outcome
+            // ARCHITECTURE.md promises would be unreachable outside a simulator whose relay
+            // self-certifies. The claim is not made here, only kept open: the Mound Major publishes
+            // records after the walk and demotes any it never confirmed.
+            if (request.ConfirmationExpected && record.EvidenceRefs.Count == 0
+                && string.Equals(gated, ActionOutcomes.Unverified, StringComparison.Ordinal))
+            {
+                record.Detail = Append(record.Detail, "awaiting an independent observation");
+            }
+            else
+            {
+                // Append rather than replace. A clamped action demoted to `unverified` must still name
+                // the limit that narrowed it — SAFETY.md requires the clamp to carry its reason, and
+                // losing it because a sensor also failed would hide two facts behind one.
+                record.Outcome = gated;
+                record.Detail = Append(record.Detail, reason);
+            }
         }
 
         return record;
     }
+
+    private static string Append(string detail, string note) =>
+        string.IsNullOrEmpty(detail) ? note : $"{detail}; {note}";
 
     // ---------------------------------------------------------------------------------------
     // Internals

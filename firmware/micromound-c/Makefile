@@ -3,6 +3,8 @@
 #   make            builds build/libmicromound.a
 #   make test       builds and runs the host tests against the golden fixtures in
 #                   ../../tests/Micromound.Tests/Golden/files (override: GOLDEN_DIR=…)
+#   make tools      builds build/mm_board_sim — the port-server firmware on a host, over
+#                   stdin/stdout, which src/Micromound.Acceptance drives a whole mound against
 #   make clean
 #
 #   make CC=clang test                                  another compiler
@@ -33,15 +35,21 @@ GOLDEN_DIR ?= ../../tests/Micromound.Tests/Golden/files
 BUILD := build
 LIB   := $(BUILD)/libmicromound.a
 TESTS := $(BUILD)/mm_tests
+TOOLS := $(BUILD)/mm_board_sim
 
 LIB_SRC  := $(wildcard src/*.c)
 LIB_OBJ  := $(patsubst src/%.c,$(BUILD)/%.o,$(LIB_SRC))
 TEST_SRC := $(wildcard tests/*.c)
 TEST_OBJ := $(patsubst tests/%.c,$(BUILD)/tests/%.o,$(TEST_SRC))
 
-.PHONY: all test clean
+.PHONY: all test tools clean
 
 all: $(LIB)
+
+tools: $(TOOLS)
+
+$(TOOLS): tools/mm_board_sim.c $(LIB) include/*.h | $(BUILD)
+	$(CC) $(CFLAGS) $(LDFLAGS) tools/mm_board_sim.c $(LIB) $(LDLIBS) -o $@
 
 $(LIB): $(LIB_OBJ)
 	$(AR) rcs $@ $^
