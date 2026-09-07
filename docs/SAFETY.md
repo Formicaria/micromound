@@ -43,6 +43,15 @@ Also at this layer:
   self-healing — a watchdog that latched on a scheduling hiccup is one nobody leaves enabled — but
   **an observed trip is sticky and nothing in software clears it**, because software that could
   clear a trip is software that could be asked to.
+- **The safe-state walk is per driver, and every path takes the same one.** Driving the hardware safe
+  means walking every driver, and one driver that throws must not decide the fate of the rest: each is
+  isolated, a failure becomes a sticky safety trip rather than a silent gap, and the whole walk is
+  serialised behind the host's safe-state gate so the service loop and the watchdog thread cannot
+  interleave on the same hardware. Every transition into stopped or quiesced — from a sync, a mission,
+  an expired lease, a cold start with a mission in flight, a shutdown, or the watchdog — goes through
+  that one method. **Before `v0.9.29` two of those paths walked the drivers themselves in a bare loop**,
+  so the first driver to throw left every later one energized during a stop, with no trip recorded; the
+  fix was to route them through the isolated walk that already existed beside them.
 - **A timed actuation is held, and its release is owed on every path.** A digital actuator drives its
   line active and holds it for the effective `on_s`, so a real valve is open for its duration rather
   than pulsed; the hold is bounded (the requested `on_s` is clamped to the intersected limit tiers and

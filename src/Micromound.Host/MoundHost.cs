@@ -370,7 +370,7 @@ public sealed class MoundHost
 
         if (Cache.TryLoad<MissionCheckpoint>(MissionCheckpoint.Key, out var checkpoint))
         {
-            foreach (var driver in _drivers) driver.EnterSafeState();   // cold-start safe
+            EnterSafeState();                    // cold-start safe, per driver, failures reported
             _mound.RecoverAndReport(checkpoint, now);                   // shared: recover -> publish -> clear
         }
 
@@ -397,13 +397,22 @@ public sealed class MoundHost
     /// A stop or quiesce can happen inside the wrapped call; when authority crosses into a safe
     /// state, the drivers — which the composition root owns — are driven to their safe state, not
     /// just the authority flag.
+    ///
+    /// <para><b>Through <see cref="EnterSafeState"/>, never a bare loop</b> (`v0.9.29`). This walked
+    /// the drivers itself until then, and the difference is not cosmetic: a bare
+    /// <c>foreach (…) driver.EnterSafeState()</c> stops at the first driver that throws, so every
+    /// driver after it in the list stays energized — during a STOP — with no trip recorded and the
+    /// exception escaping into whichever caller happened to trigger the transition. It also ran
+    /// outside <c>_safeGate</c>, racing the watchdog thread's own safe-state path. The isolated
+    /// method beside it already did all of that correctly; this is simply the same walk, and the one
+    /// every stop, quiesce and expired lease now takes.</para>
     /// </summary>
     private T WatchingForSafeState<T>(Func<T> action)
     {
         var wasSafe = Authority.IsStopped || Authority.IsQuiesced;
         var result = action();
         if (!wasSafe && (Authority.IsStopped || Authority.IsQuiesced))
-            foreach (var driver in _drivers) driver.EnterSafeState();
+            EnterSafeState();
         return result;
     }
 

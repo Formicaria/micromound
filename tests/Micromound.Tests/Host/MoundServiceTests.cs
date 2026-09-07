@@ -56,6 +56,53 @@ public sealed class MoundServiceTests : IDisposable
         }
     };
 
+    /// <summary>
+    /// A manifest with TWO actuators, so a test can prove that one failing driver does not decide the
+    /// fate of the other. One actuator is not enough to see the bug this covers.
+    /// </summary>
+    private static MoundManifest TwoActuatorManifest(string moundId)
+    {
+        var manifest = new MoundManifest { ManifestId = "mf2", MoundId = moundId, IssuedAt = Now.ToWire(), SafeState = "all_actuators_off" };
+        manifest.Hardware["first"] = new HardwareBinding
+        {
+            Driver = "digital_actuator",
+            Settings = new Dictionary<string, string> { ["capability"] = "act.first", ["max_on_s"] = "10" }
+        };
+        manifest.Hardware["second"] = new HardwareBinding
+        {
+            Driver = "digital_actuator",
+            Settings = new Dictionary<string, string> { ["capability"] = "act.second", ["max_on_s"] = "10" }
+        };
+        manifest.Capabilities.Add("act.first");
+        manifest.Capabilities.Add("act.second");
+        return manifest;
+    }
+
+    /// <summary>Two named lines, resolved in manifest order by the capability each is bound to.</summary>
+    private static DriverFactoryRegistry FactoriesWithPair(IDigitalOutput first, IDigitalOutput second)
+    {
+        var factories = new DriverFactoryRegistry();
+        factories.Register(new AnalogSensorFactory());
+        factories.Register(new DigitalActuatorFactory(settings =>
+            settings.TryGetValue("capability", out var capability) && capability == "act.first" ? first : second));
+        return factories;
+    }
+
+    /// <summary>
+    /// A line that will not de-energize once hot — the driver failure a safe-state walk must survive.
+    /// The initial safe write at bring-up (while already low) succeeds, exactly as a real line's does,
+    /// so composition still comes up; only a low write while HIGH throws.
+    /// </summary>
+    private sealed class RefusesToGoSafe : IDigitalOutput
+    {
+        public bool State { get; private set; }
+        public void Write(bool high)
+        {
+            if (!high && State) throw new IOException("simulated: this line will not go safe");
+            State = high;
+        }
+    }
+
     private static DriverFactoryRegistry FactoriesWith(IDigitalOutput line)
     {
         var factories = new DriverFactoryRegistry();
@@ -397,6 +444,77 @@ public sealed class MoundServiceTests : IDisposable
 
         Assert.Equal("quiesced", reborn.State);
     }
+
+    /// <remarks>
+    /// **The safe-state walk is per driver, on every path that reaches it** (`v0.9.29`, roadmap P0.8).
+    ///
+    /// `MoundHost.EnterSafeState()` was always isolated — try/catch per driver, a reported trip, under
+    /// the safe gate. But `WatchingForSafeState`, the path a stop, a quiesce or an expired lease
+    /// actually takes, walked the drivers itself in a bare `foreach`. The first driver to throw ended
+    /// the walk, so every driver after it stayed energized *during a stop*, no trip was recorded, and
+    /// the exception escaped into whichever caller triggered the transition.
+    ///
+    /// This is the regression check: two actuators, the first refusing to go safe, and the second must
+    /// still be de-energized when the stop lands.
+    /// </remarks>
+    [Fact]
+    public void A_driver_that_refuses_to_go_safe_does_not_keep_the_others_energized()
+    {
+        var stubborn = new RefusesToGoSafe();
+        var ordinary = new InMemoryDigitalOutput();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s7"),
+            StateDirectory = _dir, Drivers = FactoriesWithPair(stubborn, ordinary)
+        });
+
+        stubborn.Write(true);
+        ordinary.Write(true);
+
+        host.Stop();                       // the transition every stop takes
+
+        Assert.False(ordinary.State);      // the second line went safe despite the first throwing
+        Assert.True(host.Guard.HasTrip);   // and the failure was recorded, not swallowed
+    }
+
+    /// <summary>The same guarantee on the path an expired lease takes — the one `v0.9.27` added.</summary>
+    [Fact]
+    public void An_expired_lease_de_energizes_every_driver_it_can_even_when_one_throws()
+    {
+        var stubborn = new RefusesToGoSafe();
+        var ordinary = new InMemoryDigitalOutput();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s8"),
+            StateDirectory = _dir, Drivers = FactoriesWithPair(stubborn, ordinary)
+        });
+        host.Major.AcceptCharter(TwoActuatorCharter("mm-s8"), Now);
+
+        stubborn.Write(true);
+        ordinary.Write(true);
+
+        // An idle tick past the lease. Nothing is asking this mound to do anything.
+        new MoundService(host).Tick(host.Authority.LeaseExpiresAt.AddSeconds(1));
+
+        // The line that could go safe did, even though the walk began with one that could not.
+        Assert.False(ordinary.State);
+        Assert.True(host.Guard.HasTrip);
+
+        // And the mound ends up STOPPED rather than merely quiesced: the driver that would not
+        // de-energize is a trip, and the tick's own watchdog response escalates a trip to a
+        // persisted stop. That is the stricter of the two states and the correct one — a mound that
+        // cannot prove its hardware is safe must be treated as unsafe, and a restart never clears it.
+        Assert.Equal("stopped", host.State);
+    }
+
+    private static Charter TwoActuatorCharter(string moundId) => new()
+    {
+        CharterId = "c-s", MoundId = moundId, MissionRef = "g", IssuedAt = Now.ToWire(),
+        ExpiresAt = Now.AddHours(2).ToWire(), LeaseTtlSeconds = 900, ActionCeiling = "benign",
+        Capabilities = ["act.first", "act.second"],
+        Evidence = new EvidencePolicy { RequiredFor = ["act.*"], MinIntervalSeconds = 60 },
+        SafeState = "all_actuators_off"
+    };
 
     [Fact]
     public void A_graceful_shutdown_is_safe_and_resumes_un_stopped()

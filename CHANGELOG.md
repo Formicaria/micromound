@@ -12,6 +12,47 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.29 — P0.8: the safe-state walk is per driver on every path that reaches it
+
+**This narrows nothing and widens nothing; it makes an existing guarantee actually hold.** Roadmap
+P0.8, and the first thing that roadmap said to do.
+
+`MoundHost.EnterSafeState()` has always been careful: `try`/`catch` per driver, a reported trip on
+failure, the whole walk under `_safeGate`. But `WatchingForSafeState` — the path taken on **every**
+transition into stopped or quiesced, from a sync, a mission, or (since `v0.9.27`) an expired lease —
+walked the drivers itself:
+
+```csharp
+foreach (var driver in _drivers) driver.EnterSafeState();
+```
+
+The first driver to throw ended the walk. Every driver after it in the list stayed **energized,
+during a stop**, with no trip recorded and the exception escaping into whichever caller happened to
+trigger the transition. It also ran outside `_safeGate`, racing the watchdog thread's own safe-state
+path. `MoundHost.Restore`'s cold-start walk had the same shape.
+
+Both now call `EnterSafeState()`. That is the entire fix.
+
+### Why it was invisible
+
+Every existing safe-state test used a manifest with **one** actuator, so there was never a "driver
+after the one that threw" to be left hot. The two regression tests added here use two, which is the
+smallest bench that can see it at all.
+
+### Added
+
+- `A_driver_that_refuses_to_go_safe_does_not_keep_the_others_energized` — two actuators, the first
+  refusing to de-energize; on `Stop()` the second is still driven safe and the failure is recorded
+  as a trip rather than swallowed.
+- `An_expired_lease_de_energizes_every_driver_it_can_even_when_one_throws` — the same guarantee on
+  the idle-tick lease path `v0.9.27` added. It also pins the escalation that follows: a driver that
+  will not go safe is a trip, the tick's watchdog response turns a trip into a persisted stop, so
+  the mound ends up **stopped** rather than merely quiesced. That is the stricter state and the
+  correct one — a mound that cannot prove its hardware is safe is treated as unsafe.
+- `RefusesToGoSafe` and a two-actuator manifest in `MoundServiceTests`.
+
+558 C# tests, 2,567 C checks, the acceptance sequence 18/18 on the firmware leg.
+
 ## v0.9.28 — the phase plan: what has to be true before someone else can depend on this
 
 Documentation only. No code, no wire change, no behaviour change — but the roadmap it replaces was
