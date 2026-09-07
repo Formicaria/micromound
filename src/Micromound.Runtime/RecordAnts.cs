@@ -256,6 +256,14 @@ public sealed class RunnerAnt : IRunnerAnt
     /// then handle what came down. Offline is a normal state: a failed exchange leaves everything
     /// queued and returns, and the next beat tries again from exactly where this one stopped.
     /// </summary>
+    /// <summary>
+    /// How many batches one sync beat may drain before it yields, however much the controller keeps
+    /// acknowledging. An unbounded drain is an unbounded window in which nothing else on this thread
+    /// runs — the hold release, the watchdog kick, and a stop that arrives in a later batch. The
+    /// remainder is durable and goes out on the next beat.
+    /// </summary>
+    public const int MaxBatchesPerSync = 16;
+
     public SyncOutcome Sync(DateTimeOffset now, int batchSize = 64)
     {
         var beat = Publish(EnvelopeKinds.MoundSync, new
@@ -267,10 +275,12 @@ public sealed class RunnerAnt : IRunnerAnt
         var deferred = new List<Envelope>();
         var sent = 0;
         var beatAcknowledged = false;
+        var stopped = false;
 
         // Drain oldest-first. Acks are handled inline because the drain's own progress depends on
         // them; everything else waits until the drain settles, so that a stop in the batch is
         // processed before any mission in the same batch, wherever each arrived.
+        var batches = 0;
         while (true)
         {
             var batch = _queue.Peek(batchSize);
@@ -301,14 +311,36 @@ public sealed class RunnerAnt : IRunnerAnt
 
                     if (received.Kind == EnvelopeKinds.Ack)
                         beatAcknowledged |= HandleAck(received, beat.Seq);
+                    else if (received.Kind == EnvelopeKinds.Stop)
+                        // ACTED ON HERE, not deferred (`v0.9.32`). Sorting the deferred set put a
+                        // stop ahead of a mission in the same batch, which was the ordering question
+                        // — but it left the LATENCY question unasked: the stop still waited for the
+                        // whole drain to settle, every remaining exchange in this batch and every
+                        // further batch after it. A backlog is exactly when someone reaches for the
+                        // stop, and "how much is queued" must never be an input to how fast a mound
+                        // stops. It needs no charter, no ordering and nothing else to happen first.
+                        stopped |= HandleOne(received, now);
                     else
                         deferred.Add(received);
                 }
+
+                // ...and once stopped, this drain is over. Continuing to push records would keep the
+                // loop busy on work whose whole point was to be interrupted; the queue is durable and
+                // the backlog goes out on the next beat, under a mound that is now halted.
+                if (stopped) break;
             }
+
+            if (stopped) break;
 
             // No ack removed anything: everything has been offered once, and re-sending inside
             // the same beat would be a hot loop, not persistence. The records stay queued.
             if (_queue.Depth >= depthBefore) break;
+
+            // A bound on the work one beat may do, whatever the controller keeps handing back. An
+            // unbounded drain is an unbounded window in which nothing else on this thread runs —
+            // including the stop above, if it arrives in a later batch. The remainder is durable and
+            // goes out on the next beat.
+            if (++batches >= MaxBatchesPerSync) break;
         }
 
         IsConnected = true;
@@ -381,20 +413,35 @@ public sealed class RunnerAnt : IRunnerAnt
     private int HandleDeferred(List<Envelope> deferred, DateTimeOffset now)
     {
         var handled = 0;
-
         foreach (var envelope in deferred)
+            if (HandleOne(envelope, now))
+                handled++;
+        return handled;
+    }
+
+    /// <summary>
+    /// Process one verified downlink envelope. Returns false when it was a duplicate and nothing
+    /// happened.
+    ///
+    /// <para>Shared by both paths deliberately: a stop is acted on the moment it verifies, inside the
+    /// drain (`v0.9.32`), while everything else waits until the drain settles so it can be ordered.
+    /// Two call sites, one implementation — a stop must not acquire subtly different semantics for
+    /// arriving early, and the duplicate check below is the same one either way.</para>
+    /// </summary>
+    private bool HandleOne(Envelope envelope, DateTimeOffset now)
+    {
         {
             // The receive-time check catches re-delivery across syncs; this one catches two
             // copies inside the SAME batch — Add returning false is the second copy. Without it,
             // a controller whose ack was lost mid-exchange could make one mission run twice.
-            if (!_handledDownlink.Add(envelope.Id)) continue;
-            handled++;
+            if (!_handledDownlink.Add(envelope.Id)) return false;
 
             switch (envelope.Kind)
             {
                 case EnvelopeKinds.Stop:
-                    // Needs no valid charter and precedes everything — which SortForHandling has
-                    // already guaranteed by the time this line runs.
+                    // Needs no valid charter and precedes everything. Reached from the drain loop
+                    // the instant it verifies, so "precedes" is a fact about time and not only
+                    // about SortForHandling's ordering.
                     _mound.Stop();
                     Publish(EnvelopeKinds.Ack, new AckBody
                     {
@@ -473,7 +520,7 @@ public sealed class RunnerAnt : IRunnerAnt
             }
         }
 
-        return handled;
+        return true;
     }
 
     private static T? Deserialize<T>(Envelope envelope) where T : class

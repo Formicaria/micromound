@@ -333,6 +333,16 @@ bytes frozen at `v0.2.1` are unchanged.
 
 ## 7. Stop orders
 
+**A stop takes effect on the exchange that delivered it.** Stop processing precedes all other
+downlink, and since `v0.9.32` that is a fact about *time* and not only about ordering: an
+authenticated stop is acted on the moment it verifies, inside the drain loop, and ends that drain.
+Before then it was deferred with the rest of the batch and sorted to the front — correct in order,
+but it still waited out every remaining exchange and every further batch, which on a deep backlog
+measured in the dozens. A backlog is precisely when an operator reaches for the stop, so **how much
+is queued must never be an input to how fast a mound stops.** A sync beat is additionally bounded in
+the number of batches it will drain, so a controller that keeps handing work back cannot hold the
+loop open indefinitely; the remainder is durable and goes out on the next beat.
+
 - `stop` (per-mound or global) is processed ahead of all queued downlink and never requires a
   valid charter. Effect: cease actuation now, enter `safe_state`, keep sensing and syncing.
 - Clearing a stop restores nothing. The mound returns to observe-only and waits for a fresh

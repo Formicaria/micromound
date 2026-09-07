@@ -138,6 +138,10 @@ Also at this layer:
 - Stops: physical (Layer 0), per-mound, and global. Stop processing precedes all other downlink
   and needs no valid charter. Clearing a stop restores nothing — the mound returns to
   observe-only and waits for a fresh charter.
+- **A stop is acted on when it arrives, not when the queue empties.** An authenticated stop takes
+  effect on the exchange that delivered it and ends that drain, and a sync beat is bounded in how
+  many batches it will push. A deep backlog is exactly the situation an operator reaches for the stop
+  in, so the amount of queued work must never be an input to how fast the mound stops.
 - **A stop ceases actuation; it does not blind the mound.** Observation continues, as PROTOCOL.md
   §7 has always specified, and the same section requires the stop acknowledgement to carry a
   post-stop sensor snapshot — which a mound that refused to sense could never produce. Refusing

@@ -550,4 +550,42 @@ public class EndToEndTests
             return ok;
         }
     }
+    // ---- P0.3: a stop acts on receipt, not after the drain (v0.9.32) ---------------------------
+
+    /// <remarks>
+    /// The drain loop deferred every non-ack downlink until it settled, then sorted the deferred set
+    /// so a stop preceded a mission. That answered the ORDERING question and left the LATENCY one
+    /// unasked: the stop still waited out every remaining exchange in the batch and every further
+    /// batch after it. A backlog is exactly when someone reaches for the stop, so "how much is
+    /// queued" was an input to how fast the mound stopped.
+    ///
+    /// This drives a deep backlog — many queued records, one envelope per exchange — and orders a
+    /// stop. The mound must be stopped after the FIRST exchange, not after the queue drains.
+    /// </remarks>
+    [Fact]
+    public void A_stop_takes_effect_on_the_exchange_that_delivered_it_not_after_the_backlog_drains()
+    {
+        _mound.OfferCharter(Charter(Now), Now);
+
+        // A deep backlog: run enough missions offline that the drain would take many exchanges.
+        _link.Online = false;
+        for (var i = 0; i < 12; i++)
+        {
+            var mission = Watering(Now);
+            mission.MissionId = $"ms-backlog-{i}";
+            _mound.ExecuteMission(mission, Now.AddSeconds(i));
+        }
+        _link.Online = true;
+
+        _controller.OrderStop(_mound.MoundId, "operator stop during a backlog", Now);
+
+        _mound.Sync(Now.AddSeconds(60));
+
+        Assert.Equal("stopped", _mound.State);
+
+        // The stop arrived on the first exchange and ended the drain there. Had it waited for the
+        // backlog, the exchange count would be the whole queue depth.
+        Assert.True(_link.Exchanges <= 2,
+            $"the stop took {_link.Exchanges} exchanges to take effect; it should act on the one that delivered it");
+    }
 }

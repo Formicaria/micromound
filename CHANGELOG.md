@@ -12,6 +12,41 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.32 — P0.3: a stop acts on receipt, not after the drain
+
+Roadmap P0.3. No wire change.
+
+### What was wrong
+
+`RunnerAnt.Sync` deferred every non-ack downlink until the drain loop settled, then sorted the
+deferred set so a stop preceded a charter, a config and a mission. That answered the **ordering**
+question — and left the **latency** one unasked. The stop still waited out every remaining exchange
+in its batch, and every further batch after that.
+
+Measured on a twelve-mission backlog: **the stop took 64 exchanges to take effect.** A backlog is
+precisely the situation in which someone reaches for the stop, so "how much is queued" was an input
+to how fast the mound stopped.
+
+### Fixed
+
+- **An authenticated stop is handled the moment it verifies**, inside the drain loop, and ends that
+  drain — the queue is durable and the backlog goes out on the next beat, under a mound that is now
+  halted. Same test, same backlog: **1 exchange.**
+- **A sync beat drains at most `RunnerAnt.MaxBatchesPerSync` (16) batches.** An unbounded drain is an
+  unbounded window in which nothing else on the thread runs — the hold release, the watchdog kick,
+  and a stop arriving in a later batch.
+- `HandleOne` extracted so the immediate path and the deferred path share one implementation: a stop
+  must not acquire subtly different semantics for arriving early, and the duplicate check is the
+  same either way.
+
+### Added
+
+- `A_stop_takes_effect_on_the_exchange_that_delivered_it_not_after_the_backlog_drains` — twelve
+  queued missions, one envelope per exchange, a stop ordered mid-backlog. **Confirmed red against
+  the unfixed code (64 exchanges) before being kept.**
+
+577 C# tests, 2,567 C checks, acceptance 18/18.
+
 ## v0.9.31 — P0.2: a deadline a slow sync or a stepped clock cannot stretch
 
 Roadmap P0.2. No wire change; no new fixture.
