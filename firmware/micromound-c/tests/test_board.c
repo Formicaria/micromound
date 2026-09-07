@@ -276,6 +276,10 @@ static void hal_bind(mm_hal *hal, fake *f)
 
 static size_t kv_len(fake *f, const char *key) { kv_entry *e = kv_find(f, key, 0); return e ? e->n : (size_t)-1; }
 
+/* Erasing a key is not something the device can do to itself — the HAL has no delete, deliberately.
+   This models an operator reprovisioning the flash, which is the only way a persisted stop clears. */
+static void kv_clear(fake *f, const char *key) { kv_entry *e = kv_find(f, key, 0); if (e) e->present = 0; }
+
 /* ---- enroll-exchange.txt --------------------------------------------------------------------- */
 
 static const char *after_colon(const char *line)
@@ -602,9 +606,33 @@ static void check_board(void)
         CHECK_STR_EQ("stopped", mm_device_state(&again.device));
         CHECK(!relay2.has_hold && f.gpio[5] == 0);
         CHECK(!again.status.tripped);
+        CHECK(kv_len(&f, MM_KV_STOPPED) == 1);                  /* durable on the tick it arrived, not the next one */
         mm_app_tick(&again, T0 + 900);                          /* the relay's period has come; the kernel refuses */
         CHECK(relay2.actuations == 1 && f.gpio[5] == 0);
         CHECK(again.status.actions > 2);                        /* the refusals were still recorded */
+
+        /* and the stop outlives the power cycle. A whole new app over the same flash comes up
+           stopped, de-energized, and a freshly issued charter does not lift it — the same property
+           the C# host has had since `v0.9.x` and the C mound did not until now. */
+        {
+            static mm_app rebooted;
+            mm_relay relay2b;
+            mm_probe probe2b;
+            mm_app_config cfg2b;
+            CHECK(mm_relay_init(&relay2b, &hal, "act.relay_1", 5, 1) == 0);
+            mm_probe_init(&probe2b, &hal, "sense.temp", 0, 100, -50, "C");
+            configure(&cfg2b, &relay2b, &probe2b);
+            f.gpio[5] = 1;                                      /* a line left energized by the reset itself */
+            CHECK(mm_app_init(&rebooted, &hal, &cfg2b, error, sizeof error) == 0);
+            CHECK(rebooted.status.stopped_at_boot);
+            CHECK_STR_EQ("stopped", mm_device_state(&rebooted.device));
+            CHECK(f.gpio[5] == 0);                              /* bring-up de-energizes before anything else runs */
+            f.device_pk = rebooted.pk;
+            f.send_charter = 1;
+            mm_app_tick(&rebooted, T0 + 950);
+            CHECK_STR_EQ("stopped", mm_device_state(&rebooted.device));
+            CHECK(!relay2b.has_hold && f.gpio[5] == 0);
+        }
     }
 
     /* a trip: a relay whose release write fails stops the mound */
@@ -613,6 +641,7 @@ static void check_board(void)
         mm_relay relay3;
         mm_probe probe3;
         mm_app_config cfg3;
+        kv_clear(&f, MM_KV_STOPPED);                            /* reprovisioned: this scenario needs a device that can act */
         CHECK(mm_relay_init(&relay3, &hal, "act.relay_1", 5, 1) == 0);
         mm_probe_init(&probe3, &hal, "sense.temp", 0, 100, -50, "C");
         configure(&cfg3, &relay3, &probe3);
@@ -626,7 +655,8 @@ static void check_board(void)
         CHECK(relay3.release_failed && relay3.has_hold);        /* the hold stays pending */
         CHECK(third.status.tripped);
         CHECK_STR_EQ("stopped", mm_device_state(&third.device));
-        CHECK(f.sync_posts > 0);                                /* the beat still went out after the trip: the controller hears it stopped */
+        CHECK(kv_len(&f, MM_KV_STOPPED) == 1);                  /* a trip is durable on the tick it happens too */
+        CHECK(f.sync_posts > 0);                             /* the beat still went out after the trip: the controller hears it stopped */
         f.gpio_fail_pin = -1;
         mm_app_tick(&third, T0 + 1031);
         CHECK(!relay3.has_hold && f.gpio[5] == 0);              /* the retry releases it; the trip stands */

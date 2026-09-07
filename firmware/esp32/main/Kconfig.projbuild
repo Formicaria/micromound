@@ -121,4 +121,15 @@ menu "MicroMound controller"
         int "Service loop period (ms)"
         default 1000
 
+    config MM_ALLOW_NVS_ERASE
+        bool "Development: erase NVS automatically when it will not initialise"
+        default n
+        help
+            Leave this off. NVS holds the Ed25519 seed this mound's identity IS, the controller's
+            public key, and the sticky stop a restart must never clear. With it off, a board whose
+            NVS is full or was written by a newer IDF halts with every output at its safe level and
+            says so, and reprovisioning is a deliberate act (`idf.py erase-flash`). With it on, the
+            stock ESP-IDF recipe applies instead: the partition is erased and the board comes back as
+            a different, unenrolled, un-stopped device. Only ever for a development board.
+
 endmenu

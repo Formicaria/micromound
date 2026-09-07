@@ -78,7 +78,11 @@ actuates on a zero clock** — and then hands everything to `mm_app`, one tick a
 - **Identity.** The Ed25519 seed is created from the hardware RNG on first boot and stored in NVS
   (`mm.seed`); it is never regenerated and never read out. A board whose NVS will not open, or will
   not store the seed, halts with its outputs safe rather than run with an identity that would not
-  survive a reboot.
+  survive a reboot. **NVS is never erased to make it work.** ESP-IDF's stock recipe erases the whole
+  partition on `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`; here that partition is
+  the identity, the controller's key and the sticky stop, so the autonomous images halt safe and say
+  why instead. Reprovisioning is deliberate — `idf.py erase-flash`, or a development build with
+  `MM_ALLOW_NVS_ERASE` (default off). The port-server image still erases: it has nothing to lose.
 - **Enrollment** (PROTOCOL.md §3). Until a controller key is stored, every 30 s the app spends the
   one-time token in `mm.token`: an outage retries, a controller error retries, a definite 4xx
   refusal burns the token, success stores the controller's key (`mm.ctl_pk`) and cadence
@@ -92,6 +96,11 @@ actuates on a zero clock** — and then hands everything to `mm_app`, one tick a
   **trip**: the mound is stopped, the hold stays pending and is retried every tick, and the beat
   still goes out so the controller hears it. The task watchdog reboots a loop that stops returning,
   and every relay comes back up at its safe level.
+- **A stop outlives the power.** Whatever stopped the mound — a downlinked stop, a trip — one byte
+  goes into NVS (`mm.stopped`) on that same tick, before the beat that reports it. Bring-up reads it
+  back and stops the authority and drives the hardware safe *before* the first tick, so a board that
+  comes up hot goes cold immediately. A restart does not clear it and neither does a fresh charter;
+  only reprovisioning does, because the HAL has no delete for the firmware to reach for.
 
 ## Building (when you have the toolchain)
 

@@ -92,10 +92,34 @@ void app_main(void)
 
     ESP_ERROR_CHECK(esp_task_wdt_add(NULL));                 /* this task is the service loop; the watchdog watches it */
 
+    /*
+     * NVS — and what must NOT happen when it will not initialise.
+     *
+     * ESP-IDF's stock recipe erases the whole partition on ESP_ERR_NVS_NO_FREE_PAGES or
+     * ESP_ERR_NVS_NEW_VERSION_FOUND and carries on. Here that partition holds the Ed25519 seed this
+     * mound's identity IS, the controller's public key, and the sticky stop a restart must never
+     * clear — so the stock recipe answers "the flash is full" by silently minting a NEW mound and
+     * clearing a halt that was meant to survive anything. A board that comes back with a different
+     * key is an unenrollable stranger whose whole signed history is orphaned; a board that comes
+     * back un-stopped is a hazard, and it is the reboot after the fault that is most likely to hit
+     * a full page. Neither is a decision firmware gets to make on its own.
+     *
+     * So it refuses, and halts with every output safe. Reprovisioning is deliberate:
+     * `idf.py erase-flash`, or a development build with MM_ALLOW_NVS_ERASE. The port-server image
+     * is the exception — it holds no identity and no authority, so there is nothing there to lose.
+     */
     err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+#if defined(CONFIG_MM_ALLOW_NVS_ERASE) || defined(CONFIG_MM_LINK_PORTS)
+        ESP_LOGW(TAG, "NVS unusable (%s) — erasing: any identity, controller key and persisted stop go with it",
+                 esp_err_to_name(err));
         ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
+#else
+        ESP_LOGE(TAG, "NVS unusable (%s)", esp_err_to_name(err));
+        halt_safe("NVS is full or was written by a newer version, and erasing it would destroy this "
+                  "mound's identity and any persisted stop — reprovision deliberately (idf.py erase-flash)");
+#endif
     }
     if (err != ESP_OK) halt_safe("NVS will not initialise");
 

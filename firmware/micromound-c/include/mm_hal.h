@@ -58,6 +58,7 @@ typedef struct mm_hal {
 #define MM_KV_CONTROLLER_PK "mm.ctl_pk"         /* 32 bytes: received at enrollment */
 #define MM_KV_SYNC_INTERVAL "mm.sync_s"         /* text: the controller's cadence from enrollment */
 #define MM_KV_ENROLL_TOKEN "mm.token"           /* text: the one-time token, provisioned; burned on success or definite refusal */
+#define MM_KV_STOPPED "mm.stopped"              /* 1 byte: a sticky stop. Present and '1' = stopped, and a restart NEVER clears it */
 
 #ifdef __cplusplus
 }

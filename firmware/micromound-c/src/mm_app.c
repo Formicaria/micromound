@@ -123,7 +123,37 @@ int mm_app_init(mm_app *app, const mm_hal *hal, const mm_app_config *cfg, char *
     if (cfg->n_schedule > MM_APP_MAX_SCHEDULE) { set_str(error, error_cap, "too many schedule entries"); return -1; }
 
     mm_link_init(&app->link, hal);
+
+    /*
+     * A STOP SURVIVES THE REBOOT (v0.9.35, roadmap P0.6).
+     *
+     * SAFETY.md has always said a restart never clears a stop, and on this device it did: the stop
+     * lived in RAM only, so power-cycling a stopped mound brought it back willing to actuate. That
+     * is the one thing a reboot must never be able to do, and it was the cheapest thing here to fix
+     * — one byte.
+     *
+     * Applied BEFORE anything can act: the authority is stopped and the hardware driven safe, in
+     * that order, so a board that comes up hot goes cold without waiting for a tick.
+     */
+    {
+        uint8_t stopped = 0;
+        size_t got = 0;
+        if (hal->kv_get(hal->ctx, MM_KV_STOPPED, &stopped, sizeof stopped, &got) == 0 && got == 1 && stopped == '1') {
+            mm_authority_stop(&app->device.kernel.authority);
+            app->status.stopped_at_boot = 1;
+            safe_state_cb(app);
+        }
+    }
+
     return 0;
+}
+
+/* Write the sticky stop through, once, the moment the mound becomes stopped. */
+static void persist_stop(mm_app *app)
+{
+    static const uint8_t one = '1';
+    if (app->stop_persisted) return;
+    if (app->hal->kv_set(app->hal->ctx, MM_KV_STOPPED, &one, 1) == 0) app->stop_persisted = 1;
 }
 
 /* ---- enrollment ---------------------------------------------------------------------------- */
@@ -176,11 +206,18 @@ void mm_app_tick(mm_app *app, int64_t now)
     if (now == 0) now = app->hal->now(app->hal->ctx);
     if (now == 0) return;                                        /* no clock: nothing is signed, nothing actuates */
 
+    /* A stop is durable the moment it exists. This is the catch-all — anything that stopped the
+       mound since the last tick is written through before this one does any work — and the two
+       calls below close the window on the two things that can stop it DURING a tick: a relay that
+       will not release, and a downlinked stop. This function is the only place with storage. */
+    if (app->device.kernel.authority.stopped) persist_stop(app);
+
     /* holds first: a relay whose time is up is released before anything else happens this tick */
     for (i = 0; i < app->cfg.n_relays; i++)
         if (mm_relay_service(&app->cfg.relays[i], now) != 0 && !app->status.tripped) {
             app->status.tripped = 1;
             mm_authority_stop(&app->device.kernel.authority);
+            persist_stop(app);                                   /* before the beat, before the retry */
         }
 
     if (!app->status.enrolled) {
@@ -199,6 +236,7 @@ void mm_app_tick(mm_app *app, int64_t now)
         app->status.last_beat_at = now;
         app->status.beats++;
         set_str(app->status.last_detail, sizeof app->status.last_detail, app->link.last_detail);
+        if (app->device.kernel.authority.stopped) persist_stop(app);   /* a stop arrived on this beat */
     }
 
     /* compiled routines: each on its period, through the kernel (which refuses when it must) */

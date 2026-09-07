@@ -156,6 +156,24 @@ Also at this layer:
   effect on the exchange that delivered it and ends that drain, and a sync beat is bounded in how
   many batches it will push. A deep backlog is exactly the situation an operator reaches for the stop
   in, so the amount of queued work must never be an input to how fast the mound stops.
+- **A stop survives the power, on every profile.** "A restart never clears a stop" has been true of
+  the Pi-class host since it had a state store, and was NOT true of the C mound until `v0.9.35`: the
+  stop lived only in RAM there, so power-cycling a stopped board brought it back willing to actuate —
+  and a fault that stops a mound is precisely the kind of event that also power-cycles it. It is now
+  one byte in the same protected storage the identity uses, written on the tick the authority stops
+  rather than on the beat that reports it, and read back before the first tick can run: the authority
+  is stopped and the hardware driven safe during bring-up, so a board that comes up hot goes cold
+  without waiting for anything. Nothing on the device can clear it — the storage abstraction has no
+  delete, deliberately — and a fresh charter does not lift it either. Reprovisioning does, which is a
+  person with the board in their hands. The identity-free port server is out of scope: it holds no
+  authority at all, and its equivalent is the link watchdog that drops every line when the Pi goes
+  quiet.
+- **A storage fault does not become a new identity.** ESP-IDF's stock boot recipe erases the whole
+  NVS partition when it will not initialise. On a mound that partition holds the Ed25519 seed the
+  identity *is*, the controller's key, and now the stop — so the stock recipe answers "the flash is
+  full" by minting a different mound and clearing a halt meant to survive anything, and it is the
+  reboot after a fault that is most likely to hit a full page. The autonomous images refuse and halt
+  with their outputs safe instead (`v0.9.35`); erasing is a deliberate act by a person.
 - **A stop ceases actuation; it does not blind the mound.** Observation continues, as PROTOCOL.md
   §7 has always specified, and the same section requires the stop acknowledgement to carry a
   post-stop sensor snapshot — which a mound that refused to sense could never produce. Refusing

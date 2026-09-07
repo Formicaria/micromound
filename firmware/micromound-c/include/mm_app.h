@@ -68,6 +68,7 @@ typedef struct mm_app_status {
     int64_t next_enroll_attempt_at;
     int beats, actions, enroll_attempts;
     char last_detail[MM_REASON_CAP];              /* the last enrollment or sync detail line; a trip is `tripped`, not a line here */
+    int stopped_at_boot;                          /* the sticky stop was read back out of storage: this mound came up already halted */
 } mm_app_status;
 
 typedef struct mm_app {
@@ -79,6 +80,7 @@ typedef struct mm_app {
     mm_app_status status;
     int64_t last_run[MM_APP_MAX_SCHEDULE];
     int sync_interval_s;
+    int stop_persisted;                           /* the sticky stop has been written through; write it once, not every tick */
 } mm_app;
 
 /*

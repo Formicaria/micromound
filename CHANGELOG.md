@@ -12,6 +12,93 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.35 — P0.6/P0.9: on the board, a stop survives the power, and a full flash is not a new mound
+
+Roadmap P0.6 (the sticky stop half) and P0.9 (the erase). **No wire change. No refusal reason
+changed. No C# source changed** — both defects were in the C mound and its ESP-IDF entry point.
+Storage: one new key, `mm.stopped`, additive; an existing device is unaffected until it stops.
+
+### What was wrong
+
+**A stop did not survive a reboot on the C mound.** `docs/SAFETY.md` has said since the beginning
+that a restart never clears a stop, and the Pi-class host has honoured it since it had a state
+store — `MoundService.RespondToWatchdog` escalates a trip to `host.Stop()` and persists it, and
+acceptance criterion 17 has pinned it release after release. On the ESP32 the stop lived in
+`mm_authority` and nowhere else, so a power cycle brought a stopped mound back willing to actuate.
+Two ways to reach it, both ordinary: an operator downlinks a stop, the board resets, and it comes
+back live; or a relay refuses to release, the mound trips itself to a stop — and the fault that
+seized the relay browns out the board, which comes back and drives that same line again. The
+second is the one that matters. A trip is the device saying it no longer trusts its own hardware,
+and a reboot was enough to talk it out of that.
+
+**A full or newer-format NVS partition erased the device's identity.** `app_main.c` carried
+ESP-IDF's stock recipe verbatim: on `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`,
+erase the partition and carry on. That is right for a partition holding cached Wi-Fi credentials.
+Here it holds the Ed25519 seed the mound's identity *is*, the controller's public key, and — as of
+this release — the stop. So the recipe answered "the flash is full" by minting a different mound,
+orphaning its whole signed history, and clearing a halt meant to survive anything. And a full page
+is most likely on the reboot *after* a fault, which is exactly when the stop is real.
+
+### What changed
+
+**The sticky stop is one byte in protected storage.** `MM_KV_STOPPED` (`mm.stopped`, within NVS's
+15-character key limit like the other four). `persist_stop()` writes it through the HAL's `kv_set`
+the moment the authority is stopped, and marks itself done so it is not rewritten every tick.
+Three call sites, chosen so the write always precedes the consequence: at the top of
+`mm_app_tick` as the catch-all for anything that happened since the last one; immediately after a
+relay's release fails and the trip escalates, *before* the beat that reports it; and immediately
+after `mm_device_sync`, for a stop that arrived on that exchange. The read is the last thing
+`mm_app_init` does — `mm_authority_stop` then the safe-state callback, in that order — so a board
+that comes up with a line hot goes cold during bring-up, before a single tick runs.
+
+Nothing on the device can clear it. `mm_hal` has no delete and is not getting one; a `kv_set` of
+zero bytes is treated as absence by the library, but the firmware never calls it on this key.
+A fresh charter does not lift a stop either — that was already true of the kernel, and the test now
+says so out loud. Clearing it means reprovisioning, which is a person with the board in their hands.
+
+**The autonomous images refuse to erase NVS.** A partition that will not initialise halts the board
+in `halt_safe` — every output at its safe level, the reason logged, the task watchdog kept fed —
+rather than erasing it. `CONFIG_MM_ALLOW_NVS_ERASE` (default n) restores the stock behaviour for a
+development board, and the port-server image still erases unconditionally: it holds no identity and
+no authority, so it has nothing to lose. All three images build unchanged in every other respect
+(Wi-Fi 1,026,704 B; serial 296,528 B; port server 260,704 B).
+
+### Confirmed red first
+
+Every assertion added here was run against the unfixed code before being kept:
+
+- `rebooted.status.stopped_at_boot`, the reboot's state, and the line being cold — five checks that
+  fail without the restore block in `mm_app_init`.
+- `kv_len(&f, MM_KV_STOPPED) == 1` after the tick that delivered the stop, and after the tick the
+  relay tripped on — both fail with only the top-of-tick write, which is the version that would
+  have shipped had the window not been looked for.
+
+The trip scenario in `test_board.c` shares its fake HAL with the reboot scenario, so it now clears
+`mm.stopped` first, through a helper that models reprovisioning rather than anything the firmware
+can do. That is the test saying, in the only way a test can, that the device has no way out.
+
+### Not fixed, and why
+
+**P0.6's other half — uplink and chain continuity across a reboot — is deliberately still open.**
+It is not a storage problem. A mound that reboots and re-signs from a stale sequence number forks
+its own chain, and a controller that trusts individual signatures will not notice. The fix is
+either pre-reserving sequence numbers so a reboot leaves a gap and never a fork, or an explicit
+boot epoch the controller reconciles against. The second changes what the controller must do, so it
+is a protocol decision and not one to make inside a patch release.
+
+**P0.9's other half — the write path itself.** A corrupt or interrupted write is still only as safe
+as NVS's own atomicity; nothing above it is checksummed, and none of it is tested. That needs a
+fault-injecting kv layer in the fake HAL, which is a slice of its own.
+
+### Verified
+
+585 C# tests (unchanged this release, run to confirm the version bump moved nothing), 2,576 C
+checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with recovery off, all
+three ESP-IDF images built under v5.3.2, acceptance 18/18 on the firmware leg and 15/15 applicable
+in memory, and the simulator's lifecycle claims. Not run: any of it on real hardware.
+
+---
+
 ## v0.9.34 — P0.7: a bounded audit path that is not rewritten whole
 
 Roadmap P0.7, storage half. **Wire change, additive:** `mound_sync` gains `spilled_envelopes`;

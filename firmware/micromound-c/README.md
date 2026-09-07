@@ -43,7 +43,7 @@ needed when the buffer was too small.
 | `mm_frame` | `mm_frame.h` | The Pi↔ESP32 link framing (PROTOCOL.md §12): `"MM" ver type seq len payload crc32`, request/response payloads, an incremental decoder that resynchronises and counts what it drops | `link-frames.txt` |
 | `mm_serial` | `mm_serial.h` | The HAL's `http_post_json` over a byte stream to a bridge — the same exchanges, framed; timeouts are offline; the bridge's clock on request | `test_frame.c` (a fake pipe, a scripted bridge) |
 | `mm_ports` | `mm_ports.h` | **The board as a port server** (PROTOCOL.md §12, port requests): hello/write/read/**read_pin** over the link with the Pi's kernel as the only authority — and the two things the board keeps: each pin's compiled `max_on_s`, released by the board itself, and a link watchdog that drives everything safe when the Pi goes quiet; a failed release trips it. A line is an input or an output, never both, and one that will not read at bring-up is not offered | `port-exchange.txt` (written here, read by the host's `LinkPortsTests`) |
-| `mm_app` | `mm_app.h` | **The firmware above the HAL**: identity from protected storage (created once from the board's RNG), enrollment with a one-time token, the service loop — holds released first, quiesce, the beat on the charter's cadence, the compiled schedule through the kernel — and the trip (a relay that will not release stops the mound) | `test_board.c` |
+| `mm_app` | `mm_app.h` | **The firmware above the HAL**: identity from protected storage (created once from the board's RNG), enrollment with a one-time token, the service loop — holds released first, quiesce, the beat on the charter's cadence, the compiled schedule through the kernel — the trip (a relay that will not release stops the mound), and the sticky stop, written to storage on the tick it happens and read back at bring-up so a restart cannot clear it (`v0.9.35`) | `test_board.c` |
 
 ## `tools/mm_board_sim` — this port server, as a host process
 
@@ -305,7 +305,7 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
   record on the way through `mm_device_sync` peaks near 14 KB; `mm_enroll` adds a 4 KB response and a
   2 KB request on its own path — run the service loop on a task with 32 KB of stack, or lower
   `MM_DEVICE_BATCH`. Nothing allocates, so this is the whole budget.
-- Storage keys are at most 15 characters (`mm.seed`, `mm.ctl_pk`, `mm.sync_s`, `mm.token`): NVS's limit.
+- Storage keys are at most 15 characters (`mm.seed`, `mm.ctl_pk`, `mm.sync_s`, `mm.token`, `mm.stopped`): NVS's limit.
   A `kv_set` of zero bytes may be implemented as an erase; the library treats "absent" and "empty" alike.
 - Clock: the app never acts on a zero clock, and a relay hold is released when `now` passes the deadline
   — a clock that jumps forward releases early (the safe direction); one that jumps back holds longer,
