@@ -12,6 +12,84 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.28 — the phase plan: what has to be true before someone else can depend on this
+
+Documentation only. No code, no wire change, no behaviour change — but the roadmap it replaces was
+making claims this release retracts, so it is a release rather than a drive-by edit.
+
+`docs/ROADMAP.md`'s milestones answered *what has to be true before something can move*, and that
+question is nearly answered. The work after it does not decompose the same way: it is correctness
+debt, an extension model, hardware qualification, and optional device packages that have to ship
+independently. So the roadmap gains **eight dependency-ordered phases (P0–P7)** — explicitly not
+milestones and not dates — covering trustworthy execution and recovery, the adapter/configuration
+model, a qualified core release, motion, network and printer packages, cameras and artifacts,
+optional reasoning, and the maintenance and packaging work that starts alongside P0 rather than
+after it. Resource budgets are proposed as numbers to validate on real hardware, a stable-release
+gate is defined, and a definition of done is written for any new capability.
+
+### Corrected — claims the previous roadmap was making that are not true
+
+- **`v0.9.27` said the acceptance sequence passes. It does, and that is narrower than it sounded.**
+  Two qualifications are now recorded in both `ROADMAP.md` and `ACCEPTANCE.md`: the target's bench
+  inventory names a stepper/servo axis and a position encoder that no shipped driver provides, so
+  the eighteen criteria exercise the relay/switch/ADC scenario only (phase P3 closes that); and
+  criterion 11 is weaker than its name — it establishes that something independent looked, not that
+  what it saw agrees.
+- **Two "known gaps" were stale.** The evidence store's disk backing landed at `v0.9.12`, and host
+  driver de-energizing on stop/quiesce has been `MoundHost.WatchingForSafeState` since M4. Both are
+  marked closed, each pointing at the narrower thing that actually remains (P0.7 and P0.8).
+- **"Downlink is not hash-chained" was recorded as the gap.** It is a deliberate protocol choice.
+  The missing requirement is durable anti-replay (P0.4), which is a different thing.
+
+### Recorded — ten findings, each read out of the named source, none hypothetical
+
+Every one was green through 556 C# tests, 2,567 C checks, the simulator and all eighteen acceptance
+criteria, because they are gaps *between* components and the tests check components.
+
+- **P0.1 — a wrong reading confirms an action.** `WitnessAnt.Confirm` checks that a confirming
+  observation exists, postdates the action and passes the freshness gate. Nothing compares its
+  **value** to the state the action was meant to produce. A limit switch reading "open" after a close
+  command yields `succeeded`. The largest correctness gap in the repository.
+- **P0.2 — a hold can outlive its deadline.** One `UtcNow` per tick, and the blocking sync runs
+  before `ServiceActuations(now)`, so a slow round trip is time the hold never sees; elapsed
+  durations ride a wall clock NTP can step.
+- **P0.3 — a stop waits for the backlog.** `RunnerAnt.Sync` defers non-ack downlink until the drain
+  settles. Stop-first ordering *within* a batch was the intent and works; the latency was not
+  considered.
+- **P0.4 — a completed mission can be replayed.** The deduplication window is in memory; nothing
+  durable records which signed work already ran.
+- **P0.5 — a restart resets the duty cycle.** `ActuationHistory` is two in-memory dictionaries;
+  `min_off_s` and `max_rate_per_h` start empty on every boot.
+- **P0.6 — the C mound forgets its stop, queue and chain anchor** across a reboot; `mm_app` persists
+  only seed, controller key, sync interval and token.
+- **P0.7 — the audit path is unbounded and rewritten whole.** `DurableUplinkQueue` holds an
+  unbounded list and reserializes all of it on every change; the evidence ceiling does not bound
+  evidence already embedded in queued envelopes.
+- **P0.8 — one throwing driver can leave the others energized.** `MoundHost.EnterSafeState()` is
+  isolated per driver; `WatchingForSafeState` — the transition path used by every sync, every
+  mission, and (since `v0.9.27`) an expired lease — is a bare `foreach` outside `_safeGate`, so the
+  first driver to throw aborts the walk, the rest stay live, and no trip is reported. Routing it
+  through `EnterSafeState()` is a one-line fix and the first thing P0 should do. Watchdog escalation
+  for a driver that *blocks* rather than throws is the larger half.
+- **P0.9 — boot can erase the device's identity.** `app_main.c` calls `nvs_flash_erase()` on the
+  ordinary ESP-IDF init errors, which on a mound discards the identity seed and controller key.
+- **P0.10 — .NET 9 reaches end of support on 10 November 2026.** The migration to .NET 10 LTS is now
+  dated work, and it must not move a signed byte.
+
+Plus **P1.4**: `ApplyManifest` applies authority settings and nothing else — drivers are not
+recomposed, declared workers are validated and never registered, and the production routine registry
+is created empty. A signed manifest that changes a hardware binding is accepted and then ignored.
+
+### Changed
+
+- `docs/ROADMAP.md`: the phase plan, the two acceptance qualifications, a `P0–P7` status row, and the
+  corrected gap list. The M0–M6 record is preserved as written.
+- `docs/ACCEPTANCE.md`: a "what a pass here does not claim" section, and a note that both defects the
+  harness found were seam defects — which is why the P0 list came from reading seams, not from a
+  test going red.
+- Version markers to `0.9.28`. `v0.10.0` remains reserved for the P2 boundary: the host running on
+  real hardware, qualified.
+
 ## v0.9.27 — M5: the acceptance bench, in software — the third primitive, the firmware as a process, and eighteen criteria that run
 
 The largest slice in the line so far, and one phase rather than three: **make the ROADMAP's

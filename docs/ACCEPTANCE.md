@@ -32,6 +32,20 @@ valve has a consequence a separate sensor can see.
 
 **A criterion that cannot be met on this leg is `n/a` with the reason, never silently passed.**
 
+**What a pass here does not claim.** Two limits, stated up front because a green report is easy to
+read too widely:
+
+- *The sequence is not the whole bench.* `ROADMAP.md`'s target names a stepper/servo axis and a
+  position encoder alongside the switch, output and ADC. These eighteen criteria exercise the
+  relay/switch/ADC scenario only — there is no motion primitive in the shipped drivers yet. Phase P3
+  of the roadmap closes that; until it does, "the acceptance sequence passes" and "the acceptance
+  bench is built" are different statements.
+- *Criterion 11 is weaker than its name.* It asks whether an independent line was read after the act.
+  It does not ask whether that line read the **right thing**: `WitnessAnt.Confirm` checks existence,
+  ordering and freshness, and nothing compares the reading to the state the action was meant to
+  produce. A limit switch reporting "open" after a close command confirms the actuation today. That
+  is roadmap item P0.1, and when typed postconditions land this criterion tightens with them.
+
 ## The two legs
 
 | Leg | What is real | What is modelled |
@@ -112,6 +126,11 @@ was called on the mission path and at restore, and nowhere else — so an idle m
 with its outputs live for as long as nobody happened to send it a mission. A lease is a promise
 about *time*, and the scenario it exists for is the one where nobody is left to ask. It is now
 checked on every `MoundService.Tick`, before the sync beat.
+
+Both were gaps *between* components, which is why every unit test was green through them — and it is
+also why the next set of findings (roadmap phase P0) came from reading the same seams rather than
+from any test going red. A harness that reaches only as far as this one does will keep finding them
+one at a time; the P0 work is to make the seams themselves checkable.
 
 ## Adding a criterion
 
