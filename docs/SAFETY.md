@@ -59,6 +59,15 @@ Also at this layer:
   the `safe_state` on any stop, quiesce, shutdown, or trip. A line that will not de-energize is not
   swallowed: it keeps its hold pending and escalates to a sticky, persisted stop, because a line that
   cannot be proven safe is treated as unsafe.
+- **A deadline is measured in elapsed time, not in clock readings.** A hold bounds how long a line
+  may stay hot, so nothing that merely *takes time* may buy it more: the service tick releases due
+  holds **before** the blocking sync as well as after it, and the span the sync actually cost is
+  measured monotonically and added to the tick's own clock, so a slow round trip or a timeout is time
+  the hold sees. The hold itself carries two deadlines — a wall-clock instant and a monotonic
+  duration — and releases on whichever comes first, because a wall clock can be stepped: an NTP
+  correction jumping backwards must not postpone a release that is physically already due. Earliest
+  wins is the fail-safe direction here; de-energizing early is safe, holding late is the failure the
+  bound exists to prevent. The lease is re-checked after the sync for the same reason.
 - **An independent watchdog releases a held line behind a hung loop.** Because a timed actuation is
   held between ticks, a service loop that *hangs* would leave a line hot — the stale-heartbeat rule
   refuses new actuations but cannot release a line already held. A hardware-independent watchdog on its

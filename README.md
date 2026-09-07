@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.30
+**Current version:** v0.9.31
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
 progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
@@ -151,6 +151,12 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.31`:** a hold can no longer outlive its deadline because something else took time.
+The tick releases due holds before the blocking sync as well as after it, adds the span the sync
+actually cost to its own clock, and re-checks the lease on the far side; a hold now carries a
+monotonic deadline alongside its wall-clock one and releases on whichever comes first, so a
+backwards NTP step cannot extend it.
 
 **New in `v0.9.30`:** the largest of those findings is closed. A `verify` step now says what it
 expects to observe (`expect`), and the Witness compares the reading against it — so a limit switch

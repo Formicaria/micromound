@@ -12,6 +12,56 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.31 — P0.2: a deadline a slow sync or a stepped clock cannot stretch
+
+Roadmap P0.2. No wire change; no new fixture.
+
+### What was wrong
+
+The tick took **one** `DateTimeOffset.UtcNow` at the top and reused it for the hold release at the
+bottom — with a blocking network exchange in between:
+
+```
+Beat(now) → watchdog → lease → Sync(now)  ← TLS, DNS, a slow controller, a 30 s timeout
+                             → PollHealth(now) → ServiceActuations(now)   ← the SAME now
+```
+
+Whatever the sync cost was time a held line never saw. A 5 s hold, a tick a second in, and a 10 s
+exchange left the line hot with eleven seconds elapsed — and it stayed hot until some later tick's
+timestamp happened to pass the deadline. Separately, the hold's deadline was a wall-clock instant,
+and a wall clock can be stepped: an NTP correction jumping backwards postponed a release that was
+physically already due, by however far the clock moved.
+
+### Fixed
+
+- **Due holds are released before the blocking sync as well as after it.** The cheap half: a hold
+  already past its deadline does not wait behind a network round trip.
+- **The tick accounts for what the sync actually cost.** Measured monotonically and *added to the
+  caller's clock*, rather than re-reading a wall clock the caller did not supply — which keeps the
+  injected-clock discipline this codebase runs on, so a test with a fake provider reproduces the old
+  tick exactly while a daemon sees the time that really passed.
+- **The lease is re-checked on the far side of the sync**, since it can run out while we are in
+  there and everything after would otherwise act on expired authority.
+- **A hold carries two deadlines and releases on whichever comes first** — the wall-clock instant it
+  always had, plus a monotonic stamp and duration. Earliest-wins is the fail-safe direction: a
+  backwards clock step cannot extend a hold, a forward one at worst releases early, and de-energizing
+  early is safe where holding late is the failure the bound exists to prevent.
+- `MoundService` and `DigitalActuatorDriver`/`DigitalActuatorFactory` take an optional `TimeProvider`,
+  defaulting to `TimeProvider.System`.
+
+### Added
+
+- `A_slow_sync_does_not_buy_a_held_line_extra_time` — a transport whose exchange really costs ten
+  simulated seconds; the same single tick now releases the line.
+- `A_wall_clock_stepped_backwards_cannot_extend_a_hold` — six seconds elapse, the clock is corrected
+  an hour backwards, the line still comes down.
+- `A_hold_neither_clock_calls_due_is_not_released` — the other direction: no early release.
+- `FakeMonotonic` and `SlowTransport` in `MoundServiceTests`.
+
+**Both regression tests were confirmed red against the unfixed code before being kept.**
+
+576 C# tests, 2,567 C checks, acceptance 18/18.
+
 ## v0.9.30 — P0.1: a verify step says what it expects, and the Witness checks
 
 The largest correctness gap in the repository, closed. Roadmap P0.1.

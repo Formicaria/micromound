@@ -18,9 +18,14 @@ namespace Micromound.Host;
 /// mid-tick; that thread is a later slice. Within a running loop the kernel's per-actuation refusal
 /// is the stale-heartbeat guarantee, and the trip escalation here is the physical one.</para>
 /// </summary>
-public sealed class MoundService(MoundHost host)
+public sealed class MoundService(MoundHost host, TimeProvider? time = null)
 {
     private DateTimeOffset? _lastSync;
+
+    // How the tick learns what a blocking call actually cost. Monotonic, so an NTP step cannot make
+    // a sync look instantaneous (or negative). Injected so a test is deterministic: a provider that
+    // reports no elapsed time reproduces the pre-`v0.9.31` tick exactly.
+    private readonly TimeProvider _time = time ?? TimeProvider.System;
 
     public MoundHost Host => host;
 
@@ -89,11 +94,32 @@ public sealed class MoundService(MoundHost host)
         // BEFORE the sync means the beat that goes up already carries the quiesced state.
         host.QuiesceIfLeaseExpired(now);
 
+        // Release BEFORE the sync as well as after it. A hold whose deadline has already passed must
+        // not wait behind a network round trip that can take seconds, or a timeout that can take
+        // tens of them. This is the cheap half of servicing deadlines independently of sync.
+        host.ServiceActuations(now);
+
         if (SyncDue(now))
         {
+            // The sync blocks: TLS, DNS, a slow controller, a timeout. Whatever it costs, the rest of
+            // this tick has to know about it, because the deadlines below are real. Before this, the
+            // tick took ONE timestamp at the top and reused it here — so a 400 ms exchange was 400 ms
+            // a held line never saw, and a 30 s timeout was 30 s of it.
+            //
+            // The elapsed span is measured monotonically and ADDED to the caller's clock, rather than
+            // re-reading a wall clock the caller did not supply. That keeps the injected-clock
+            // discipline this codebase runs on — a test with a fake provider sees exactly the old
+            // behaviour, and a daemon sees the time that really passed.
+            var stamp = _time.GetTimestamp();
             host.Sync(now);
             _lastSync = now;
+            now += _time.GetElapsedTime(stamp);
+
+            // ...and the lease may have run out while we were in there, on authority that is now
+            // expired. Re-checked before anything else acts on it.
+            host.QuiesceIfLeaseExpired(now);
         }
+
         host.PollHealth(now);
         host.ServiceActuations(now);   // release any line whose on_s has elapsed — every tick, never throttled
         RespondToWatchdog(now);

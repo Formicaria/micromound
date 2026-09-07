@@ -371,6 +371,36 @@ public sealed class MoundServiceTests : IDisposable
     }
 
     /// <summary>A transport that counts exchanges and answers "offline" — enough to observe the cadence.</summary>
+    /// <summary>
+    /// A monotonic source a test moves by hand. Only <see cref="GetTimestamp"/> and the frequency need
+    /// overriding — <c>GetElapsedTime(stamp)</c> is computed from them — so "time passed" is just
+    /// <see cref="Advance"/>, called by whatever is pretending to block.
+    /// </summary>
+    private sealed class FakeMonotonic : TimeProvider
+    {
+        private long _ticks;
+        public void Advance(TimeSpan by) => _ticks += by.Ticks;
+        public override long GetTimestamp() => _ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    }
+
+    /// <summary>
+    /// A transport whose exchange really costs time — the slow TLS round trip, the DNS stall, the
+    /// timeout — expressed as monotonic ticks the rest of the tick can then account for.
+    /// </summary>
+    private sealed class SlowTransport(FakeMonotonic clock, TimeSpan cost) : ISyncTransport
+    {
+        public int Exchanges { get; private set; }
+        public bool TryExchange(Envelope uplink, out IReadOnlyList<Envelope> downlink, out string detail)
+        {
+            Exchanges++;
+            clock.Advance(cost);
+            downlink = [];
+            detail = "slow";
+            return false;   // offline: the queue keeps its records, and the tick continues
+        }
+    }
+
     private sealed class CountingTransport : ISyncTransport
     {
         public int Exchanges { get; private set; }
@@ -515,6 +545,105 @@ public sealed class MoundServiceTests : IDisposable
         Evidence = new EvidencePolicy { RequiredFor = ["act.*"], MinIntervalSeconds = 60 },
         SafeState = "all_actuators_off"
     };
+
+    // ---- P0.2: a deadline a slow sync or a stepped clock cannot stretch (v0.9.31) --------------
+
+    /// <remarks>
+    /// The tick used to take ONE `UtcNow` at the top and reuse it for the hold release at the bottom,
+    /// with a blocking network exchange in between. So the time the sync cost was time a held line
+    /// never saw: a 5 s hold, a tick one second in, and a 10 s exchange left the line hot with
+    /// eleven seconds elapsed — and it stayed hot until some later tick's timestamp happened to pass
+    /// the deadline.
+    ///
+    /// The fix accounts for what the blocking call actually cost, measured monotonically and added
+    /// to the caller's clock. This test is the difference: the same single tick now releases.
+    /// </remarks>
+    [Fact]
+    public void A_slow_sync_does_not_buy_a_held_line_extra_time()
+    {
+        var clock = new FakeMonotonic();
+        var line = new InMemoryDigitalOutput();
+        var factories = new DriverFactoryRegistry();
+        factories.Register(new AnalogSensorFactory());
+        factories.Register(new DigitalActuatorFactory(() => line, clock));
+
+        var transport = new SlowTransport(clock, TimeSpan.FromSeconds(10));
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = Manifest("mm-s9"), StateDirectory = _dir,
+            Drivers = factories, Transport = transport, GuardHeartbeatTimeoutSeconds = 0
+        });
+        var service = new MoundService(host, clock);
+        host.Major.AcceptCharter(Charter("mm-s9"), Now);
+
+        host.ExecuteMission(Watering("mm-s9"), Now);    // 5 s hold, deadline Now+5
+        Assert.True(line.State);
+
+        // One tick, one second in. The exchange inside it costs ten seconds.
+        service.Tick(Now.AddSeconds(1));
+
+        Assert.Equal(1, transport.Exchanges);
+        Assert.False(line.State);   // eleven seconds really passed; the line is down
+    }
+
+    /// <remarks>
+    /// The other half: a hold is bounded by a duration, and a wall clock can be stepped. An NTP
+    /// correction that jumps backwards must not postpone a release that is physically already due,
+    /// so the hold carries a monotonic deadline as well and fires on whichever says it is due first.
+    /// Earliest-wins is the fail-safe direction — releasing an output early is safe; holding one late
+    /// is the failure the hold exists to bound.
+    /// </remarks>
+    [Fact]
+    public void A_wall_clock_stepped_backwards_cannot_extend_a_hold()
+    {
+        var clock = new FakeMonotonic();
+        var line = new InMemoryDigitalOutput();
+        var factories = new DriverFactoryRegistry();
+        factories.Register(new AnalogSensorFactory());
+        factories.Register(new DigitalActuatorFactory(() => line, clock));
+
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = Manifest("mm-s10"), StateDirectory = _dir,
+            Drivers = factories, GuardHeartbeatTimeoutSeconds = 0
+        });
+        host.Major.AcceptCharter(Charter("mm-s10"), Now);
+
+        host.ExecuteMission(Watering("mm-s10"), Now);   // 5 s hold
+        Assert.True(line.State);
+
+        clock.Advance(TimeSpan.FromSeconds(6));         // six seconds really elapsed
+
+        // ...and then the clock is corrected an hour backwards. On the wall clock the hold is
+        // nowhere near due; it is due all the same.
+        host.ServiceActuations(Now.AddHours(-1));
+
+        Assert.False(line.State);
+    }
+
+    /// <summary>And neither clock saying it is due still means it is not due — no early release.</summary>
+    [Fact]
+    public void A_hold_neither_clock_calls_due_is_not_released()
+    {
+        var clock = new FakeMonotonic();
+        var line = new InMemoryDigitalOutput();
+        var factories = new DriverFactoryRegistry();
+        factories.Register(new AnalogSensorFactory());
+        factories.Register(new DigitalActuatorFactory(() => line, clock));
+
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = Manifest("mm-s11"), StateDirectory = _dir,
+            Drivers = factories, GuardHeartbeatTimeoutSeconds = 0
+        });
+        host.Major.AcceptCharter(Charter("mm-s11"), Now);
+
+        host.ExecuteMission(Watering("mm-s11"), Now);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        host.ServiceActuations(Now.AddSeconds(2));
+
+        Assert.True(line.State);
+    }
 
     [Fact]
     public void A_graceful_shutdown_is_safe_and_resumes_un_stopped()

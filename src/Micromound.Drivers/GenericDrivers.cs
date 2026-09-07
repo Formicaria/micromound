@@ -155,17 +155,36 @@ public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
     private Executor? _executor;
     private DateTimeOffset? _heldUntil;
 
+    // The same deadline, measured a second way. `_heldUntil` is a WALL-CLOCK instant, and a wall
+    // clock can be stepped: an NTP correction that jumps backwards would postpone a release that is
+    // physically already due, keeping a line hot for however far the clock moved. So a hold also
+    // records a monotonic stamp and its duration, and the release fires on whichever says it is due
+    // FIRST. Earliest-wins is the fail-safe direction for a hold: releasing an output early is safe,
+    // holding one late is exactly the failure the hold exists to bound.
+    private long _holdStamp;
+    private TimeSpan _holdFor;
+    private readonly TimeProvider _time;
+
     /// <summary>
     /// The port is built from the manifest's settings at <see cref="OnConfigure"/> time, not at
     /// construction: a real GPIO line needs the <c>pin</c> setting, which is not known until the
     /// manifest slice is applied. The builder MUST return a fresh line per call.
     /// </summary>
-    public DigitalActuatorDriver(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder) =>
+    /// <param name="time">
+    /// The monotonic source the hold's second deadline is measured on. Defaults to the system clock;
+    /// a test supplies its own to prove a hold releases when the WALL clock is stepped backwards, and
+    /// that it does not release early when neither clock says it is due.
+    /// </param>
+    public DigitalActuatorDriver(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder,
+        TimeProvider? time = null)
+    {
         _portBuilder = portBuilder;
+        _time = time ?? TimeProvider.System;
+    }
 
     /// <summary>Convenience for a port that needs no settings and owns no line (the in-memory simulator
     /// line, tests) — the same instance is reused across reconfigures.</summary>
-    public DigitalActuatorDriver(IDigitalOutput output) : this(_ => output) { }
+    public DigitalActuatorDriver(IDigitalOutput output, TimeProvider? time = null) : this(_ => output, time) { }
 
     public override string DriverId => "digital_actuator:" + _capability;
     public override string Bus => BusKinds.Gpio;
@@ -276,8 +295,13 @@ public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
     /// </summary>
     public void ServiceHolds(DateTimeOffset now)
     {
-        if (_heldUntil is null || now < _heldUntil.Value)
-            return;
+        if (_heldUntil is null) return;
+
+        // Due on the caller's clock, OR due on the monotonic one — whichever first. See the fields.
+        var dueByWallClock = now >= _heldUntil.Value;
+        var dueByElapsed = _time.GetElapsedTime(_holdStamp) >= _holdFor;
+        if (!dueByWallClock && !dueByElapsed) return;
+
         _output?.Write(!_activeHigh);   // may throw → hold stays pending, host trips
         _heldUntil = null;
     }
@@ -332,6 +356,8 @@ public sealed class DigitalActuatorDriver : GenericDriverBase, ITimedDriver
             driver.Actuations++;
             driver.LastOnSeconds = hold;
             driver._heldUntil = execution.StartedAt + TimeSpan.FromSeconds(hold);
+            driver._holdStamp = driver._time.GetTimestamp();
+            driver._holdFor = TimeSpan.FromSeconds(hold);
 
             // No evidence: a command is not evidence. A separate sensor device confirms the effect,
             // or the outcome stays unverified. That is the gate doing its job, not a gap here. The
@@ -668,16 +694,18 @@ public sealed class GpioChardevSensorFactory(int defaultChip = 0, ILinuxIo? io =
 /// actuator to one line. The settings-taking overload is what lets a real port read its <c>pin</c>
 /// (or bus address) from the manifest; the settings-free overloads ignore the settings.</para>
 /// </summary>
-public sealed class DigitalActuatorFactory(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder) : IDriverFactory
+public sealed class DigitalActuatorFactory(Func<IReadOnlyDictionary<string, string>, IDigitalOutput> portBuilder,
+    TimeProvider? time = null) : IDriverFactory
 {
     /// <summary>Defaults to a fresh in-memory line per driver, for the simulator and tests.</summary>
     public DigitalActuatorFactory() : this(_ => new InMemoryDigitalOutput()) { }
 
     /// <summary>A settings-free port factory (e.g. a fixed fake line), adapted to the builder shape.</summary>
-    public DigitalActuatorFactory(Func<IDigitalOutput> portFactory) : this(_ => portFactory()) { }
+    public DigitalActuatorFactory(Func<IDigitalOutput> portFactory, TimeProvider? time = null)
+        : this(_ => portFactory(), time) { }
 
     public string DriverType => "digital_actuator";
-    public IDriver Create() => new DigitalActuatorDriver(portBuilder);
+    public IDriver Create() => new DigitalActuatorDriver(portBuilder, time);
     public DriverTypeSchema Schema => DriverSchemaCatalog.DigitalActuator;
 }
 
