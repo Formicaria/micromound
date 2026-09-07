@@ -127,13 +127,12 @@ relay/switch/ADC scenario only — there is no axis, no motion primitive and no 
 shipped drivers. The **sequence** passes in software; the **bench** the target describes is not yet
 built. Phase P3 below closes that gap explicitly rather than letting a relay stand in for a motor.
 
-*A passing criterion is not a proof of the property it is named for.* Criterion 11 asks whether an
-independent line was read after the act. It does not ask whether the line read the **right thing** —
-`WitnessAnt.Confirm` checks that a confirming observation exists, is fresh, and was captured after
-the action began, and then hands it to the evidence gate; nothing anywhere compares the reading to
-the state the action was supposed to produce. A limit switch reporting "open" after a close command
-confirms the actuation today. That is P0.1 below, and it is the single most important thing on this
-roadmap: it is the difference between "something looked" and "what it saw agrees".
+*A passing criterion is not automatically a proof of the property it is named for.* This was true of
+criterion 11 until `v0.9.30`: it asked whether an independent line was read after the act, not
+whether the line read the **right thing**, so a limit switch reporting "open" after a close command
+confirmed the actuation. The mission now states a postcondition and the Witness tests the reading
+against it (P0.1, closed). The general lesson stands and is why the criteria say what they observed
+rather than "ok": a criterion is only ever as strong as the question it actually asks.
 
 ## After the bench: the phase plan
 
@@ -175,7 +174,7 @@ between components, and the existing tests check components.
 
 | ID | What is true today | What has to change |
 |---|---|---|
-| **P0.1** | **A wrong reading confirms an action.** `WitnessAnt.Confirm` checks a confirming observation exists, postdates the action and passes the freshness gate; nothing compares its **value** to the state the action was meant to produce. A switch reading "open" after a close command yields `succeeded` | Typed postconditions bound to a source capability, with units and either a tolerance or an exact boolean/enum comparison, and a bounded observation window. Wrong, stale, malformed or unrelated evidence must not confirm. A request with no expressible assertion stays `unverified` where proof is required |
+| **P0.1** ✅ *done in `v0.9.30`* | **A wrong reading confirmed an action.** `WitnessAnt.Confirm` checked that a confirming observation existed, postdated the action and passed the freshness gate; nothing compared its **value** to the state the action was meant to produce, so a switch reading "open" after a close command yielded `succeeded` | **Done:** `StepExpectation` on a `verify` step (`expect`: the closed operator set, a tolerance for analog, an advisory unit), evaluated by the Witness — a disagreeing observation degrades the action to `unverified` naming both sides, and an observation with no readable value degrades too, because an assertion that could not be tested has not been met. Plus feature negotiation both ways: `required_features` on the mission (a runtime that cannot honour the semantics refuses the mission whole) and `features` advertised at enrollment (a controller can tell before it sends). **Remaining for P1.2:** an enum/boolean vocabulary beyond numbers, and a bounded observation *window* distinct from the evidence policy's freshness |
 | **P0.2** | **A hold can outlive its deadline.** The daemon takes one `DateTimeOffset.UtcNow` per tick and `MoundService.Tick` runs the blocking sync before `ServiceActuations(now)` — so a slow HTTPS round trip is time the hold never sees. Elapsed durations are measured on the wall clock, which an NTP correction can move | Service deadlines independently of sync, storage and mission waits. Monotonic time for elapsed durations; UTC only for signed timestamps and absolute expiry. Re-check authority after any wait and before any effect. Prove hold release under slow network, slow disk and a clock step |
 | **P0.3** | **A stop waits for the backlog.** `RunnerAnt.Sync` defers every non-ack downlink until the drain loop settles. The ordering *within* a batch is stop-first, which is what the code was written for — but the stop still waits out every remaining exchange, and every further batch | Bound the work per sync cycle and act on an authenticated stop the moment it is verified, not when the drain finishes. An exhausted queue must never delay stopping. Measure receipt-to-output separately from controller delivery latency |
 | **P0.4** | **A completed mission can be replayed.** The host's `CacheAnt` persists `authority` and the in-flight mission checkpoint; there is no durable record of *which signed work has already been executed*. Redelivering a completed mission after a clean restart actuates again | A durable command/mission ledger — accepted identity, intent, result, bounded validity — consulted before dispatch. Duplicate delivery returns the stored result or an explicit "uncertain". Test the same envelope, and the same mission id under a new envelope, across a reboot |

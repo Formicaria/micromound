@@ -49,6 +49,7 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
     private readonly string _tier;
     private readonly IReadOnlyList<string> _capabilities;
     private readonly IReadOnlyList<DriverTypeSchema> _driverSchemas;
+    private readonly IReadOnlyList<string> _features;
 
     /// <param name="moundId">This device's manifest mound id, sent as the cross-check described above. Empty skips the check.</param>
     /// <param name="hardwareProfile">A flat summary of the mound's hardware, sent per PROTOCOL.md §3.2.</param>
@@ -56,9 +57,16 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
     /// <param name="capabilities">The mound's declared capability ids, sent as a structured list.</param>
     /// <param name="driverSchemas">The driver types this build ships, described (<see cref="DriverSchemaCatalog"/>);
     /// null sends the full shipped catalog, an empty list sends none.</param>
+    /// <param name="features">
+    /// The named mission semantics this build implements (<see cref="ProtocolFeatures"/>); null sends
+    /// everything this build supports. Injected rather than fixed for the same reason
+    /// <paramref name="driverSchemas"/> is: what a device can honour is a property of the BUILD, and a
+    /// reduced-profile device that decodes no missions at all correctly advertises none of them.
+    /// </param>
     public HttpEnrollmentClient(Uri controllerBaseUrl, HttpClient? http = null, TimeSpan? timeout = null,
         string hardwareProfile = "", string tier = ControllerTiers.EdgeQueen, string moundId = "",
-        IReadOnlyList<string>? capabilities = null, IReadOnlyList<DriverTypeSchema>? driverSchemas = null)
+        IReadOnlyList<string>? capabilities = null, IReadOnlyList<DriverTypeSchema>? driverSchemas = null,
+        IReadOnlyList<string>? features = null)
     {
         ArgumentNullException.ThrowIfNull(controllerBaseUrl);
         if (!ControllerTiers.IsKnown(tier))
@@ -76,6 +84,7 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
         _tier = tier;
         _capabilities = capabilities ?? [];
         _driverSchemas = driverSchemas ?? DriverSchemaCatalog.Shipped;
+        _features = features ?? ProtocolFeatures.Supported.OrderBy(f => f, StringComparer.Ordinal).ToList();
     }
 
     public bool TryEnroll(string token, byte[] devicePublicKey, out ControllerEnrollment? enrollment, out string detail)
@@ -94,7 +103,8 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
                 _tier,
                 _capabilities,
                 ProtocolVersion.Current,
-                _driverSchemas);
+                _driverSchemas,
+                _features);
             var json = JsonSerializer.Serialize(request, EnrollJson);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var cts = new CancellationTokenSource(_timeout);
@@ -207,7 +217,12 @@ public sealed class HttpEnrollmentClient : IEnrollmentClient, IDisposable
         [property: JsonPropertyName("tier")] string Tier,
         [property: JsonPropertyName("capabilities")] IReadOnlyList<string> Capabilities,
         [property: JsonPropertyName("protocol_version")] int ProtocolVersion,
-        [property: JsonPropertyName("driver_schemas")] IReadOnlyList<DriverTypeSchema> DriverSchemas);
+        [property: JsonPropertyName("driver_schemas")] IReadOnlyList<DriverTypeSchema> DriverSchemas,
+        // The named mission semantics this build actually implements (PROTOCOL.md §9,
+        // ProtocolFeatures). A controller reads it to know what a device will ENFORCE before it
+        // sends work that depends on it — the half of feature negotiation that prevents the
+        // mistake, where a mission's required_features is the half that catches it.
+        [property: JsonPropertyName("features")] IReadOnlyList<string> Features);
 
     private sealed record EnrollResponse(
         [property: JsonPropertyName("controller_public_key")] string ControllerPublicKey,

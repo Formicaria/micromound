@@ -124,7 +124,8 @@ four, byte for byte, by `make test`.
      "hardware_profile": "sense.soil_moisture,act.water_valve",
      "capabilities": ["sense.soil_moisture", "act.water_valve"],
      "protocol_version": 0,
-     "driver_schemas": [ { "driver_type": "digital_actuator", "label": "…", "settings": [ … ] }, … ]
+     "driver_schemas": [ { "driver_type": "digital_actuator", "label": "…", "settings": [ … ] }, … ],
+     "features": ["postconditions"]
    }
    ```
 
@@ -164,6 +165,15 @@ four, byte for byte, by `make test`.
    the answer (a retry will not change it); the `reason` is for the operator standing next to the
    hardware. A 5xx or an unreachable controller means *not yet enrolled*, and the device tries again
    next boot. From here on, only signed traffic.
+   **`features` (additive, `v0.9.30`)** is the list of named mission semantics this build actually
+   implements — see §9's `required_features`. It answers a question `protocol_version` cannot: two
+   devices can speak v0 and still disagree about what a mission *means*, because a semantic addition
+   that an old runtime ignores rather than rejects looks identical on the wire. A controller reads
+   `features` to know what a device will **enforce** before it sends work that depends on it. A
+   reduced-profile device advertises `[]` and that is the correct answer, not a gap: it decodes no
+   missions at all (§8), so it implements none of these semantics. An absent field means the same
+   thing as an empty one — a device too old to send it is a device that enforces none of them.
+
 4. Re-enrollment (key rotation, reflash) requires a new operator-minted token. There is no
    self-service re-key.
 
@@ -398,8 +408,9 @@ execution representation stays executable with no language model in the loop.
       "parameters": {}, "condition": null, "evidence_tag": "soil_after" },
     { "step_id": "confirm", "op": "verify", "capability": "sense.soil_moisture",
       "confirms": "water", "parameters": {}, "condition": null, "evidence_tag": "",
-      "settle_s": 3 }
+      "settle_s": 3, "expect": { "op": "gt", "value": 30, "tolerance": 0, "unit": "pct" } }
   ],
+  "required_features": ["postconditions"],
   "required_evidence": ["soil_before", "watering_action", "soil_after"],
   "safe_state": "all_actuators_off",
   "expires_at": "…",
@@ -437,6 +448,19 @@ execution representation stays executable with no language model in the loop.
   everything wherever it appears.
 - A step whose condition did not hold is `skipped` and its `evidence_tag` was never due. A mission
   that correctly declines to act is `completed`, not `unverified`.
+- **`required_features` names the semantics the mission needs the runtime to implement (`v0.9.30`).**
+  A mound that does not recognise every name refuses the mission **whole**, before any step runs.
+  The failure it prevents is the silent one: a semantic addition an older runtime *ignores* rather
+  than rejects. A step's `expect` is exactly that shape — an old mound skips the unknown member,
+  confirms on presence alone, and reports a success the mission's author would have called
+  unverified. Naming the requirement makes the mismatch loud at validation, where it costs nothing.
+  - The current set is `postconditions`. It grows only when a change alters what a mission *means*
+    in a way an old runtime would ignore rather than reject.
+  - It cannot retrofit a refusal into runtimes that already shipped — a mound older than `v0.9.30`
+    ignores this field exactly as it ignores `expect`. That is what the device's advertised
+    `features` at enrollment (§3) is for: the advertisement lets a controller avoid the mistake, and
+    `required_features` catches it when the controller gets it wrong anyway. **Both halves are
+    needed**, and neither alone is sufficient.
 - **`settle_s` (added in `v0.9.27`) waits before a step runs**, so the physical world can catch up
   with the step before it. Zero — the default, and what an omitted field means — runs immediately.
   Nothing physical is instantaneous: a `verify` that reads its limit switch in the same instant the
@@ -467,6 +491,24 @@ distinguishes `verify` from `sense`, and it is what makes the second half of the
   synced record reaches the same verdict the mound did.
 - When the verify step produces no resolvable observation, the confirmed action degrades to
   `unverified` — "without it the outcome is `unverified` no matter what the driver returned".
+- **`expect` is what the step asserts it will observe (`v0.9.30`).** Without it, a `verify` step
+  establishes only that *some* independent observation exists, is fresh, and postdates the action —
+  and a limit switch reporting "open" after a close command confirms the close. The mound reports
+  `succeeded`; the controller holds a signed record saying so; every layer is honest about a fact
+  nobody checked. `expect` is the claim the second observation is tested against.
+  - Shape: `{ "op": …, "value": …, "tolerance": …, "unit": … }`, the same closed operator set a
+    condition uses (`lt`, `lte`, `gt`, `gte`, `eq`, `neq`) — one operator, one number, no expression
+    language. `tolerance` is slack on `eq`/`neq` only; `unit` is advisory, recorded in the refusal
+    text, and **never converted** — a mound does not silently reinterpret a number.
+  - Legal only on a `verify` step that also names `confirms`: an expectation asserts the effect of an
+    action, so there must be an action to judge. An unknown operator is refused at validation rather
+    than read as "not met", so the mistake is named before the valve moves.
+  - When the observation **disagrees**, the confirmed action degrades to `unverified` and the reason
+    names both sides: *expected 'eq 1 closed', observed 0*.
+  - When the observation carries **no readable value**, the action also degrades — an assertion that
+    could not be tested has not been met. The reason distinguishes the two cases, because "the
+    hardware did not do it" and "I could not tell" call for different responses.
+  - A `verify` step with no `expect` behaves exactly as it did before `v0.9.30`.
 - **A promised confirmation holds the verdict open (`v0.9.27`).** An honest actuator produces no
   evidence of its own — a command is not evidence — so the evidence gate would demote every
   actuation to `unverified` the instant it happened, and nothing may raise it afterwards. Told by

@@ -482,7 +482,8 @@ static void check_board(void)
         static const char expect[] = "{\"token\":\"tok-0001\",\"mound_id\":\"mm-7f3a0000-0000-4000-8000-000000000001\","
             "\"device_public_key\":\"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8\","
             "\"hardware_profile\":\"sense.temp,act.relay_1\",\"tier\":\"deterministic_controller\","
-            "\"capabilities\":[\"sense.temp\",\"act.relay_1\"],\"protocol_version\":0,\"driver_schemas\":[]}";
+            "\"capabilities\":[\"sense.temp\",\"act.relay_1\"],\"protocol_version\":0,\"driver_schemas\":[],"
+            "\"features\":[]}";
         CHECK_STR_EQ(expect, f.last_body);
     }
 

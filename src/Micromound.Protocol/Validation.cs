@@ -89,6 +89,12 @@ public static class MissionValidator
 
         if (mission.Steps.Count == 0) errors.Add("mission has no steps");
 
+        // Required features come first: a mission whose meaning this runtime cannot honour is
+        // refused whole, before any step is inspected and long before any of it runs. The point is
+        // to make a semantic mismatch loud here rather than silent at the valve.
+        foreach (var feature in mission.RequiredFeatures.Where(f => !ProtocolFeatures.Supported.Contains(f)))
+            errors.Add($"required feature '{feature}' is not implemented by this runtime");
+
         var seen = new HashSet<string>(StringComparer.Ordinal);
         for (var i = 0; i < mission.Steps.Count; i++)
         {
@@ -156,6 +162,26 @@ public static class MissionValidator
                     // an act or a routine claims to have had one.
                     errors.Add($"{where}: confirms step '{step.Confirms}', which does not actuate " +
                                $"(op '{mission.Steps[confirmedIndex].Op}')");
+            }
+
+            // A postcondition is only meaningful where there is an action to judge, and only
+            // testable with an operator this runtime knows. An unknown operator must not read as
+            // "expectation met" — ConditionOps.Evaluate returns false for one, which would fail
+            // closed, but refusing at validation names the mistake instead of reporting a mysterious
+            // unverified after the valve has already moved.
+            if (step.Expect is { } expect)
+            {
+                if (step.Op != MissionStepOps.Verify)
+                    errors.Add($"{where}: only a 'verify' step may carry an 'expect'; this one is '{step.Op}'");
+                else if (string.IsNullOrWhiteSpace(step.Confirms))
+                    errors.Add($"{where}: 'expect' asserts the effect of an action, so the step must also name what it confirms");
+
+                if (!ConditionOps.All.Contains(expect.Op))
+                    errors.Add($"{where}: unknown expect op '{expect.Op}'");
+                if (double.IsNaN(expect.Value) || double.IsInfinity(expect.Value))
+                    errors.Add($"{where}: expect value must be a finite number");
+                if (double.IsNaN(expect.Tolerance) || double.IsInfinity(expect.Tolerance))
+                    errors.Add($"{where}: expect tolerance must be a finite number");
             }
 
             // A settle window is a bounded wait for the physical world, not a scheduling primitive.

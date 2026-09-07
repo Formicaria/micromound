@@ -184,6 +184,14 @@ it, and only when the sole thing against the record was that nothing had looked 
 the actuation path. A mound with only actuators and analog probes cannot confirm anything about the
 lines it drives, however good its rules are.
 
+**And it has to be asked a question it can fail.** Through `v0.9.29` the second pass tested only that
+an independent observation existed, was fresh, and postdated the action — never what it *said*. A
+limit switch reporting "open" after a close command confirmed the close, and the whole chain was
+honest about a fact nobody had checked. `v0.9.30` adds the postcondition: a `verify` step carries
+`expect`, the assertion its observation is tested against, and an action whose confirmation
+disagrees degrades to `unverified` with both sides named. That is the difference between "something
+looked" and "what it saw agrees", and it is the point of the second sense.
+
 Pairings that make an outcome real:
 
 | Action | Evidence |

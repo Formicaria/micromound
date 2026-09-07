@@ -40,11 +40,12 @@ read too widely:
   relay/switch/ADC scenario only — there is no motion primitive in the shipped drivers yet. Phase P3
   of the roadmap closes that; until it does, "the acceptance sequence passes" and "the acceptance
   bench is built" are different statements.
-- *Criterion 11 is weaker than its name.* It asks whether an independent line was read after the act.
-  It does not ask whether that line read the **right thing**: `WitnessAnt.Confirm` checks existence,
-  ordering and freshness, and nothing compares the reading to the state the action was meant to
-  produce. A limit switch reporting "open" after a close command confirms the actuation today. That
-  is roadmap item P0.1, and when typed postconditions land this criterion tightens with them.
+- ~~*Criterion 11 is weaker than its name.*~~ **Closed at `v0.9.30`.** It used to ask only whether an
+  independent line was read after the act, not whether that line read the right thing — so a limit
+  switch reporting "open" after a close command confirmed the actuation. The mission now carries a
+  postcondition (`expect: eq 1 closed`) and the Witness compares the reading against it, so the
+  criterion tests agreement rather than presence. Criterion 12 is its mirror: the same mission, with
+  the witness blinded, must not confirm.
 
 ## The two legs
 
@@ -94,7 +95,7 @@ The prose of `docs/ROADMAP.md` "The target", split at its semicolons and numbere
 | 8 | a mission is coordinated by the Mound Major | the three steps run in order and the mission completes |
 | 9 | the Forager requests actuation and the kernel validates authority and limits | asked 60 s, ran 10 s, outcome `clamped` — and the record says which limit did it |
 | 10 | a generic driver sends a bounded request to the board and the board acts | the board saw a drive **and** a release, and the line is at its safe level afterwards |
-| 11 | the Witness confirms with independent evidence | a *separate* `sense.valve_closed` line read `1` after the act, and its evidence id is now on the action's own refs |
+| 11 | the Witness confirms with independent evidence | a *separate* `sense.valve_closed` line read `1` after the act **and satisfied the mission's stated postcondition** (`eq 1 closed`), and its evidence id is now on the action's own refs |
 | 12 | the result reflects verified / unverified / failed reality | the witness is blinded — not the valve. The actuation still happens; nothing independent can see it; the record must say `unverified` rather than claim success |
 | 13 | the network drops: work continues inside the lease, inventing no authority, and evidence queues | a mission runs offline, nothing is delivered, and the lease expiry does **not** move |
 | 14 | the Pi reboots and stop, lease, configuration and evidence restore | a whole new host over the same state directory: still chartered, same expiry, the pushed 20 s tier intact |

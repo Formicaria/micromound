@@ -133,8 +133,15 @@ public interface IWitnessAnt : IMoundWorker
     /// outcome asserts physical work, so nothing here can talk an `unverified` action back into
     /// having succeeded.
     /// </summary>
+    /// <param name="expect">
+    /// What the verify step asserted it would observe, or null for a step that asserts nothing.
+    /// A non-null expectation is the difference between "something independent looked" and "what it
+    /// saw agrees" — see <see cref="StepExpectation"/>. It is a required parameter rather than an
+    /// optional one deliberately: every implementer of this interface has to decide what it does
+    /// with a postcondition, and silently ignoring one is the bug this was added to fix.
+    /// </param>
     string Confirm(ActionRecord record, IReadOnlyList<EvidenceItem> confirming, EvidencePolicy policy,
-        DateTimeOffset now, out string reason);
+        DateTimeOffset now, StepExpectation? expect, out string reason);
 }
 
 /// <summary>

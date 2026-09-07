@@ -534,6 +534,76 @@ public class MissionValidationTests
         Assert.Contains(result.Errors, e => e.Contains("settle") && e.Contains("'routine'"));
     }
 
+    // ---- postconditions and feature negotiation (v0.9.30) ------------------------------------
+
+    [Fact]
+    public void A_verify_step_may_assert_what_it_expects_to_observe()
+    {
+        var mission = ValidMission();
+        var confirm = mission.Steps.Single(s => s.StepId == "confirm");
+        confirm.Confirms = "water";
+        confirm.Expect = new StepExpectation { Op = ConditionOps.GreaterThan, Value = 30, Unit = "pct" };
+        mission.RequiredFeatures.Add(ProtocolFeatures.Postconditions);
+
+        var result = Validate(mission);
+
+        Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    /// <summary>An expectation asserts the effect of an action, so it needs an action to judge.</summary>
+    [Fact]
+    public void An_expectation_on_a_step_that_confirms_nothing_is_refused()
+    {
+        var mission = ValidMission();
+        mission.Steps.Single(s => s.StepId == "confirm").Expect =
+            new StepExpectation { Op = ConditionOps.Equal, Value = 1 };   // and Confirms stays empty
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("expect") && e.Contains("confirms"));
+    }
+
+    [Fact]
+    public void An_unknown_expect_operator_is_refused_rather_than_read_as_unmet()
+    {
+        var mission = ValidMission();
+        var confirm = mission.Steps.Single(s => s.StepId == "confirm");
+        confirm.Confirms = "water";
+        confirm.Expect = new StepExpectation { Op = "approximately", Value = 1 };
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("unknown expect op"));
+    }
+
+    /// <remarks>
+    /// The whole point of naming a required feature: a runtime that cannot honour what the mission
+    /// MEANS refuses it whole, loudly, at validation — rather than ignoring the unknown member and
+    /// confirming on presence alone, which is exactly the silent failure this prevents.
+    /// </remarks>
+    [Fact]
+    public void A_mission_requiring_a_feature_this_runtime_lacks_is_refused_whole()
+    {
+        var mission = ValidMission();
+        mission.RequiredFeatures.Add("telepathy");
+
+        var result = Validate(mission);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Contains("telepathy") && e.Contains("not implemented"));
+    }
+
+    [Fact]
+    public void The_features_this_runtime_implements_are_accepted()
+    {
+        var mission = ValidMission();
+        mission.RequiredFeatures.Add(ProtocolFeatures.Postconditions);
+
+        Assert.True(Validate(mission).IsValid);
+    }
+
     [Fact]
     public void Rejections_carry_full_error_lists_never_just_the_first()
     {

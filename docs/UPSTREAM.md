@@ -156,6 +156,27 @@ deployment option to be supported later; it is the shape of the thing.
 
 ## Contract amendments an upstream must pick up
 
+- **`v0.9.30` — postconditions and feature negotiation** (PROTOCOL.md §9 and §3). Three additive
+  members: `expect` on a mission step, `required_features` on a mission, and `features` in the
+  enrollment body. A controller compiled against an older `Micromound.Protocol` parses and verifies
+  everything as before, but **it should pick this up before it authors any mission that depends on a
+  postcondition**, because the failure mode is silent in one direction: a mound older than `v0.9.30`
+  ignores `expect` and confirms on presence alone, reporting `succeeded` where a current mound would
+  report `unverified`.
+  - Read `features` at enrollment and store it per mound. A mound that advertises `postconditions`
+    will enforce an `expect`; one that does not, will not. An absent or empty list means none.
+  - Set `required_features: ["postconditions"]` on any mission carrying an `expect`. A current mound
+    that somehow lacks the feature then refuses the mission whole instead of running it with the
+    assertion ignored. This does not protect against mounds older than `v0.9.30` — nothing can, they
+    ignore the field too — which is why the advertisement is the primary check and this is the
+    backstop.
+  - Expect a new refusal reason on the wire: an action whose confirming observation disagreed reads
+    `unverified` with *"the confirming observation contradicts the action: expected …, observed …"*.
+    That is a mound working correctly, not a fault; surface it as an unmet expectation, distinct from
+    *"the confirming observation carries no readable value"*, which means the mound could not tell.
+- **`v0.9.27` — `settle_s` on a mission step** (PROTOCOL.md §9). Additive, default `0`; a bounded wait
+  before a `sense` or `verify` step so an actuator has time to travel. A controller that omits it gets
+  the previous behaviour exactly. Bounded at 10 s by the device, which refuses anything longer.
 - **`v0.9.24` — `evidence` on `action_record`** (PROTOCOL.md §6). An additive member, always present.
   A controller built against an older `Micromound.Protocol` still parses the record (unknown members are
   ignored) and still verifies it (signatures cover the bytes as received), but it will not see a

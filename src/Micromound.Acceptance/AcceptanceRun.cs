@@ -228,6 +228,10 @@ public sealed class AcceptanceRun(BoardProcess? board, string stateRoot, Action<
 
     private void WitnessConfirmedIndependently() => Check(11, "the Witness confirms with independent evidence", () =>
     {
+        // Since `v0.9.30` the mission asserts what the switch must read, so this criterion tests
+        // agreement rather than mere presence. Criterion 12 below is its mirror: the same mission,
+        // with the witness blinded, must NOT confirm.
+
         var verify = _watering.Steps.FirstOrDefault(s => s.StepId == "confirm");
         if (verify is null) return Fail("the mission ran no verify step");
         if (verify.State != MissionStepStates.Executed) return Fail($"the verify step is {verify.State}: {verify.Detail}");
@@ -236,7 +240,8 @@ public sealed class AcceptanceRun(BoardProcess? board, string stateRoot, Action<
         if (record is null) return Fail("the confirmed record never reached the controller");
         if (!ActionOutcomes.AssertPhysicalWork.Contains(record.Outcome)) return Fail($"the confirmed action reads '{record.Outcome}'");
         var source = Evidence().Values.FirstOrDefault(e => e.EvidenceId == verify.EvidenceRefs.FirstOrDefault())?.Source ?? "";
-        return Ok($"a separate {Closed} line read 1 after the act; the record stands '{record.Outcome}'" + (source.Length > 0 ? $" (source {source})" : ""));
+        return Ok($"a separate {Closed} line read 1 after the act and SATISFIED the mission's postcondition " +
+                  $"(eq 1 closed); the record stands '{record.Outcome}'" + (source.Length > 0 ? $" (source {source})" : ""));
     });
 
     // ------------------------------------------------------------------ 12
@@ -564,9 +569,13 @@ public sealed class AcceptanceRun(BoardProcess? board, string stateRoot, Action<
             new MissionStep
             {
                 StepId = "confirm", Op = MissionStepOps.Verify, Capability = Closed,
-                EvidenceTag = "moved", Confirms = "fill", SettleSeconds = SettleWindow
+                EvidenceTag = "moved", Confirms = "fill", SettleSeconds = SettleWindow,
+                // The postcondition (`v0.9.30`). Before it, this step asked only whether something
+                // independent had looked; criterion 11 passed on a switch reading either value.
+                Expect = new StepExpectation { Op = ConditionOps.Equal, Value = 1, Unit = "closed" }
             }
         ],
+        RequiredFeatures = [ProtocolFeatures.Postconditions],
         // NOT "filling": the act step's tag names evidence an actuator cannot produce. A digital
         // actuator returns a command result, and a command is not evidence of physical work — that is
         // exactly what the confirming read of the limit switch is for. Requiring a tag no honest

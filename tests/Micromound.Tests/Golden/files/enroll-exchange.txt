@@ -5,7 +5,7 @@
 # Device: mound mm-7f3a0000-…, tier deterministic_controller, capabilities sense.temp + act.relay_1, no driver schemas.
 
 path:      /micromound/v0/enroll
-request:   {"token":"tok-0001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","device_public_key":"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8","hardware_profile":"sense.temp,act.relay_1","tier":"deterministic_controller","capabilities":["sense.temp","act.relay_1"],"protocol_version":0,"driver_schemas":[]}
+request:   {"token":"tok-0001","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","device_public_key":"03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8","hardware_profile":"sense.temp,act.relay_1","tier":"deterministic_controller","capabilities":["sense.temp","act.relay_1"],"protocol_version":0,"driver_schemas":[],"features":[]}
 
 ## accepted, with cadence
 response:  200 {"controller_public_key":"29acbae141bccaf0b22e1a94d34d0bc7361e526d0bfe12c89794bc9322966dd7","mound_id":"mm-7f3a0000-0000-4000-8000-000000000001","sync_interval_s":10,"protocol_version":0,"colony_version":"0.3.8.122"}

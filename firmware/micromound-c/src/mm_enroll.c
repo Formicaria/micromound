@@ -38,6 +38,13 @@ size_t mm_enroll_request_body(const mm_enroll_request *r, char *out, size_t cap)
     mm_json_key(&w, "driver_schemas");
     mm_json_array_begin(&w);
     mm_json_array_end(&w);
+    /* features (v0.9.30): the named mission semantics this runtime implements. Empty here, and
+       correctly so — a reduced-profile device never decodes a mission at all (PROTOCOL.md §8), so
+       it implements none of them. Advertising the empty set is not a gap; it is the accurate answer,
+       and it is what lets a controller tell a reduced device apart from an old full one. */
+    mm_json_key(&w, "features");
+    mm_json_array_begin(&w);
+    mm_json_array_end(&w);
     mm_json_object_end(&w);
     return mm_json_finish(&w);
 }

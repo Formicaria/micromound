@@ -359,7 +359,7 @@ public sealed class MoundMajor : IMoundMajor
             if (step.Op == MissionStepOps.Verify && !string.IsNullOrWhiteSpace(step.Confirms) &&
                 witness is not null && actions.TryGetValue(step.Confirms, out var confirmed))
             {
-                var outcome = witness.Confirm(confirmed, Items(record.EvidenceRefs), policy, now, out var why);
+                var outcome = witness.Confirm(confirmed, Items(record.EvidenceRefs), policy, now, step.Expect, out var why);
                 awaitingConfirmation.Remove(step.Confirms);   // judged, either way
 
                 if (!string.Equals(outcome, confirmed.Outcome, StringComparison.Ordinal))

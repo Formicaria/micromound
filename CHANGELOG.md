@@ -12,6 +12,69 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.30 — P0.1: a verify step says what it expects, and the Witness checks
+
+The largest correctness gap in the repository, closed. Roadmap P0.1.
+
+**Wire change, additive:** `expect` on a mission step, `required_features` on a mission, `features`
+in the enrollment body. `canonical-bodies.txt`, `canonical-envelopes.txt` and `enroll-exchange.txt`
+regenerated. No behaviour changes for a mission that carries none of them.
+
+### What was wrong
+
+`WitnessAnt.Confirm` established that a confirming observation existed, was fresh, and was captured
+after the action began — and then handed it to the evidence gate. **Nothing anywhere compared what
+it saw against what the action was supposed to achieve.** A limit switch reporting "open" after a
+close command confirmed the close. The mound reported `succeeded`, the controller held a signed
+record saying so, and every layer in between was honest about a fact nobody had checked.
+
+Everything the repository says about verification — "the second sense is not redundancy", "commands
+are not evidence", the whole reason `digital_sensor` was added in `v0.9.27` — depends on the second
+observation being tested against a claim. There was no claim.
+
+### Added
+
+- **`StepExpectation`** (`expect` on a `verify` step): the closed operator set a condition already
+  uses (`lt`/`lte`/`gt`/`gte`/`eq`/`neq`), a `tolerance` for analog readings where exact equality on a
+  double is a test that never passes, and an advisory `unit` recorded in the refusal text and
+  **never converted** — a mound does not silently reinterpret a number. Same shape as
+  `StepCondition` on purpose: one operator, one number, no expression language.
+- **The Witness evaluates it.** A disagreeing observation degrades the confirmed action to
+  `unverified` with both sides named — *"expected 'eq 1 closed', observed 0"*. An observation with no
+  readable value degrades too, with a **different** reason, because "the hardware did not do it" and
+  "I could not tell" call for different responses from whoever reads the record. An assertion that
+  could not be tested has not been met.
+- **`IWitnessAnt.Confirm` takes the expectation as a required parameter**, not an optional one:
+  every implementer has to decide what it does with a postcondition, and silently ignoring one is
+  the bug this exists to fix.
+- **Validation.** An `expect` is legal only on a `verify` step that also names `confirms` — an
+  expectation asserts the effect of an action, so there has to be an action to judge. An unknown
+  operator is refused at validation rather than read as "not met", so the mistake is named before
+  the valve moves; a non-finite value or tolerance is refused too.
+- **Feature negotiation, both halves** — because neither alone is sufficient:
+  - `required_features` on a mission: a runtime that does not recognise every name refuses the
+    mission **whole**, before any step runs. The failure this prevents is silent — a semantic
+    addition an older runtime ignores rather than rejects. It cannot retrofit a refusal into
+    runtimes that already shipped, which is what the other half is for.
+  - `features` in the enrollment body (§3): the named semantics **this build** implements, so a
+    controller knows what a device will enforce before it sends work that depends on it. Injected
+    like `driver_schemas` rather than fixed, because what a device can honour is a property of the
+    build — a reduced-profile device advertises `[]` and that is the correct answer, not a gap: it
+    decodes no missions at all, so it implements none of these semantics. The C mirror sends the
+    empty list and `enroll-exchange.txt` pins both ends.
+
+### Changed
+
+- **Acceptance criterion 11 now tests agreement, not presence.** The harness mission carries
+  `expect: eq 1 closed`, so the criterion asks what `ACCEPTANCE.md` promised it would once this
+  landed. Criterion 12 is its mirror and still passes: the same mission with the witness blinded
+  must not confirm. 18/18 on the firmware leg, 15/15 applicable in memory.
+- `ACCEPTANCE.md`'s "criterion 11 is weaker than its name" qualification is struck, closed.
+- `UPSTREAM.md` gains the amendment note — including `v0.9.27`'s `settle_s`, which had been missed —
+  and the new refusal reason a controller should expect to surface.
+
+573 C# tests (10 new), 2,567 C checks, acceptance 18/18.
+
 ## v0.9.29 — P0.8: the safe-state walk is per driver on every path that reaches it
 
 **This narrows nothing and widens nothing; it makes an existing guarantee actually hold.** Roadmap

@@ -40,7 +40,8 @@ public class EnrollExchangeTests
         tier: ControllerTiers.DeterministicController,
         moundId: MoundId,
         capabilities: ["sense.temp", "act.relay_1"],
-        driverSchemas: []);   // a constrained device's hardware is compiled in, not described
+        driverSchemas: [],    // a constrained device's hardware is compiled in, not described
+        features: []);        // ...and it decodes no missions, so it implements no mission semantics
 
     [Fact]
     public void The_enrollment_exchange_is_frozen()

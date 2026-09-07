@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Serialization;
 
 namespace Micromound.Protocol;
@@ -72,6 +73,88 @@ public sealed class StepCondition
     [JsonPropertyName("value")] public double Value { get; set; }
 }
 
+/// <summary>
+/// What a <c>verify</c> step asserts it will observe — the postcondition, PROTOCOL.md §9
+/// (`v0.9.30`).
+///
+/// <para><b>Why this exists, and what was wrong without it.</b> Until this, a `verify` step
+/// established only that <i>some</i> independent observation existed, was fresh, and was captured
+/// after the action began. Nothing compared what it saw against what the action was supposed to
+/// achieve — so a limit switch reporting "open" after a close command confirmed the close. The
+/// mound reported `succeeded`, the controller had a signed record saying so, and every layer in
+/// between was honest about a fact nobody had actually checked. "The second sense is not
+/// redundancy" needs a claim to test the second sense against, and this is that claim.</para>
+///
+/// <para>Deliberately the same shape as <see cref="StepCondition"/>: one operator, one number, no
+/// expression language. A condition asks whether a step should run; an expectation asks whether the
+/// step before it worked. They are different questions about the same kind of comparison.</para>
+/// </summary>
+public sealed class StepExpectation
+{
+    /// <summary>lt | lte | gt | gte | eq | neq — see <see cref="ConditionOps"/>.</summary>
+    [JsonPropertyName("op")] public string Op { get; set; } = "";
+
+    /// <summary>The value the observation is compared against.</summary>
+    [JsonPropertyName("value")] public double Value { get; set; }
+
+    /// <summary>
+    /// Slack allowed on an <c>eq</c> or <c>neq</c> comparison: the observation satisfies <c>eq</c>
+    /// when it is within this much of <see cref="Value"/>. Zero — the default — is exact, which is
+    /// what a boolean line wants and what an analog reading almost never does. Ignored by the
+    /// ordering operators, where a threshold already expresses the slack.
+    /// </summary>
+    [JsonPropertyName("tolerance")] public double Tolerance { get; set; }
+
+    /// <summary>
+    /// The unit the author believed they were asserting in (`pct`, `V`, `closed`). Advisory and
+    /// recorded in the refusal text, so an expectation written against the wrong scale is legible
+    /// afterwards. It is NOT converted — a mound does not silently reinterpret a number.
+    /// </summary>
+    [JsonPropertyName("unit")] public string Unit { get; set; } = "";
+
+    /// <summary>Does an observed value satisfy this expectation?</summary>
+    public bool IsMet(double observed) => Op switch
+    {
+        ConditionOps.Equal => Math.Abs(observed - Value) <= Math.Abs(Tolerance),
+        ConditionOps.NotEqual => Math.Abs(observed - Value) > Math.Abs(Tolerance),
+        _ => ConditionOps.Evaluate(observed, Op, Value)
+    };
+
+    /// <summary>How this expectation reads in a refusal, e.g. <c>eq 1 ±0.5 pct</c>.</summary>
+    public string Describe() =>
+        $"{Op} {Value.ToString(CultureInfo.InvariantCulture)}" +
+        (Tolerance != 0 ? $" ±{Math.Abs(Tolerance).ToString(CultureInfo.InvariantCulture)}" : "") +
+        (string.IsNullOrEmpty(Unit) ? "" : $" {Unit}");
+}
+
+/// <summary>
+/// Named protocol semantics a mission may REQUIRE the runtime to implement — PROTOCOL.md §9.
+///
+/// <para>The set is closed and additive: a name is added here when a change alters what a mission
+/// MEANS in a way an older runtime would silently ignore rather than reject. A runtime that does not
+/// recognise a required name refuses the mission whole, before any step runs, which turns a silent
+/// semantic mismatch into a loud validation refusal.</para>
+///
+/// <para>A device advertises the set it supports at enrollment (PROTOCOL.md §3, <c>features</c>), so
+/// a controller can tell before it sends. Both halves are needed: the advertisement lets a controller
+/// avoid the mistake, and the requirement catches it when the controller gets it wrong anyway.</para>
+/// </summary>
+public static class ProtocolFeatures
+{
+    /// <summary>
+    /// A <c>verify</c> step's <c>expect</c> is evaluated: the confirming observation's VALUE is
+    /// compared against the assertion, and an action whose confirmation disagrees degrades to
+    /// `unverified`. Added `v0.9.30`. Without it a runtime confirms on presence alone.
+    /// </summary>
+    public const string Postconditions = "postconditions";
+
+    /// <summary>Everything this build implements. What a device advertises, and what it validates against.</summary>
+    public static readonly IReadOnlySet<string> Supported = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Postconditions
+    };
+}
+
 /// <summary>One ordered step of a mission — PROTOCOL.md §9.</summary>
 public sealed class MissionStep
 {
@@ -128,6 +211,18 @@ public sealed class MissionStep
     /// suppressed, is not waited out — there is nothing to see.</para>
     /// </summary>
     [JsonPropertyName("settle_s")] public double SettleSeconds { get; set; }
+
+    /// <summary>
+    /// What this step asserts it will observe — see <see cref="StepExpectation"/>. Only meaningful
+    /// on a <c>verify</c> step, where it is the difference between "something independent looked"
+    /// and "what it saw agrees". Null — the default — keeps the pre-`v0.9.30` behaviour: presence,
+    /// freshness and ordering are checked, and the value is not.
+    ///
+    /// <para>A mission that carries one should also name <see cref="ProtocolFeatures.Postconditions"/>
+    /// in <see cref="Mission.RequiredFeatures"/>, so a runtime too old to evaluate it refuses the
+    /// mission instead of silently confirming on presence alone.</para>
+    /// </summary>
+    [JsonPropertyName("expect")] public StepExpectation? Expect { get; set; }
 }
 
 /// <summary>Numeric bounds a mission is validated against — one place, so validator and docs agree.</summary>
@@ -162,6 +257,24 @@ public sealed class Mission
     [JsonPropertyName("steps")] public List<MissionStep> Steps { get; set; } = [];
     /// <summary>Evidence tags this mission must produce for its report to count as verified.</summary>
     [JsonPropertyName("required_evidence")] public List<string> RequiredEvidence { get; set; } = [];
+    /// <summary>
+    /// Protocol features this mission needs the runtime to actually implement — see
+    /// <see cref="ProtocolFeatures"/>. A mound that does not recognise every name here refuses the
+    /// mission whole, before any step runs.
+    ///
+    /// <para><b>Why a list of names rather than a version number.</b> The failure this prevents is
+    /// silent: a semantic addition that an older runtime ignores rather than rejects. A step's
+    /// <c>expect</c> is exactly that shape — an old mound skips the unknown member, confirms on
+    /// presence alone, and reports a success the mission's author would have called unverified.
+    /// Naming the requirement makes the mismatch loud at validation, where it costs nothing,
+    /// instead of silent at the point a valve did the wrong thing.</para>
+    ///
+    /// <para>It cannot retrofit a refusal into runtimes that already shipped: a mound older than
+    /// `v0.9.30` ignores this field as it ignores <c>expect</c>. That is what the device's
+    /// advertised feature list at enrollment is for (PROTOCOL.md §3) — the controller checks what a
+    /// device supports before sending, and this field catches the rest.</para>
+    /// </summary>
+    [JsonPropertyName("required_features")] public List<string> RequiredFeatures { get; set; } = [];
     [JsonPropertyName("safe_state")] public string SafeState { get; set; } = "";
     [JsonPropertyName("expires_at")] public string ExpiresAt { get; set; } = "";
     /// <summary>Human-readable context. Advisory only — no runtime path may branch on this.</summary>

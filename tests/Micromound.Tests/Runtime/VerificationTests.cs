@@ -218,6 +218,15 @@ public class VerificationTests
         ]
     };
 
+    /// <summary>The same mission, with the verify step asserting what it expects to observe.</summary>
+    private static Mission WateringExpecting(DateTimeOffset now, StepExpectation expect)
+    {
+        var mission = Watering(now);
+        mission.RequiredFeatures.Add(ProtocolFeatures.Postconditions);
+        mission.Steps.Single(s => s.StepId == "confirm").Expect = expect;
+        return mission;
+    }
+
     private ActionRecord Watered(MoundMajor major) =>
         major.Actions.Single(a => a.Capability == KernelHarness.Relay);
 
@@ -288,6 +297,124 @@ public class VerificationTests
         major.Execute(Watering(Now), Now);
 
         Assert.Equal(ActionOutcomes.Refused, major.Actions.Last(a => a.Capability == KernelHarness.Relay).Outcome);
+    }
+
+    // ---- postconditions: what the second sense is actually FOR (v0.9.30) -----------------------
+
+    /// <remarks>
+    /// The gap this closes, stated as the test that used to be impossible to write.
+    ///
+    /// Before `v0.9.30` a `verify` step established only that an independent observation existed,
+    /// was fresh, and postdated the action. A switch reading the WRONG value confirmed the action
+    /// anyway — the mound reported `succeeded` and the controller held a signed record saying so.
+    /// </remarks>
+    [Fact]
+    public void An_observation_that_contradicts_the_action_no_longer_confirms_it()
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.Reading = 0;                 // the switch says the valve did NOT move
+        var major = Colony();
+
+        var report = major.Execute(WateringExpecting(Now, new StepExpectation
+        {
+            Op = ConditionOps.Equal, Value = 1, Unit = "closed"
+        }), Now);
+
+        Assert.Equal(ActionOutcomes.Unverified, Watered(major).Outcome);
+        Assert.Contains("contradicts the action", Watered(major).Detail);
+        Assert.Contains("observed 0", Watered(major).Detail);
+        Assert.Equal(MissionStates.Unverified, report.State);
+    }
+
+    /// <summary>And the same observation, agreeing, still confirms.</summary>
+    [Fact]
+    public void An_observation_that_agrees_confirms_as_before()
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.Reading = 1;
+        var major = Colony();
+
+        var report = major.Execute(WateringExpecting(Now, new StepExpectation
+        {
+            Op = ConditionOps.Equal, Value = 1, Unit = "closed"
+        }), Now);
+
+        Assert.Equal(ActionOutcomes.Succeeded, Watered(major).Outcome);
+        Assert.Equal(MissionStates.Completed, report.State);
+    }
+
+    /// <remarks>
+    /// A tolerance is what makes an assertion usable on an analog reading; without one, `eq` on a
+    /// double is a test that essentially never passes.
+    /// </remarks>
+    [Theory]
+    [InlineData(41.6, true)]
+    [InlineData(42.4, true)]
+    [InlineData(43.0, false)]
+    public void A_tolerance_decides_how_close_is_close_enough(double reading, bool confirms)
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.Reading = reading;
+        var major = Colony();
+
+        major.Execute(WateringExpecting(Now, new StepExpectation
+        {
+            Op = ConditionOps.Equal, Value = 42, Tolerance = 0.5, Unit = "pct"
+        }), Now);
+
+        Assert.Equal(confirms ? ActionOutcomes.Succeeded : ActionOutcomes.Unverified, Watered(major).Outcome);
+    }
+
+    /// <remarks>
+    /// "I could not test the assertion" is not "the assertion held". An observation the mound cannot
+    /// read a number out of leaves the postcondition untested, and an untested postcondition has not
+    /// been met — the same rule as a missing observation, for the same reason.
+    /// </remarks>
+    [Fact]
+    public void An_unreadable_observation_cannot_satisfy_a_postcondition()
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.ProducesEvidence = false;
+        var major = Colony();
+
+        major.Execute(WateringExpecting(Now, new StepExpectation { Op = ConditionOps.Equal, Value = 1 }), Now);
+
+        Assert.Equal(ActionOutcomes.Unverified, Watered(major).Outcome);
+    }
+
+    /// <summary>An ordering assertion — the shape a tank level or a temperature wants.</summary>
+    [Theory]
+    [InlineData(55, true)]
+    [InlineData(50, false)]     // gt is strict
+    [InlineData(45, false)]
+    public void An_ordering_assertion_reads_the_threshold_it_names(double reading, bool confirms)
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.Reading = reading;
+        var major = Colony();
+
+        major.Execute(WateringExpecting(Now, new StepExpectation
+        {
+            Op = ConditionOps.GreaterThan, Value = 50, Unit = "pct"
+        }), Now);
+
+        Assert.Equal(confirms ? ActionOutcomes.Succeeded : ActionOutcomes.Unverified, Watered(major).Outcome);
+    }
+
+    /// <remarks>
+    /// A step with no expectation keeps exactly the pre-`v0.9.30` behaviour. The feature is additive
+    /// in effect as well as on the wire — an existing mission is graded the way it always was.
+    /// </remarks>
+    [Fact]
+    public void A_verify_step_with_no_expectation_behaves_as_it_did_before()
+    {
+        _h.RelayExecutor.ProducesEvidence = false;
+        _h.SensorExecutor.Reading = 0;      // the value that WOULD contradict, were anything asserted
+        var major = Colony();
+
+        major.Execute(Watering(Now), Now);
+
+        Assert.Equal(ActionOutcomes.Succeeded, Watered(major).Outcome);
     }
 
     /// <remarks>
@@ -462,7 +589,7 @@ public class WitnessOrderingTests
         var record = Watered(Now);
 
         var outcome = Witness().Confirm(record, [Reading("ev-before", Now.AddSeconds(-30))],
-            new EvidencePolicy(), Now.AddSeconds(6), out var reason);
+            new EvidencePolicy(), Now.AddSeconds(6), expect: null, out var reason);
 
         Assert.Equal(ActionOutcomes.Unverified, outcome);
         Assert.Contains("predates the action", reason);
@@ -476,7 +603,7 @@ public class WitnessOrderingTests
         var record = Watered(Now);
 
         var outcome = Witness().Confirm(record, [Reading("ev-after", Now.AddSeconds(2))],
-            new EvidencePolicy(), Now.AddSeconds(6), out _);
+            new EvidencePolicy(), Now.AddSeconds(6), expect: null, out _);
 
         Assert.Equal(ActionOutcomes.Succeeded, outcome);
         Assert.Contains("ev-after", record.EvidenceRefs);
@@ -490,7 +617,7 @@ public class WitnessOrderingTests
         var record = Watered(Now);
 
         var outcome = Witness().Confirm(record, [Reading("ev-at", Now)],
-            new EvidencePolicy(), Now.AddSeconds(6), out _);
+            new EvidencePolicy(), Now.AddSeconds(6), expect: null, out _);
 
         Assert.Equal(ActionOutcomes.Succeeded, outcome);
     }
@@ -502,7 +629,7 @@ public class WitnessOrderingTests
 
         var outcome = Witness().Confirm(record,
             [Reading("ev-before", Now.AddSeconds(-30)), Reading("ev-after", Now.AddSeconds(2))],
-            new EvidencePolicy(), Now.AddSeconds(6), out _);
+            new EvidencePolicy(), Now.AddSeconds(6), expect: null, out _);
 
         Assert.Equal(ActionOutcomes.Succeeded, outcome);
         Assert.Contains("ev-after", record.EvidenceRefs);
@@ -520,7 +647,7 @@ public class WitnessOrderingTests
         };
 
         var outcome = Witness().Confirm(record, [Reading("ev-x", Now.AddSeconds(-30))],
-            new EvidencePolicy(), Now, out _);
+            new EvidencePolicy(), Now, expect: null, out _);
 
         Assert.Equal(ActionOutcomes.Succeeded, outcome);
     }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using Micromound.Capabilities;
 using Micromound.Evidence;
 using Micromound.Protocol;
@@ -287,7 +288,7 @@ public sealed class WitnessAnt(IEvidenceCorrelator correlator, WorkerDescriptor?
     public WorkerState State => WorkerState.Idle;
 
     public string Confirm(ActionRecord record, IReadOnlyList<EvidenceItem> confirming,
-        EvidencePolicy policy, DateTimeOffset now, out string reason)
+        EvidencePolicy policy, DateTimeOffset now, StepExpectation? expect, out string reason)
     {
         reason = "";
 
@@ -328,6 +329,38 @@ public sealed class WitnessAnt(IEvidenceCorrelator correlator, WorkerDescriptor?
             reason = $"the confirming observation predates the action (it began {actionBegan!.Value.ToWire()}); " +
                      "a reading from before the act cannot confirm its effect";
             return ActionOutcomes.Unverified;
+        }
+
+        // THE POSTCONDITION (`v0.9.30`). Everything above establishes that an independent
+        // observation exists and could have seen this action's effect. This is where the mound asks
+        // the only question that makes `verify` worth running: does what it saw agree with what the
+        // action was supposed to achieve?
+        //
+        // Without it — every release up to `v0.9.29` — a limit switch reporting "open" after a close
+        // command confirmed the close, because presence, ordering and freshness were the whole test.
+        // The verdict was honest about a fact nobody had checked.
+        //
+        // Two failure modes, deliberately distinguished in the reason text, because they call for
+        // different actions from whoever reads the record: the observation DISAGREED (the hardware
+        // did not do what was asked, or the assertion is wrong), versus the observation carried no
+        // readable number at all (the mound cannot evaluate the assertion, which is not evidence the
+        // action failed and is equally not evidence it worked). Both degrade — an assertion that
+        // cannot be tested has not been met — and neither is allowed to pass silently.
+        if (expect is not null)
+        {
+            if (!EvidenceReadings.TryReadFirst(afterTheAct, out var observed))
+            {
+                reason = $"the confirming observation carries no readable value, so the postcondition " +
+                         $"'{expect.Describe()}' could not be tested";
+                return ActionOutcomes.Unverified;
+            }
+
+            if (!expect.IsMet(observed))
+            {
+                reason = $"the confirming observation contradicts the action: expected " +
+                         $"'{expect.Describe()}', observed {observed.ToString(CultureInfo.InvariantCulture)}";
+                return ActionOutcomes.Unverified;
+            }
         }
 
         // The confirming items join the record's own refs, which is what makes them part of the
