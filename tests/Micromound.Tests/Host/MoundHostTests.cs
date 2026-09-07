@@ -1,3 +1,4 @@
+using Micromound.Capabilities;
 using Micromound.Crypto;
 using Micromound.Host;
 using Micromound.Protocol;
@@ -191,4 +192,122 @@ public sealed class MoundHostTests : IDisposable
         Assert.Contains("mid-actuation", report.Detail);   // ambiguous, never replayed
         Assert.False(new FileStateStore(Path.Combine(_dir, "state")).TryGet("cache:" + MissionCheckpoint.Key, out _));
     }
+    // ---- P0.4 / P0.5: a restart does not reset what the mound owes (v0.9.33) -------------------
+
+    /// <remarks>
+    /// `ActuationHistory` was two in-memory dictionaries that nothing wrote anywhere, so `min_off_s`
+    /// and `max_rate_per_h` — limits the manifest declares and the kernel enforces — began empty on
+    /// every boot. The 300 s cooldown here was enforced before a restart and gone three seconds
+    /// after one, which made rebooting a way to actuate as often as you liked.
+    /// </remarks>
+    [Fact]
+    public void A_cooldown_survives_a_restart()
+    {
+        var keys = Ed25519KeyPair.Generate();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Greenhouse("mm-h20"), StateDirectory = _dir
+        });
+        host.Major.AcceptCharter(Charter("mm-h20"), Now);
+        host.Cache.SaveAuthority(host.Authority);
+
+        host.ExecuteMission(Watering("mm-h20"), Now);
+        var ran = host.Major.Actions.Single(a => a.Capability == "act.water_valve");
+        Assert.NotEqual(ActionOutcomes.Refused, ran.Outcome);   // it actuated; the duty cycle is now owed
+
+        // A reboot three seconds later — well inside the 300 s min_off_s.
+        var reborn = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Greenhouse("mm-h20"), StateDirectory = _dir
+        });
+        reborn.Restore(Now.AddSeconds(3));
+        reborn.ExecuteMission(Watering("mm-h20"), Now.AddSeconds(3));
+
+        Assert.Contains(reborn.Major.Actions,
+            a => a.Capability == "act.water_valve" && a.Outcome == ActionOutcomes.Refused
+                 && a.Detail.Contains("min_off_s"));
+    }
+
+    /// <remarks>
+    /// The replay hole. The handled-downlink set was in-memory only, so a mound's memory of what it
+    /// had already done evaporated on restart — and a controller redelivering a COMPLETED mission
+    /// after a reboot got it executed a second time, with the valve opening again. Every other
+    /// durable protection was in place; this one was simply never written down.
+    /// </remarks>
+    [Fact]
+    public void A_completed_mission_redelivered_after_a_restart_does_not_run_again()
+    {
+        var keys = Ed25519KeyPair.Generate();
+        var controller = new SimController();
+        var link = new SimLink(controller);
+        var keyDirectory = new InMemoryPublicKeyDirectory();
+        controller.Enroll("mm-h21", keys.PublicKey);
+        keyDirectory.Register(KeyIds.Controller, controller.PublicKey);
+
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Greenhouse("mm-h21"), StateDirectory = _dir,
+            Transport = link, ControllerKeys = keyDirectory
+        });
+        controller.IssueCharter(Charter("mm-h21"), Now);
+        host.Sync(Now);
+        Assert.Equal("chartered", host.State);
+
+        var mission = Watering("mm-h21");
+        controller.AssignMission(mission, Now);
+        host.Sync(Now.AddSeconds(1));
+        Assert.True(host.Major.Actions.Any(a => a.Capability == "act.water_valve"),
+            "the downlinked mission should have actuated once");
+
+        // The mound reboots, and the controller redelivers the very same signed envelope — as far as
+        // it knows, its ack was lost.
+        var reborn = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Greenhouse("mm-h21"), StateDirectory = _dir,
+            Transport = link, ControllerKeys = keyDirectory
+        });
+        reborn.Restore(Now.AddSeconds(2));
+        controller.AssignMission(mission, Now.AddSeconds(2));
+
+        reborn.Sync(Now.AddSeconds(3));
+
+        Assert.False(reborn.Major.Actions.Any(a => a.Capability == "act.water_valve"),
+            "the redelivered mission ran again after the restart");
+    }
+
+    /// <remarks>
+    /// The bounded ledger's edge, and why the bound is a horizon rather than a count: an id that
+    /// ages out becomes executable again, which is replay by expiry. So an envelope older than the
+    /// horizon is refused rather than run — the mound can no longer prove it has not already done it.
+    /// </remarks>
+    [Fact]
+    public void An_envelope_older_than_the_replay_horizon_is_refused_not_run()
+    {
+        var keys = Ed25519KeyPair.Generate();
+        var controller = new SimController();
+        var link = new SimLink(controller);
+        var keyDirectory = new InMemoryPublicKeyDirectory();
+        controller.Enroll("mm-h22", keys.PublicKey);
+        keyDirectory.Register(KeyIds.Controller, controller.PublicKey);
+
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = keys, Manifest = Greenhouse("mm-h22"), StateDirectory = _dir,
+            Transport = link, ControllerKeys = keyDirectory
+        });
+        controller.IssueCharter(Charter("mm-h22"), Now);
+        host.Sync(Now);
+
+        // A mission signed now, delivered to a mound whose clock is well past the horizon.
+        var mission = Watering("mm-h22");
+        mission.ExpiresAt = Now.AddDays(30).ToWire();
+        controller.AssignMission(mission, Now);
+
+        host.Sync(Now + RunnerAnt.ReplayHorizon + TimeSpan.FromHours(1));
+
+        Assert.False(host.Major.Actions.Any(a => a.Capability == "act.water_valve"),
+            "an envelope past the replay horizon was executed");
+        Assert.Contains(host.Runner.Audit, line => line.Contains("replay horizon"));
+    }
+
 }

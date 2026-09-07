@@ -28,6 +28,8 @@ public sealed class CacheAnt(IStateStore store, WorkerDescriptor? descriptor = n
 {
     private const string Prefix = "cache:";
     private const string AuthorityKey = "authority";
+    private const string HistoryKey = "history";
+    private const string LedgerKey = "downlink-ledger";
 
     public WorkerDescriptor Descriptor { get; } = descriptor ?? new WorkerDescriptor
     {
@@ -104,6 +106,34 @@ public sealed class CacheAnt(IStateStore store, WorkerDescriptor? descriptor = n
             snapshot.DeviceLimits, snapshot.SafeState);
         return true;
     }
+
+    /// <summary>
+    /// Persist the operating history — what each capability owes before it may run again
+    /// (`v0.9.33`, roadmap P0.5). Kept under its own key rather than folded into the authority
+    /// snapshot: it changes on a different cadence (every actuation, not every charter) and it
+    /// outlives any particular charter by design, because a relay's minimum off-time is a property
+    /// of the relay and not of the paperwork.
+    /// </summary>
+    public void SaveHistory(ActuationHistory history, DateTimeOffset now) =>
+        Save(HistoryKey, history.Snapshot(now));
+
+    /// <summary>
+    /// Rehydrate the operating history at process start. False when there is none — a genuinely
+    /// fresh device, which owes nothing.
+    /// </summary>
+    public bool TryRestoreHistory(ActuationHistory history)
+    {
+        if (!TryLoad<ActuationHistorySnapshot>(HistoryKey, out var snapshot)) return false;
+        history.Restore(snapshot);
+        return true;
+    }
+
+    /// <summary>Persist the replay ledger — what this mound has already acted on (`v0.9.33`).</summary>
+    public void SaveLedger(DownlinkLedgerSnapshot snapshot) => Save(LedgerKey, snapshot);
+
+    /// <summary>Rehydrate the replay ledger. False when there is none — a genuinely fresh device.</summary>
+    public bool TryLoadLedger(out DownlinkLedgerSnapshot snapshot) =>
+        TryLoad(LedgerKey, out snapshot);
 
     /// <summary>What a restart needs to know about authority, and nothing else.</summary>
     public sealed class AuthoritySnapshot
@@ -192,8 +222,15 @@ public sealed class RunnerAnt : IRunnerAnt
     private readonly IEnvelopeSigner _signer;
     private readonly IEnvelopeVerifier _verifier;
     private readonly IEvidenceStore? _evidence;
-    private readonly HashSet<string> _handledDownlink = new(StringComparer.Ordinal);
     private readonly List<string> _audit = [];
+
+    // What this mound has already acted on, and when the envelope claimed to be sent — the durable
+    // replay ledger (`v0.9.33`, roadmap P0.4). This was a bare in-memory HashSet<string>, so the
+    // whole of a mound's memory of what it had already done evaporated on restart: a controller
+    // redelivering a COMPLETED mission after a reboot got it executed a second time, and the valve
+    // opened again. The mound had every other durable protection — the checkpoint, the authority,
+    // the queue — and no record of "I already did this one".
+    private readonly Dictionary<string, DateTimeOffset> _handledDownlink = new(StringComparer.Ordinal);
 
     public RunnerAnt(IMoundMajor mound, IUplinkQueue queue, ISyncTransport transport,
         IEnvelopeSigner signer, IEnvelopeVerifier verifier, IEvidenceStore? evidence = null,
@@ -264,8 +301,94 @@ public sealed class RunnerAnt : IRunnerAnt
     /// </summary>
     public const int MaxBatchesPerSync = 16;
 
+    /// <summary>
+    /// How far back the replay ledger remembers, and therefore how old a downlink envelope may be
+    /// and still be executed. Both halves of one number: an id older than this is pruned, and an
+    /// envelope older than this is refused rather than run, so an entry can never expire into being
+    /// executable again. Generous enough for a real outage; a stop is exempt.
+    /// </summary>
+    public static readonly TimeSpan ReplayHorizon = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// A hard cap on ledger entries, as a memory backstop beneath the horizon. Reaching it means a
+    /// controller sent more than this many envelopes inside one horizon; the oldest are dropped and
+    /// the loss is COUNTED and reported rather than silent, because a forgotten id is a replay
+    /// window and SAFETY.md forbids losing something quietly.
+    /// </summary>
+    public const int MaxLedgerEntries = 2048;
+
+    /// <summary>Ledger entries dropped by the cap while still inside the horizon. Reported, then cleared.</summary>
+    public int TakeForgottenDownlinkCount()
+    {
+        var forgotten = _forgottenDownlink;
+        _forgottenDownlink = 0;
+        return forgotten;
+    }
+
+    private int _forgottenDownlink;
+    private DateTimeOffset _now;
+
+    /// <summary>The replay ledger as it persists — see <see cref="ReplayHorizon"/>.</summary>
+    public DownlinkLedgerSnapshot LedgerSnapshot() => new()
+    {
+        Handled = _handledDownlink.OrderBy(e => e.Value)
+            .Select(e => new DownlinkLedgerEntry { Id = e.Key, SentAt = e.Value.ToWire() })
+            .ToList()
+    };
+
+    /// <summary>
+    /// Rehydrate the replay ledger. Entries whose timestamp will not parse are dropped — an entry
+    /// nobody can date cannot be aged, and keeping it forever would be a slow leak; the horizon
+    /// refusal above still covers the envelope it referred to.
+    /// </summary>
+    public void RestoreLedger(DownlinkLedgerSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        _handledDownlink.Clear();
+        foreach (var entry in snapshot.Handled)
+            if (!string.IsNullOrWhiteSpace(entry.Id) && ProtocolTime.TryParse(entry.SentAt, out var at))
+                _handledDownlink[entry.Id] = at;
+    }
+
+    private static DateTimeOffset SentAtOf(Envelope envelope) =>
+        ProtocolTime.TryParse(envelope.SentAt, out var at) ? at : DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// The ledger key for a mission's own identity. Prefixed so it cannot collide with an envelope
+    /// id, and null for a mission with no id — which mission validation refuses anyway, so there is
+    /// nothing to remember about it.
+    /// </summary>
+    private static string? MissionLedgerKey(string missionId) =>
+        string.IsNullOrWhiteSpace(missionId) ? null : "mission:" + missionId;
+
+    /// <summary>
+    /// Drop what the horizon no longer covers, then enforce the cap oldest-first. Called once per
+    /// beat, where a timestamp is already in hand.
+    /// </summary>
+    private void PruneLedger(DateTimeOffset now)
+    {
+        var horizon = now - ReplayHorizon;
+        foreach (var id in _handledDownlink.Where(e => e.Value < horizon).Select(e => e.Key).ToList())
+            _handledDownlink.Remove(id);
+
+        if (_handledDownlink.Count <= MaxLedgerEntries) return;
+
+        foreach (var id in _handledDownlink.OrderBy(e => e.Value)
+                     .Take(_handledDownlink.Count - MaxLedgerEntries)
+                     .Select(e => e.Key).ToList())
+        {
+            _handledDownlink.Remove(id);
+            _forgottenDownlink++;
+        }
+    }
+
     public SyncOutcome Sync(DateTimeOffset now, int batchSize = 64)
     {
+        // The beat's own clock, kept for the horizon check inside Verify — which runs deep in the
+        // drain loop and has no other way to know what time this beat believes it is.
+        _now = now;
+        PruneLedger(now);
+
         var beat = Publish(EnvelopeKinds.MoundSync, new
         {
             state = _mound.State,
@@ -365,7 +488,8 @@ public sealed class RunnerAnt : IRunnerAnt
     {
         // Idempotent across re-delivery: a controller that resends downlink because its own ack
         // was lost must not make the mound accept the same charter twice or run a mission again.
-        if (_handledDownlink.Contains(envelope.Id)) return false;
+        // Durable since `v0.9.33`, so this holds across a restart and not merely within one process.
+        if (_handledDownlink.ContainsKey(envelope.Id)) return false;
 
         // Addressed to THIS mound. A stop body carries no mound id of its own, so a misrouted
         // stop would otherwise stop whichever mound it happened to reach — and a controller bug
@@ -378,12 +502,38 @@ public sealed class RunnerAnt : IRunnerAnt
         }
 
         var check = EnvelopeValidator.Validate(envelope, _verifier, KeyIds.Controller);
-        if (check.IsValid) return true;
+        if (!check.IsValid)
+        {
+            // Dropped and audited, never processed — PROTOCOL.md §2. Not acknowledged either: an ack
+            // for an envelope nobody processed would tell the controller it was.
+            _audit.Add($"downlink {envelope.Id} ({envelope.Kind}) dropped: {string.Join("; ", check.Errors)}");
+            return false;
+        }
 
-        // Dropped and audited, never processed — PROTOCOL.md §2. Not acknowledged either: an ack
-        // for an envelope nobody processed would tell the controller it was.
-        _audit.Add($"downlink {envelope.Id} ({envelope.Kind}) dropped: {string.Join("; ", check.Errors)}");
-        return false;
+        // THE VALIDITY HORIZON (`v0.9.33`). The ledger above is bounded — it has to be, or a mound
+        // running for a year accumulates every envelope id it ever saw — and a bounded ledger has an
+        // edge: an id that ages out of it becomes executable again, which is replay by expiry.
+        //
+        // So the bound is a horizon rather than a count, and it cuts BOTH ways: ids older than the
+        // horizon are pruned, and an envelope claiming a `sent_at` older than the horizon is refused
+        // outright, because the mound can no longer prove it is not a replay. Refusing is the
+        // fail-safe answer — the alternative is executing physical work on a signed instruction old
+        // enough that its own record of having run has already been forgotten. `sent_at` is inside
+        // the signature, so this cannot be dodged by editing it.
+        //
+        // A stop is exempt. It needs no charter, it is idempotent by construction, and a stale stop
+        // is still a stop — refusing one because it took too long to arrive would be exactly backwards.
+        if (envelope.Kind != EnvelopeKinds.Stop && ProtocolTime.TryParse(envelope.SentAt, out var sentAt)
+            && sentAt < _now - ReplayHorizon)
+        {
+            _audit.Add($"downlink {envelope.Id} ({envelope.Kind}) refused: sent {envelope.SentAt}, " +
+                       $"older than the {ReplayHorizon.TotalHours:0.#}h replay horizon; " +
+                       "this mound can no longer prove it has not already run");
+            return false;
+        }
+
+        return true;
+
     }
 
     /// <summary>Stops first, then authority, then configuration, then work — PROTOCOL.md §7.</summary>
@@ -399,7 +549,7 @@ public sealed class RunnerAnt : IRunnerAnt
 
     private bool HandleAck(Envelope envelope, long beatSeq)
     {
-        _handledDownlink.Add(envelope.Id);
+        _handledDownlink[envelope.Id] = SentAtOf(envelope);
 
         var ack = Deserialize<AckBody>(envelope);
         if (ack is null || ack.ThroughSeq < 0) return false;
@@ -434,7 +584,7 @@ public sealed class RunnerAnt : IRunnerAnt
             // The receive-time check catches re-delivery across syncs; this one catches two
             // copies inside the SAME batch — Add returning false is the second copy. Without it,
             // a controller whose ack was lost mid-exchange could make one mission run twice.
-            if (!_handledDownlink.Add(envelope.Id)) return false;
+            if (!_handledDownlink.TryAdd(envelope.Id, SentAtOf(envelope))) return false;
 
             switch (envelope.Kind)
             {
@@ -494,6 +644,28 @@ public sealed class RunnerAnt : IRunnerAnt
                         break;
                     }
 
+                    // Idempotent by MISSION identity, not merely by envelope identity (`v0.9.33`).
+                    // The envelope-id check above catches a controller re-sending the same bytes.
+                    // It does NOT catch a controller that re-queues the work — which mints a fresh
+                    // envelope around the same mission — and that is the case that actuates twice.
+                    // A mission id names one packet of physical work; running it again requires a
+                    // new id, which is what makes "already did this" expressible at all.
+                    var missionKey = MissionLedgerKey(mission.MissionId);
+                    if (missionKey is not null && _handledDownlink.ContainsKey(missionKey))
+                    {
+                        _audit.Add($"mission '{mission.MissionId}' ({envelope.Id}) not run: already executed");
+                        Publish(EnvelopeKinds.Ack, new AckBody
+                        {
+                            Status = AckStatuses.Refused,
+                            RefersTo = envelope.Id,
+                            Detail = $"mission '{mission.MissionId}' has already been executed by this mound; " +
+                                     "physical work is not repeated on redelivery. Issue a new mission id to run it again"
+                        }, now);
+                        break;
+                    }
+
+                    if (missionKey is not null) _handledDownlink[missionKey] = SentAtOf(envelope);
+
                     // The coordinator executes; the Runner only reports what it said. The report
                     // goes up whatever the verdict was — a refused mission is reported exactly
                     // like a completed one. The durable in-flight checkpoint is cleared only AFTER
@@ -534,4 +706,20 @@ public sealed class RunnerAnt : IRunnerAnt
             return null;
         }
     }
+}
+
+/// <summary>One downlink envelope this mound has already acted on, and when it claimed to be sent.</summary>
+public sealed class DownlinkLedgerEntry
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("sent_at")] public string SentAt { get; set; } = "";
+}
+
+/// <summary>
+/// The durable replay ledger (`v0.9.33`, roadmap P0.4): what this mound has already done, so a
+/// redelivered instruction is recognised as one across a restart rather than executed again.
+/// </summary>
+public sealed class DownlinkLedgerSnapshot
+{
+    [JsonPropertyName("handled")] public List<DownlinkLedgerEntry> Handled { get; set; } = [];
 }

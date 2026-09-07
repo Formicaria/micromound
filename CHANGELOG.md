@@ -12,6 +12,64 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.33 — P0.4 / P0.5: a restart does not reset what the mound owes
+
+Two defects with one shape: state that governs whether physical work may happen lived only in
+memory, so a reboot handed it back. No wire change.
+
+### P0.5 — a restart reset the duty cycle
+
+`ActuationHistory` was two in-memory dictionaries and nothing wrote them anywhere, so `min_off_s`
+and `max_rate_per_h` — limits the manifest declares and the kernel enforces on every actuation —
+began empty on every boot. A 300 s cooldown was enforced before a restart and gone three seconds
+after one, which made rebooting a way to actuate as often as you liked.
+
+It now persists under its own cache key (its own, not folded into the authority snapshot: it changes
+on a different cadence and outlives any particular charter by design — a relay's minimum off-time is
+a property of the relay, not of the paperwork), written after every path that can actuate and
+restored before anything may ask the hardware for more.
+
+### P0.4 — a completed mission could be replayed
+
+The handled-downlink set was an in-memory `HashSet<string>`, so a mound's memory of what it had
+already done evaporated on restart. Every other durable protection was in place — the checkpoint,
+the authority, the queue — and this one was simply never written down.
+
+- **The ledger is durable, and keyed on both the envelope id and the mission id.** The second is
+  the one that matters. The envelope-id check catches a controller re-sending the same bytes; it
+  does **not** catch a controller that re-queues the work, which mints a fresh envelope around the
+  same mission — and that is the case that actuates twice. A redelivered mission is refused with an
+  ack that says so and names the remedy: issue a new mission id to run it again.
+- **Bounded by a validity horizon, not a count**, cutting both ways. A bounded ledger has an edge —
+  an id that ages out becomes executable again, which is replay by expiry — so entries older than
+  24 h are pruned *and* an envelope claiming a `sent_at` older than the horizon is refused rather
+  than run, because the mound can no longer prove it has not already done it. `sent_at` is inside
+  the signature, so this cannot be dodged. A **stop is exempt**: idempotent by construction, and a
+  stale stop is still a stop.
+- A hard cap of 2048 entries sits beneath the horizon as a memory backstop; entries it drops while
+  still inside the horizon are **counted and reportable**, not silently forgotten.
+
+### Removed before release — a mechanism that guarded the wrong direction
+
+An earlier draft of this slice added a `max(now, latest_known)` reference to `ActuationHistory` so a
+clock step could not refresh a rate budget. It was cut, because the two tests written for it passed
+with it reverted — which meant it was proving nothing. The analysis it was built on was backwards:
+a **forward** jump is the dangerous direction for a trailing window (it ages starts out early), and
+`max(now, …)` only guards the backward one, which was already conservative. The real fix is aging
+the window on monotonic elapsed time as `v0.9.31` did for holds, and across a restart the gap is
+genuinely unknowable, so it needs a policy decision rather than a mechanism. Recorded as the
+remaining half of P0.5 rather than shipped as a placebo.
+
+### Added
+
+- `A_cooldown_survives_a_restart` — actuate, reboot three seconds later, and the 300 s `min_off_s`
+  still refuses. **Confirmed red without the fix.**
+- `A_completed_mission_redelivered_after_a_restart_does_not_run_again` — the controller re-queues
+  the same mission around a new envelope after a reboot. **Confirmed red without the fix.**
+- `An_envelope_older_than_the_replay_horizon_is_refused_not_run`.
+
+580 C# tests, 2,567 C checks, acceptance 18/18.
+
 ## v0.9.32 — P0.3: a stop acts on receipt, not after the drain
 
 Roadmap P0.3. No wire change.

@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.32
+**Current version:** v0.9.33
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
 progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
@@ -151,6 +151,13 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.33`:** a restart no longer hands back what the hardware owes. The actuation history
+persists, so a reboot cannot refresh a cooldown or a rate budget; and the handled-downlink ledger
+persists too — keyed on the mission id as well as the envelope id, because a controller that
+re-queues work mints a fresh envelope around the same mission, and that was the case that actuated
+twice. Bounded by a validity horizon rather than a count, so an entry cannot expire into being
+executable again.
 
 **New in `v0.9.32`:** an authenticated stop now takes effect on the exchange that delivered it and
 ends the drain there, instead of waiting out the backlog — measured on a twelve-mission queue, 64

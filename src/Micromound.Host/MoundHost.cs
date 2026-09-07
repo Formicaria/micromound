@@ -368,6 +368,14 @@ public sealed class MoundHost
         Cache.TryRestoreAuthority(Authority, now, out var result,
             Kernel.Capabilities.DeclaredCapabilities(), Kernel.Routines.DeclaredRoutines());
 
+        // What the hardware owes, before anything is allowed to ask it for more. A restart that
+        // dropped this would hand back every cooldown and rate budget the device had already spent.
+        Cache.TryRestoreHistory(Kernel.History);
+
+        // ...and what it has already been told to do. Without this a controller redelivering a
+        // COMPLETED mission after a reboot gets it executed a second time.
+        if (Cache.TryLoadLedger(out var ledger)) Runner.RestoreLedger(ledger);
+
         if (Cache.TryLoad<MissionCheckpoint>(MissionCheckpoint.Key, out var checkpoint))
         {
             EnterSafeState();                    // cold-start safe, per driver, failures reported
@@ -382,6 +390,8 @@ public sealed class MoundHost
     {
         var outcome = WatchingForSafeState(() => Runner.Sync(now));
         Cache.SaveAuthority(Authority);
+        Cache.SaveHistory(Kernel.History, now);   // a downlinked mission actuates through this path too
+        Cache.SaveLedger(Runner.LedgerSnapshot());   // ...and what it has already acted on
         return outcome;
     }
 
@@ -390,6 +400,7 @@ public sealed class MoundHost
     {
         var report = WatchingForSafeState(() => _mound.RunAndReport(mission, now));
         Cache.SaveAuthority(Authority);
+        Cache.SaveHistory(Kernel.History, now);   // what the actuation now owes, before the report leaves
         return report;
     }
 

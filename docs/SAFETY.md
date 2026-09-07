@@ -121,6 +121,14 @@ Also at this layer:
 - Registration-time refusals, because a misconfigured device should fail at startup rather than at
   first use: a `sense.` capability may not be classed above `observe`; nothing may be registered
   as `hazardous`; a routine may not be classed below a capability it drives.
+- **What the hardware owes survives a restart.** A capability's minimum off-time and its rate budget
+  are limits on the DEVICE, not on a session: they persist and are restored before anything may ask
+  the hardware for more, so a reboot cannot hand back a cooldown that was already spent. And what the
+  mound has already been told to do persists too — a controller redelivering a completed mission,
+  whether as the same envelope or as a fresh one around the same mission id, is answered with a
+  refusal rather than a second actuation. That ledger is bounded by a validity horizon rather than a
+  count, so an entry can never expire into being executable again: an instruction older than the
+  horizon is refused, because the mound can no longer prove it has not already run it.
 - **`hazardous`-class actions** — physical risk to people, property, or surroundings; fabrication
   tools, motion near people, building systems — require explicit per-action authorization from the
   controller, never a standing grant, expiring on use or timeout. **Until that pipeline ships with
