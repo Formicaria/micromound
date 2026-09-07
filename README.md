@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.33
+**Current version:** v0.9.34
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
 progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
@@ -151,6 +151,12 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.34`:** the audit path is bounded and no longer rewritten whole. 4,000 queued records
+used to mean a 2.4 MB state document rewritten on every enqueue at ~12 ms each, growing until the
+disk filled; each envelope is now its own segment — a 609 B largest document at a flat ~2 ms — with
+item and byte bounds, oldest-first spill counted and reported on the beat as `spilled_envelopes`,
+and in-place migration of an existing queue.
 
 **New in `v0.9.33`:** a restart no longer hands back what the hardware owes. The actuation history
 persists, so a reboot cannot refresh a cooldown or a rate budget; and the handled-downlink ledger

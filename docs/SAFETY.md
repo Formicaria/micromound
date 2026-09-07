@@ -121,6 +121,12 @@ Also at this layer:
 - Registration-time refusals, because a misconfigured device should fail at startup rather than at
   first use: a `sense.` capability may not be classed above `observe`; nothing may be registered
   as `hazardous`; a routine may not be classed below a capability it drives.
+- **The audit path is bounded, and what it loses is counted.** A queue that grows without limit ends
+  in a full disk, and a mound that cannot write cannot record what it did. The uplink queue is
+  therefore bounded by items and bytes, spills oldest-first when it must, and reports the count on
+  the next beat — the chain makes a gap detectable, and the count makes it explicable. A
+  reduced-profile device does the stricter thing and refuses to record rather than dropping; moving
+  the host to the same rule is named work, not a claim already made.
 - **What the hardware owes survives a restart.** A capability's minimum off-time and its rate budget
   are limits on the DEVICE, not on a session: they persist and are restored before anything may ask
   the hardware for more, so a reboot cannot hand back a cooldown that was already spent. And what the

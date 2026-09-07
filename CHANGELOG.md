@@ -12,6 +12,69 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.34 — P0.7: a bounded audit path that is not rewritten whole
+
+Roadmap P0.7, storage half. **Wire change, additive:** `mound_sync` gains `spilled_envelopes`;
+`device-session.txt` regenerated. Storage format change, migrated in place.
+
+### What was wrong, measured
+
+`DurableUplinkQueue` kept an unbounded `List<Envelope>` and reserialized **the entire queue** into
+one document on every mutation. Measured on this repository's own `FileStateStore`:
+
+| queued | per-enqueue | largest document |
+|---|---|---|
+| 100 | 9.3 ms | 60 KB |
+| 1,000 | 9.1 ms | 608 KB |
+| 4,000 | 12.2 ms | **2.4 MB** |
+
+Every action record cost a full rewrite of everything queued before it, and nothing ever stopped the
+growth — the only thing that ended it was the disk filling. On a Pi's SD card that is write
+amplification measured in gigabytes per day of outage.
+
+After:
+
+| queued | per-enqueue | largest document |
+|---|---|---|
+| 100 | 3.9 ms | 605 B |
+| 1,000 | 1.5 ms | 607 B |
+| 4,000 | **2.7 ms** | **609 B** |
+
+### Fixed
+
+- **Segment storage.** One small document per envelope, keyed by zero-padded sequence, plus a head
+  holding the watermarks and counters. An enqueue writes one segment and the head; an
+  acknowledgement deletes the segments it covers. There is no index to enumerate — the head knows
+  the range and restore walks it, treating a missing segment as a gap rather than an error, which is
+  exactly what a spill leaves behind.
+- **Bounds:** 5,000 items and 8 MiB by default, both configurable. The byte bound is the one that
+  protects a small device, since envelope sizes vary by orders of magnitude between a beat and an
+  action record carrying inline evidence.
+- **Spill, counted and reported.** Oldest-first when a bound is hit, never the last envelope
+  standing. The chain head does not retreat, so what the controller receives still verifies as a
+  chain with a visible gap — and the count now rides the beat as `spilled_envelopes`, so the gap can
+  be explained rather than merely noticed.
+- **Migration.** A queue written in the old whole-document format is moved into segments in place
+  rather than dropped: those are signed records a controller has not seen, and "we changed our
+  storage format" is not a reason to put a gap in a chain.
+- The C mirror sends the same field and always `0` — a reduced-profile device refuses to record when
+  its queue is full rather than dropping, which is the stricter behaviour.
+
+### Added
+
+Five `UplinkQueueTests`: segments-not-one-document, the item bound with its counted spill, the byte
+bound holding where the item count does not, watermarks surviving a restart, and the old-format
+migration. **The two bound tests were confirmed red against the unfixed code.**
+
+### Noticed, not fixed
+
+`canonical-envelopes.txt` pins a `mound_sync` body of `{state, uptime_s}` — a shape *neither*
+implementation emits; both send `{state, queue_depth, …}`. The fixture's copy is hand-built in
+`test_golden.c`, so nothing was checking the real beat body against it. Recorded here rather than
+changed silently, because reconciling it is a fixture decision, not a bug fix.
+
+585 C# tests, 2,567 C checks, acceptance 18/18.
+
 ## v0.9.33 — P0.4 / P0.5: a restart does not reset what the mound owes
 
 Two defects with one shape: state that governs whether physical work may happen lived only in

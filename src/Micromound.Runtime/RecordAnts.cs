@@ -389,10 +389,14 @@ public sealed class RunnerAnt : IRunnerAnt
         _now = now;
         PruneLedger(now);
 
+        // The beat carries what the audit path cost, not only how deep it is. A spilled envelope is
+        // a gap in a signed chain: the controller can already DETECT it from the sequence numbers,
+        // and this is what lets it be explained rather than merely noticed.
         var beat = Publish(EnvelopeKinds.MoundSync, new
         {
             state = _mound.State,
-            queue_depth = _queue.Depth
+            queue_depth = _queue.Depth,
+            spilled_envelopes = (_queue as DurableUplinkQueue)?.TakeSpilledCount() ?? 0
         }, now);
 
         var deferred = new List<Envelope>();

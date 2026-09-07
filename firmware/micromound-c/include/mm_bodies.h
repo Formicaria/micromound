@@ -38,6 +38,7 @@ typedef struct mm_opt_double {
 typedef struct mm_mound_sync {
     const char *state;          /* "idle" | "chartered" | … : the mound state name */
     long long queue_depth;
+    long long spilled_envelopes;   /* records dropped under pressure; 0 on a device that refuses instead */
 } mm_mound_sync;
 void mm_body_mound_sync(mm_json *w, const void *ctx);
 

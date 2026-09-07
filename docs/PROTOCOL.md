@@ -18,6 +18,13 @@ The protocol does not name one.
 - Offline is a normal state, not an error. Uplink envelopes queue durably on-device and drain
   oldest-first on reconnect.
 
+**The beat reports what the audit path cost** (`v0.9.34`). A `mound_sync` body carries `state`,
+`queue_depth`, and `spilled_envelopes` — unacknowledged records the device had to drop under storage
+pressure. The chain already makes a gap DETECTABLE from the sequence numbers; this is what lets it
+be *explained*. A Pi-class mound spills oldest-first at its bound and reports the count; a
+reduced-profile device refuses to record when its queue is full and therefore always reports `0`,
+which is the stricter behaviour and the direction the host's own bound is still moving in.
+
 ## 2. Envelope
 
 Every message in either direction is one signed envelope:

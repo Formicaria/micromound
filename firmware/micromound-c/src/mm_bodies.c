@@ -33,6 +33,11 @@ void mm_body_mound_sync(mm_json *w, const void *ctx)
     mm_json_object_begin(w);
     mm_json_kv_string(w, "state", b->state);
     mm_json_kv_int(w, "queue_depth", b->queue_depth);
+    /* spilled_envelopes (v0.9.34): records the queue had to drop under pressure, so a gap in the
+       chain can be explained and not merely detected. A device whose queue is full REFUSES to
+       record rather than dropping (mm_device), so this is 0 there — but the field is on the wire
+       either way, because a controller must not have to guess which shape of mound it is reading. */
+    mm_json_kv_int(w, "spilled_envelopes", b->spilled_envelopes);
     mm_json_object_end(w);
 }
 

@@ -129,11 +129,12 @@ void test_envelope(void)
 
         sync.state = "observe_only";
         sync.queue_depth = 2;
+        sync.spilled_envelopes = 0;
         e.body = mm_body_mound_sync;
         e.body_ctx = &sync;
         l1 = mm_envelope_write_signed(&e, sk, one, sizeof one, d0);
         CHECK(l1 > 0);
-        CHECK(strstr(one, "\"body\":{\"state\":\"observe_only\",\"queue_depth\":2},\"prev_digest\":\"\",\"sig\":\"ed25519:") != NULL);
+        CHECK(strstr(one, "\"body\":{\"state\":\"observe_only\",\"queue_depth\":2,\"spilled_envelopes\":0},\"prev_digest\":\"\",\"sig\":\"ed25519:") != NULL);
 
         ack.status = "ok";
         ack.refers_to = "11111111-1111-4111-8111-111111111111";

@@ -25,6 +25,106 @@ public class UplinkQueueTests
         Signature = "ed25519:" + new string('a', 128)
     };
 
+    // ---- P0.7: the audit path is bounded, and not rewritten whole (v0.9.34) --------------------
+
+    /// <remarks>
+    /// The queue had no bound at all, so a mound offline long enough filled its disk — and every
+    /// mutation reserialized the ENTIRE queue into one document. Measured on this repository's own
+    /// store: 4,000 queued action records was a 2.4 MB state file rewritten in full on every
+    /// enqueue. Each envelope is now its own small document keyed by sequence.
+    /// </remarks>
+    [Fact]
+    public void An_enqueue_writes_one_segment_and_a_head_not_the_whole_queue()
+    {
+        var store = new InMemoryStateStore();
+        var queue = new DurableUplinkQueue(store);
+
+        for (var i = 0; i < 20; i++) queue.Enqueue(Next(queue));
+
+        // One head plus one document per envelope — not one document containing all of them.
+        Assert.Equal(21, store.Count);
+        Assert.True(store.TryGet("sync:uplink-queue", out var head));
+        Assert.DoesNotContain("\"pending\":[{", head);
+    }
+
+    [Fact]
+    public void The_queue_is_bounded_and_spills_oldest_first_counting_what_it_dropped()
+    {
+        var store = new InMemoryStateStore();
+        var queue = new DurableUplinkQueue(store, maxPending: 5);
+
+        for (var i = 0; i < 12; i++) queue.Enqueue(Next(queue));
+
+        Assert.Equal(5, queue.Depth);
+        Assert.Equal(7, queue.TakeSpilledCount());
+        Assert.Equal(0, queue.TakeSpilledCount());   // read-and-clear: reported once
+
+        // The chain head never retreats, so what survives still verifies as a chain — with a
+        // visible gap where the dropped sequence numbers were.
+        Assert.Equal(12, queue.NextSeq);
+        Assert.Equal(7, queue.Peek(10)[0].Seq);
+    }
+
+    [Fact]
+    public void A_byte_bound_holds_even_when_the_item_count_does_not()
+    {
+        var store = new InMemoryStateStore();
+        var queue = new DurableUplinkQueue(store, maxPending: 1000, maxPendingBytes: 4096);
+
+        for (var i = 0; i < 40; i++) queue.Enqueue(Next(queue));
+
+        Assert.True(queue.PendingBytes <= 4096, $"retained {queue.PendingBytes} bytes");
+        Assert.True(queue.Depth < 40);
+    }
+
+    [Fact]
+    public void Segments_and_watermarks_survive_a_restart()
+    {
+        var store = new InMemoryStateStore();
+        var first = new DurableUplinkQueue(store);
+        for (var i = 0; i < 6; i++) first.Enqueue(Next(first));
+        first.AcknowledgeThrough(2);
+
+        var reborn = new DurableUplinkQueue(store);
+
+        Assert.Equal(3, reborn.Depth);
+        Assert.Equal(6, reborn.NextSeq);
+        Assert.Equal(first.LastDigest, reborn.LastDigest);
+        Assert.Equal(3, reborn.Peek(10)[0].Seq);
+    }
+
+    /// <remarks>
+    /// A mound upgrading in the field has a queue written in the old whole-document format holding
+    /// signed records the controller has not seen. "We changed our storage format" is not a reason
+    /// to put a gap in a chain, so the old shape is migrated in place rather than dropped.
+    /// </remarks>
+    [Fact]
+    public void A_queue_written_in_the_old_format_is_migrated_not_lost()
+    {
+        var store = new InMemoryStateStore();
+        var legacy = new DurableUplinkQueue(store);
+        for (var i = 0; i < 4; i++) legacy.Enqueue(Next(legacy));
+
+        // Rewrite the head the way v0.9.33 and earlier did: everything inline, no `segmented` flag.
+        var inline = legacy.Peek(10);
+        foreach (var envelope in inline) store.Delete("sync:uplink/" + envelope.Seq.ToString("D12"));
+        store.Put("sync:uplink-queue", System.Text.Json.JsonSerializer.Serialize(new
+        {
+            next_seq = legacy.NextSeq,
+            last_digest = legacy.LastDigest,
+            acked_through = -1L,
+            pending = inline
+        }, ProtocolJson.Options));
+
+        var upgraded = new DurableUplinkQueue(store);
+
+        Assert.Equal(4, upgraded.Depth);
+        Assert.Equal(legacy.LastDigest, upgraded.LastDigest);
+        Assert.True(store.TryGet("sync:uplink/000000000000", out _));   // now a segment
+        Assert.True(store.TryGet("sync:uplink-queue", out var head));
+        Assert.DoesNotContain("\"pending\":[{", head);                  // ...and the head is small again
+    }
+
     [Fact]
     public void The_chain_is_enforced_at_enqueue_not_discovered_at_the_controller()
     {

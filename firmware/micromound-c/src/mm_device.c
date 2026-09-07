@@ -93,6 +93,7 @@ long long mm_device_beat(mm_device *d, int64_t now)
     long long seq = d->next_seq;
     body.state = mm_device_state(d);
     body.queue_depth = (long long)d->queue_len;
+    body.spilled_envelopes = 0;   /* a full queue REFUSES to record here; nothing is ever dropped */
     return mm_device_publish(d, MM_KIND_MOUND_SYNC, mm_body_mound_sync, &body, now) == 0 ? seq : -1;
 }
 
