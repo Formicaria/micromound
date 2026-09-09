@@ -53,6 +53,9 @@ typedef struct fake {
     int64_t now;
     kv_entry kv[KV_SLOTS];
     int kv_set_fails;
+    /* P0.9 fault injection: what protected storage does to ONE key when asked for it. */
+    const char *kv_fault_key;
+    enum { KV_OK = 0, KV_FAULT, KV_GARBLE, KV_TRUNCATE } kv_fault_mode;
     unsigned rng_calls;
 
     /* enrollment endpoint script */
@@ -107,8 +110,29 @@ static kv_entry *kv_find(fake *f, const char *key, int create)
 
 static int f_kv_get(void *ctx, const char *key, uint8_t *out, size_t cap, size_t *n)
 {
-    kv_entry *e = kv_find((fake *)ctx, key, 0);
-    if (!e || e->n > cap) return -1;
+    fake *f = (fake *)ctx;
+    kv_entry *e = kv_find(f, key, 0);
+
+    if (f->kv_fault_key && strcmp(f->kv_fault_key, key) == 0) {
+        switch (f->kv_fault_mode) {
+        case KV_FAULT:                                  /* the key may well be there; this store cannot say */
+            return MM_KV_FAULT;
+        case KV_GARBLE:                                 /* right length, wrong bytes: one flipped bit */
+            if (!e || e->n > cap) return MM_KV_ABSENT;
+            memcpy(out, e->data, e->n);
+            out[0] = (uint8_t)(out[0] ^ 0x01);
+            *n = e->n;
+            return 0;
+        case KV_TRUNCATE:                               /* a partially written blob */
+            if (!e || e->n == 0 || e->n > cap) return MM_KV_ABSENT;
+            memcpy(out, e->data, e->n - 1);
+            *n = e->n - 1;
+            return 0;
+        default: break;
+        }
+    }
+
+    if (!e || e->n > cap) return MM_KV_ABSENT;
     memcpy(out, e->data, e->n);
     *n = e->n;
     return 0;
@@ -450,7 +474,7 @@ static void check_board(void)
     configure(&cfg, &relay, &probe);
     CHECK(mm_app_init(&app, &hal, &cfg, error, sizeof error) == 0);
     if (error[0]) printf("  init: %s\n", error);
-    CHECK(kv_len(&f, MM_KV_SEED) == 32);
+    CHECK(kv_len(&f, MM_KV_SEED) == 36);   /* 32 secret bytes + a 4-byte checksum (v0.9.41) */
     mm_hex_lower(app.pk, 32, pk_hex);
     CHECK_STR_EQ("03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8", pk_hex);
     memcpy(first_pk, app.pk, 32);
@@ -693,6 +717,115 @@ static void check_board(void)
         g.kv_set_fails = 1;
         CHECK(mm_app_init(&fourth, &hal2, &cfg4, error, sizeof error) == -1);
         CHECK_STR_EQ("the device seed could not be stored; an identity that does not survive a reboot is not one", error);
+    }
+
+    /*
+     * P0.9: what protected storage does to an identity that EXISTS.
+     *
+     * Before v0.9.41 any read that did not produce exactly 32 bytes fell through to minting a new
+     * seed and overwriting the old one, so one truncated read or one storage hiccup silently turned
+     * the mound into a different device — one that signs and beats and enrolls, and whose every
+     * envelope the controller rejects, while the real mound's signed history is orphaned. Each of
+     * these asserts the same two things: the board refuses to run, and the stored seed is UNTOUCHED.
+     */
+    {
+        static fake h;
+        static mm_app fifth;
+        mm_hal hal3;
+        mm_relay relay5;
+        mm_probe probe5;
+        mm_app_config cfg5;
+        uint8_t original[64];
+        size_t original_n;
+
+        fake_init(&h);
+        hal_bind(&hal3, &h);
+        CHECK(mm_relay_init(&relay5, &hal3, "act.relay_1", 5, 1) == 0);
+        mm_probe_init(&probe5, &hal3, "sense.temp", 0, 100, -50, "C");
+        configure(&cfg5, &relay5, &probe5);
+
+        /* first boot writes the seed and its checksum */
+        CHECK(mm_app_init(&fifth, &hal3, &cfg5, error, sizeof error) == 0);
+        CHECK(kv_len(&h, MM_KV_SEED) == 36);
+        original_n = kv_len(&h, MM_KV_SEED);
+        memcpy(original, kv_find(&h, MM_KV_SEED, 0)->data, original_n);
+
+        /* a flipped bit in the secret half: the checksum says these are not the bytes that were written */
+        h.kv_fault_key = MM_KV_SEED; h.kv_fault_mode = KV_GARBLE;
+        CHECK(mm_app_init(&fifth, &hal3, &cfg5, error, sizeof error) == -1);
+        CHECK(strstr(error, "failed its checksum") != NULL);
+        CHECK(kv_len(&h, MM_KV_SEED) == original_n);
+        CHECK(memcmp(kv_find(&h, MM_KV_SEED, 0)->data, original, original_n) == 0);
+
+        /* a partially written blob: the wrong length, and not a legacy one either */
+        h.kv_fault_mode = KV_TRUNCATE;
+        CHECK(mm_app_init(&fifth, &hal3, &cfg5, error, sizeof error) == -1);
+        CHECK(strstr(error, "refusing to replace an identity that exists") != NULL);
+        CHECK(memcmp(kv_find(&h, MM_KV_SEED, 0)->data, original, original_n) == 0);
+
+        /* the store faults on a key it may well still hold: minting a new identity would be a guess */
+        h.kv_fault_mode = KV_FAULT;
+        CHECK(mm_app_init(&fifth, &hal3, &cfg5, error, sizeof error) == -1);
+        CHECK(strstr(error, "refusing to mint a new identity") != NULL);
+        CHECK(memcmp(kv_find(&h, MM_KV_SEED, 0)->data, original, original_n) == 0);
+
+        /* and with the fault cleared it comes back up as the same mound it always was */
+        h.kv_fault_key = NULL; h.kv_fault_mode = KV_OK;
+        CHECK(mm_app_init(&fifth, &hal3, &cfg5, error, sizeof error) == 0);
+        CHECK(memcmp(kv_find(&h, MM_KV_SEED, 0)->data, original, original_n) == 0);
+    }
+
+    /* A pre-v0.9.41 device: a bare 32-byte seed is the SAME identity, and gains its checksum in place. */
+    {
+        static fake h;
+        static mm_app sixth;
+        mm_hal hal4;
+        mm_relay relay6;
+        mm_probe probe6;
+        mm_app_config cfg6;
+        uint8_t legacy[32], pk_before[32];
+        size_t i;
+
+        fake_init(&h);
+        hal_bind(&hal4, &h);
+        CHECK(mm_relay_init(&relay6, &hal4, "act.relay_1", 5, 1) == 0);
+        mm_probe_init(&probe6, &hal4, "sense.temp", 0, 100, -50, "C");
+        configure(&cfg6, &relay6, &probe6);
+
+        for (i = 0; i < 32; i++) legacy[i] = (uint8_t)(0x40 + i);
+        f_kv_set(&h, MM_KV_SEED, legacy, 32);
+        mm_ed25519_seed_keypair(pk_before, sixth.sk, legacy);
+
+        CHECK(mm_app_init(&sixth, &hal4, &cfg6, error, sizeof error) == 0);
+        CHECK(memcmp(sixth.pk, pk_before, 32) == 0);             /* the same device, not a new one */
+        CHECK(kv_len(&h, MM_KV_SEED) == 36);                     /* migrated in place */
+        CHECK(memcmp(kv_find(&h, MM_KV_SEED, 0)->data, legacy, 32) == 0);
+
+        /* and the migrated blob reads back clean on the next boot */
+        CHECK(mm_app_init(&sixth, &hal4, &cfg6, error, sizeof error) == 0);
+        CHECK(memcmp(sixth.pk, pk_before, 32) == 0);
+    }
+
+    /* A corrupted sticky stop must not un-stop the mound: presence is the signal, not the byte. */
+    {
+        static fake h;
+        static mm_app seventh;
+        mm_hal hal5;
+        mm_relay relay7;
+        mm_probe probe7;
+        mm_app_config cfg7;
+        static const uint8_t junk = 0x00;
+
+        fake_init(&h);
+        hal_bind(&hal5, &h);
+        CHECK(mm_relay_init(&relay7, &hal5, "act.relay_1", 5, 1) == 0);
+        mm_probe_init(&probe7, &hal5, "sense.temp", 0, 100, -50, "C");
+        configure(&cfg7, &relay7, &probe7);
+
+        f_kv_set(&h, MM_KV_STOPPED, &junk, 1);                   /* a stop whose byte has been flipped to nothing */
+        CHECK(mm_app_init(&seventh, &hal5, &cfg7, error, sizeof error) == 0);
+        CHECK(seventh.status.stopped_at_boot);
+        CHECK_STR_EQ("stopped", mm_device_state(&seventh.device));
     }
 }
 

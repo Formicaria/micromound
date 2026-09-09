@@ -212,10 +212,21 @@ static int hal_kv_get(void *ctx, const char *key, uint8_t *out, size_t cap, size
     hal_ctx *h = (hal_ctx *)ctx;
     size_t len = 0;
     esp_err_t err = nvs_get_blob(h->nvs, key, NULL, &len);   /* the length first */
-    if (err != ESP_OK || len > cap) return -1;
+
+    /*
+     * ABSENT and FAULT are answered apart (v0.9.41, roadmap P0.9). NOT_FOUND means the key is not
+     * there; anything else means NVS holds something it could not give us — a failed CRC, an invalid
+     * handle, a partial page — and the library must not treat that as a fresh device and mint a new
+     * identity over one that may still be in the flash. A blob larger than the caller's buffer is
+     * ABSENT because the library only ever reads keys it wrote itself.
+     */
+    if (err == ESP_ERR_NVS_NOT_FOUND) return MM_KV_ABSENT;
+    if (err != ESP_OK) return MM_KV_FAULT;
+    if (len > cap) return MM_KV_ABSENT;
     if (len > 0) {
         err = nvs_get_blob(h->nvs, key, out, &len);
-        if (err != ESP_OK) return -1;
+        if (err == ESP_ERR_NVS_NOT_FOUND) return MM_KV_ABSENT;
+        if (err != ESP_OK) return MM_KV_FAULT;
     }
     *n = len;
     return 0;

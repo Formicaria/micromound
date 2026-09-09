@@ -16,9 +16,9 @@ every push with the same IDF version.
 
 | Configuration | Image | DRAM at link | What the board needs |
 |---|---|---|---|
-| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,027,216 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
-| **Serial link** (`sdkconfig.defaults.serial`) | 297,056 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
-| **Port server** (`sdkconfig.defaults.ports`) | 260,736 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
+| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,027,760 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
+| **Serial link** (`sdkconfig.defaults.serial`) | 297,600 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
+| **Port server** (`sdkconfig.defaults.ports`) | 260,768 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
 
 In the first two the board is a mound: its own identity, its own enrollment, its own kernel
 (`libmicromound_c.a` is 38–39 KB of flash code; the static `mm_app` 40 KB of DRAM, plus 11 KB for
@@ -82,9 +82,13 @@ goes quiet. A release write that fails trips the board: nothing is driven active
 actuates on a zero clock** — and then hands everything to `mm_app`, one tick a second:
 
 - **Identity.** The Ed25519 seed is created from the hardware RNG on first boot and stored in NVS
-  (`mm.seed`); it is never regenerated and never read out. A board whose NVS will not open, or will
-  not store the seed, halts with its outputs safe rather than run with an identity that would not
-  survive a reboot. **NVS is never erased to make it work.** ESP-IDF's stock recipe erases the whole
+  (`mm.seed`, with a 4-byte checksum of its own since `v0.9.41`); it is never regenerated and never
+  read out. A board whose NVS will not open, or will not store the seed, halts with its outputs safe
+  rather than run with an identity that would not survive a reboot — and so does one whose stored seed
+  fails its checksum, is the wrong length, or cannot be read because NVS faulted. **An identity that
+  exists is never replaced by a new one**: minting is only for a device that has none, and
+  `hal_kv_get` distinguishes `ESP_ERR_NVS_NOT_FOUND` from every other error so that judgement can be
+  made. **NVS is never erased to make it work.** ESP-IDF's stock recipe erases the whole
   partition on `ESP_ERR_NVS_NO_FREE_PAGES` or `ESP_ERR_NVS_NEW_VERSION_FOUND`; here that partition is
   the identity, the controller's key and the sticky stop, so the autonomous images halt safe and say
   why instead. Reprovisioning is deliberate — `idf.py erase-flash`, or a development build with

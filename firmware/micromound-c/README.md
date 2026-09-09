@@ -315,6 +315,12 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
   absent by being NULL; a board that assigns field by field and misses one passes a stack value the
   library will call. `-Wextra` catches the initializer-list form of the mistake, not this one.
 - Storage keys are at most 15 characters (`mm.seed`, `mm.ctl_pk`, `mm.sync_s`, `mm.token`, `mm.stopped`): NVS's limit.
+- **`kv_get` answers ABSENT and FAULT apart** (`MM_KV_ABSENT` -1, `MM_KV_FAULT` -2; `v0.9.41`). It
+  matters for one key: "no seed" is a fresh device and the library mints an identity, while "the seed
+  is there and unreadable" is a device whose identity must not be replaced, and the library halts. A
+  HAL that cannot tell them apart returns -1 for both and gets the older behaviour, which is why -1 is
+  the default and anything else is the stronger claim. `mm.seed` is stored as 32 secret bytes plus a
+  4-byte SHA-256 checksum of them; a bare 32-byte blob is the older form and migrates in place.
   A `kv_set` of zero bytes may be implemented as an erase; the library treats "absent" and "empty" alike.
 - Clock: the app never acts on a zero clock, and a relay hold is released when `now` passes the deadline
   — a clock that jumps forward releases early (the safe direction); one that jumps back holds longer,

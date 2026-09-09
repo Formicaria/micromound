@@ -34,15 +34,83 @@ static void new_id(void *ctx, char out[MM_ID_CAP])
              b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
 }
 
+/* The stored seed blob: the 32 secret bytes and the first 4 of their SHA-256. */
+#define MM_SEED_BLOB 36
+
+static void seed_checksum(const uint8_t seed[32], uint8_t out[4])
+{
+    uint8_t digest[MM_SHA256_DIGEST_LEN];
+    mm_sha256_digest(seed, 32, digest);
+    memcpy(out, digest, 4);
+}
+
+static int store_seed(mm_app *app)
+{
+    uint8_t blob[MM_SEED_BLOB];
+    memcpy(blob, app->seed, 32);
+    seed_checksum(app->seed, blob + 32);
+    return app->hal->kv_set(app->hal->ctx, MM_KV_SEED, blob, sizeof blob);
+}
+
+/*
+ * The device's identity, and the three ways this can go (v0.9.41, roadmap P0.9).
+ *
+ * The rule that governs all of it: an identity that EXISTS must never be silently replaced. Before
+ * this, any read that did not produce exactly 32 bytes fell straight through to minting a new seed
+ * and overwriting the old one — so one truncated read, one storage hiccup, one partially-written
+ * blob, and the mound came up as a different device. It would look healthy: it signs, it beats, it
+ * enrolls; and the controller rejects every envelope it sends, because they are signed by a mound
+ * nobody knows, while the real mound's whole signed history is orphaned. Reprovisioning is a
+ * decision, and it is not this function's to make.
+ *
+ *   absent            -> a fresh device: mint, store, run.
+ *   present and good  -> use it. A 32-byte blob is the pre-v0.9.41 form and is rewritten with its
+ *                        checksum in place; a failed rewrite is not fatal, the next boot retries.
+ *   present and bad   -> halt. Either the bytes are the wrong length, or the checksum says they are
+ *                        not the bytes that were written, or the store faulted on a key it may well
+ *                        still hold. The board stops with its outputs safe and says which.
+ *
+ * The checksum is this library's own, deliberately, and not a reliance on NVS's per-entry CRC:
+ * mm_hal is an abstraction, a board may bind kv to anything, and the one datum whose corruption
+ * cannot be noticed any other way is the one that must not be guessed at.
+ */
 static int load_or_create_seed(mm_app *app, char *error, size_t cap)
 {
+    uint8_t blob[MM_SEED_BLOB], expect[4];
     size_t n = 0;
-    if (app->hal->kv_get(app->hal->ctx, MM_KV_SEED, app->seed, sizeof app->seed, &n) == 0 && n == 32) return 0;
+    int rc = app->hal->kv_get(app->hal->ctx, MM_KV_SEED, blob, sizeof blob, &n);
+
+    if (rc == 0) {
+        if (n != MM_SEED_BLOB && n != 32) {
+            snprintf(error, cap, "the stored device seed is %u bytes, not %d or 32; refusing to replace an identity that exists",
+                     (unsigned)n, MM_SEED_BLOB);
+            return -1;
+        }
+        memcpy(app->seed, blob, 32);
+        if (n == MM_SEED_BLOB) {
+            seed_checksum(app->seed, expect);
+            if (memcmp(expect, blob + 32, 4) != 0) {
+                set_str(error, cap, "the stored device seed failed its checksum; refusing to run as a mound "
+                                    "whose identity may not be its own");
+                return -1;
+            }
+            return 0;
+        }
+        (void)store_seed(app);      /* legacy 32-byte seed: add the checksum, retry next boot if it fails */
+        return 0;
+    }
+
+    if (rc != MM_KV_ABSENT) {
+        set_str(error, cap, "protected storage faulted reading the device seed; refusing to mint a new identity "
+                            "over one that may still be there");
+        return -1;
+    }
+
     if (app->hal->random_bytes(app->hal->ctx, app->seed, sizeof app->seed) != 0) {
         set_str(error, cap, "no entropy for the device seed; refusing to run with a weak identity");
         return -1;
     }
-    if (app->hal->kv_set(app->hal->ctx, MM_KV_SEED, app->seed, sizeof app->seed) != 0) {
+    if (store_seed(app) != 0) {
         set_str(error, cap, "the device seed could not be stored; an identity that does not survive a reboot is not one");
         return -1;
     }
@@ -138,7 +206,10 @@ int mm_app_init(mm_app *app, const mm_hal *hal, const mm_app_config *cfg, char *
     {
         uint8_t stopped = 0;
         size_t got = 0;
-        if (hal->kv_get(hal->ctx, MM_KV_STOPPED, &stopped, sizeof stopped, &got) == 0 && got == 1 && stopped == '1') {
+        /* PRESENCE is the signal, not the byte (v0.9.41). Nothing can accidentally create a key, but
+           a flipped bit can change one — and of the two directions a corrupted stop could go, only
+           "still stopped" is safe. The byte is written as '1' for an operator reading the flash. */
+        if (hal->kv_get(hal->ctx, MM_KV_STOPPED, &stopped, sizeof stopped, &got) == 0 && got >= 1) {
             mm_authority_stop(&app->device.kernel.authority);
             app->status.stopped_at_boot = 1;
             safe_state_cb(app);

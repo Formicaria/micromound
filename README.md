@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.40
+**Current version:** v0.9.41
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 built
 (`v0.9.2`–`v0.9.17`) and M5 built (`v0.9.18`–`v0.9.27`), both open on a hardware run and nothing
@@ -152,6 +152,15 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.41`:** an identity that exists is never silently replaced. A mound's Ed25519 seed is
+what its entire signed history hangs off, and until now any read of it that did not produce exactly
+32 bytes fell through to minting a new one and overwriting the old — so one truncated read or one
+storage hiccup turned the board into a different device. It would look healthy: it signs, it beats,
+it enrolls. The controller would reject every envelope it sent, and the real mound's records would be
+orphaned. The seed now carries a checksum of its own, and a bad checksum, a wrong length or a storage
+fault each halt the board with its outputs safe instead of guessing. The sticky stop is read by
+presence rather than content, because a flipped bit must not un-stop a mound.
 
 **New in `v0.9.40`:** the roadmap says what actually happened. Its phase section was titled "After
 the bench" while phase P0 had in fact been running since `v0.9.29` with the bench still ahead — so

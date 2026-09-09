@@ -12,6 +12,79 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.41 — P0.9: an identity that exists is never silently replaced
+
+Roadmap P0.9, the write path, and it closes the row. **No wire change. No fixture moved.** One
+storage format change, migrated in place: `mm.seed` is 36 bytes now, not 32.
+
+### What was wrong, and it is worse than the row said
+
+P0.9 named the boot-time `nvs_flash_erase()` — closed at `v0.9.35`. Coming back for the write path
+turned up something larger sitting in plain sight in `load_or_create_seed`:
+
+```c
+if (kv_get(MM_KV_SEED, seed, 32, &n) == 0 && n == 32) return 0;
+/* ...otherwise mint a new seed and OVERWRITE the stored one */
+```
+
+Any read that did not produce exactly 32 bytes fell straight through to minting a new identity over
+the old. A truncated read, a storage hiccup, a partially written blob — and the mound comes up as a
+different device. **It looks completely healthy.** It signs, it beats, it enrolls. The controller
+rejects every envelope it sends, because they are signed by a mound nobody knows, and the real
+mound's entire signed history is orphaned with no event anywhere saying what happened. Reprovisioning
+is a decision, and it was being made by a failed read.
+
+### What changed
+
+**An identity that exists is never silently replaced.** Three outcomes, and the board says which:
+
+- *absent* — a fresh device: mint, store, run.
+- *present and good* — use it.
+- *present and bad* — halt with the outputs safe. The bytes are the wrong length, or the checksum
+  says they are not the bytes that were written, or the store faulted on a key it may well still
+  hold.
+
+**The seed carries a checksum of its own** — 32 secret bytes plus the first four of their SHA-256.
+Deliberately the library's own and not a reliance on NVS's per-entry CRC: `mm_hal` is an abstraction,
+a board may bind kv to anything, and the one datum whose corruption cannot be noticed any other way
+is the one that must not be guessed at. A bare 32-byte blob is the pre-`v0.9.41` form, is the same
+identity, and gains its checksum in place on first read; a failed rewrite is not fatal and the next
+boot retries.
+
+**`kv_get` gained the distinction it needed to tell those apart.** `MM_KV_ABSENT` (-1) means the key
+is not there; anything else negative is `MM_KV_FAULT` — the key may well exist and this store could
+not produce it. -1 is what every existing HAL already returns for both, so an unchanged board keeps
+the older behaviour and only a HAL that can actually tell them apart gets the stronger guarantee.
+`hal_esp32.c` now returns `MM_KV_ABSENT` for `ESP_ERR_NVS_NOT_FOUND` and `MM_KV_FAULT` for every
+other error.
+
+**The sticky stop is read by presence, not content.** It was `got == 1 && stopped == '1'`. Nothing
+can accidentally create a key, but a flipped bit can change one — and of the two directions a
+corrupted stop could go, only "still stopped" is safe. The byte is still written as `'1'` so an
+operator reading the flash sees something meaningful.
+
+**The fake HAL gained the fault injection this row asked for**: per key, fail outright / return the
+right length with a flipped bit / return a short blob.
+
+### Confirmed red
+
+Fourteen checks fail against the old code — including one nobody wrote for this: **the repository's
+own pre-existing reboot test**, `memcmp(again.pk, first_pk, 32) == 0`. Handed a 36-byte blob, the old
+`load_or_create_seed` minted a new identity, and the test that has asserted "same device after a
+reboot" since `v0.9.22` said the device had changed. That is the defect demonstrating itself on a
+test written two months before anyone was looking for it.
+
+### Verified
+
+602 C# tests, 2,658 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, all three ESP-IDF images built under v5.3.2 (Wi-Fi 1,027,760 B; serial 297,600 B; port
+server 260,768 B), acceptance 18/18 on the firmware leg and 15/15 applicable in memory, the console
+harness, and the simulator's lifecycle claims. Every frozen fixture is byte-identical — the seed
+blob grew, the seed did not, so no key and no signature moved. Not run: the NuGet restore
+(firewalled), and any of it on real hardware.
+
+---
+
 ## v0.9.40 — the roadmap says what actually happened
 
 **Documentation only. No source file changed, no test changed, no fixture moved.**
