@@ -19,6 +19,7 @@
 #define LINE_MAX_LEN 4096
 
 static const char MOUND[] = "mm-7f3a0000-0000-4000-8000-000000000001";
+static const int64_t T0 = 1786741451LL;   /* 2026-08-14T21:04:11Z, the fixture's clock */
 
 /* ---- the device, as KernelDecisionsTests.Device() declares it ---------------------------- */
 
@@ -413,4 +414,55 @@ void test_kernel(void)
     }
     fclose(f);
     CHECK(steps == 48);
+
+    /*
+     * P0.5 (v0.9.38): a WALL clock that is stepped forward must not hand back an operating budget.
+     * The canonical case on this profile is a board with no battery-backed RTC: it comes up
+     * believing it is 1970 and its first SNTP sync steps the clock forward by decades. Ageing the
+     * budgets on whichever clock claims LESS makes that step worth nothing.
+     *
+     * Driven straight against mm_history through the kernel, with a fresh kernel so the replay
+     * above is untouched. history.monotonic_now is what mm_app refreshes from the HAL each tick;
+     * 0 means the board offers no monotonic source and the wall clock is all there is.
+     */
+    {
+        static mm_kernel s;                                  /* large */
+        mm_executor relay;
+        mm_param on_s = { "on_s", 5 };
+        mm_request act = { "act.relay_1", &on_s, 1, "", "", -1 };
+        mm_decision d;
+        mm_action_record_in rec;
+        mm_charter_in ch;
+        scripted mood = { "act.relay_1", 1, 0, 0, 0 };
+        char err[256], actual[LINE_MAX_LEN];
+
+        CHECK(mm_kernel_init(&s, MOUND, CAPS, 4, ROUTINES, 1, err, sizeof err) == 0);
+        relay.capability_id = "act.relay_1";
+        relay.run = scripted_run; relay.ctx = &mood; relay.available = 1;
+        CHECK(mm_kernel_bind_executor(&s, &relay) == 0);
+        benign_charter(&ch);
+        accept(&s, &ch, T0, actual, sizeof actual);
+
+        /* the relay runs once, with ten seconds of real uptime behind it */
+        s.history.monotonic_now = 10;
+        mm_kernel_execute(&s, &act, T0, "a-mono-1", &rec);
+        CHECK_STR_EQ("succeeded", rec.outcome);
+
+        /* five more seconds really pass; the clock is corrected ten minutes forward */
+        s.history.monotonic_now = 15;
+        mm_kernel_authorize(&s, &act, T0 + 600, &d);
+        CHECK(!d.authorized);
+        CHECK(d.refusal == MM_REFUSAL_DUTY_CYCLE);
+        CHECK(strstr(d.detail, "min_off_s") != NULL);
+
+        /* real time passing does still clear it — a guard that only ever refused would be worse */
+        s.history.monotonic_now = 10 + 400;
+        mm_kernel_authorize(&s, &act, T0 + 400, &d);
+        CHECK(d.authorized);
+
+        /* and with no monotonic source the wall clock is believed, exactly as before v0.9.38 */
+        s.history.monotonic_now = 0;
+        mm_kernel_authorize(&s, &act, T0 + 600, &d);
+        CHECK(d.authorized);
+    }
 }

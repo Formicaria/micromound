@@ -20,6 +20,16 @@
 extern "C" {
 #endif
 
+/*
+ * ZERO THE STRUCT BEFORE FILLING IT IN. `memset(&hal, 0, sizeof hal)` first, then assign the hooks
+ * this board has. Some are OPTIONAL and NULL is how the library is told they are absent, so a board
+ * that fills the fields one by one and skips one is passing whatever was on the stack — which is a
+ * function pointer the library will call. Every hook added after v0.9.22 is optional for exactly
+ * this reason, and this is the price of that: a struct grown by one field will segfault code that
+ * assigned the fields one by one and never zeroed the struct. `-Wextra` catches the initializer-list
+ * form of the same mistake (missing-field-initializers) but has nothing to say about field-by-field
+ * assignment — which is how the test HAL segfaulted the moment `monotonic_s` was added in v0.9.38.
+ */
 typedef struct mm_hal {
     void *ctx;
 
@@ -51,6 +61,21 @@ typedef struct mm_hal {
 
     /* One analog sample, in volts. */
     int (*adc_read)(void *ctx, int channel, double *volts);
+
+    /*
+     * OPTIONAL (v0.9.38, roadmap P0.5). Seconds since some fixed point this board cannot change —
+     * an uptime counter, not a clock. May be NULL, and NULL is a supported configuration, not a
+     * lapse: the library then measures the operating budgets on `now` alone, exactly as it did
+     * before this existed.
+     *
+     * What it buys: `now` is a WALL clock and a wall clock can be STEPPED, and a step forward is
+     * indistinguishable from time passing. A board whose RTC is slow, corrected by its first SNTP
+     * sync, would otherwise find every min_off_s elapsed and every max_rate_per_h window empty at
+     * the exact moment it has least reason to trust its own sense of time. With this, the kernel
+     * ages those budgets on whichever of the two clocks claims LESS time passed. On ESP-IDF this
+     * is esp_timer_get_time() / 1000000.
+     */
+    int64_t (*monotonic_s)(void *ctx);
 } mm_hal;
 
 /* The kv keys the library uses (at most 15 characters: NVS's key limit). A board stores nothing else on the library's behalf. */

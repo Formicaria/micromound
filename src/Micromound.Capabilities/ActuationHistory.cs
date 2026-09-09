@@ -10,16 +10,52 @@ namespace Micromound.Capabilities;
 /// This is deliberately per-capability rather than per-mission or per-charter. A relay's minimum
 /// off-time is a property of the relay: it must hold across a charter replacement, a mission
 /// change, and a reconnect, or a controller could reset a pump's cooldown by reissuing paperwork.
+///
+/// <para><b>Time here is measured twice</b> (`v0.9.38`, roadmap P0.5). Every recorded instant is a
+/// wall-clock time, because that is what persists and what an operator reads; but a wall clock can
+/// be STEPPED, and a step forward is indistinguishable from time passing. That is the whole problem:
+/// a mound whose RTC is an hour slow at boot, corrected by the first NTP sync, would find every
+/// cooldown elapsed and every rate budget fresh at the exact moment it has least reason to trust
+/// itself. So when a <see cref="Time"/> provider is supplied, each entry also carries the monotonic
+/// timestamp at which it was recorded, and the age of an entry is the SMALLER of what the two clocks
+/// claim. For "has enough time passed?" the smaller answer is the safe one — the mirror image of the
+/// rule `v0.9.31` uses for releasing a hold, where the question is "is it time to de-energize?" and
+/// the LARGER elapsed wins.</para>
 /// </summary>
 public sealed class ActuationHistory
 {
-    private readonly Dictionary<string, DateTimeOffset> _lastEnd = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, List<DateTimeOffset>> _starts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Instant> _lastEnd = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<Instant>> _starts = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The monotonic source used to cross-check the wall clock, or null for wall-clock only.
+    ///
+    /// <para>Null is not a lapse: it is the honest state for a history just restored from disk (the
+    /// stamps of a previous process mean nothing in this one), for the in-memory kernels the golden
+    /// fixtures drive, and for any composition with no real clock behind it. What null costs is
+    /// stated rather than hidden — see the class note. A real host sets it.</para>
+    /// </summary>
+    public TimeProvider? Time { get; set; }
 
     /// <summary>When this capability's last actuation finished, or null if it never has.</summary>
     public DateTimeOffset? LastEnd(string capability) =>
-        _lastEnd.TryGetValue(capability, out var end) ? end : null;
+        _lastEnd.TryGetValue(capability, out var end) ? end.Wall : null;
+
+    /// <summary>
+    /// Whether <c>min_off_s</c> has really elapsed since this capability last ran.
+    ///
+    /// <para>Asked as a question rather than answered by the caller subtracting from
+    /// <see cref="LastEnd"/>, because the answer is not a subtraction: with a monotonic source in
+    /// hand it is the smaller of what the two clocks say has passed, so a clock stepped forward
+    /// cannot hand back a cooldown. <see cref="LastEnd"/> stays what the refusal DETAIL names — an
+    /// operator reading a record needs the instant the hardware actually stopped, not the number the
+    /// guard used to decide.</para>
+    /// </summary>
+    public bool MinOffElapsed(string capability, double minOffSeconds, DateTimeOffset now)
+    {
+        if (!_lastEnd.TryGetValue(capability, out var end)) return true;
+        return Elapsed(end, now) >= TimeSpan.FromSeconds(minOffSeconds);
+    }
 
     /// <summary>
     /// How many times this capability started in the trailing hour before <paramref name="now"/>.
@@ -30,19 +66,22 @@ public sealed class ActuationHistory
     /// relative to the jumped clock, and once the clock was corrected back, the rate budget would
     /// be spuriously fresh inside the same real hour. Pruning belongs where state is already being
     /// changed, in <see cref="Record"/>.
+    ///
+    /// <para>The window is now aged on the smaller of wall and monotonic elapsed, so the forward
+    /// step that pruning would have made permanent cannot even make it temporary.</para>
     /// </summary>
     public int StartsInTrailingHour(string capability, DateTimeOffset now)
     {
         if (!_starts.TryGetValue(capability, out var starts)) return 0;
 
-        var window = now.AddHours(-1);
-        return starts.Count(at => at > window);
+        return starts.Count(at => Elapsed(at, now) < TimeSpan.FromHours(1));
     }
 
     /// <summary>Record an actuation that actually ran. Refusals never land here — a refusal did nothing.</summary>
     public void Record(string capability, DateTimeOffset startedAt, DateTimeOffset endedAt)
     {
-        _lastEnd[capability] = endedAt;
+        var stamp = Time?.GetTimestamp();
+        _lastEnd[capability] = new Instant(endedAt, stamp);
 
         if (!_starts.TryGetValue(capability, out var starts))
         {
@@ -50,12 +89,30 @@ public sealed class ActuationHistory
             _starts[capability] = starts;
         }
 
-        starts.Add(startedAt);
+        starts.Add(new Instant(startedAt, stamp));
 
         // Prune here, where the caller is already mutating state and has supplied a timestamp we
-        // are choosing to trust. Bounded by the widest window any rate limit can express.
-        var window = startedAt.AddHours(-1);
-        if (starts.Count > 1) starts.RemoveAll(at => at <= window);
+        // are choosing to trust. Bounded by the widest window any rate limit can express — and by
+        // the same two-clock rule the reads use, so a stepped clock cannot make a prune permanent.
+        if (starts.Count > 1) starts.RemoveAll(at => Elapsed(at, startedAt) >= TimeSpan.FromHours(1));
+    }
+
+    /// <summary>
+    /// How long ago an entry happened, believing whichever clock claims LESS.
+    ///
+    /// <para>With no monotonic source, or for an entry restored from a previous process (whose
+    /// stamps mean nothing here), this is the wall-clock difference and nothing more. That is the
+    /// residual P0.5 names: across a restart the real gap is unknowable from inside the mound, and
+    /// no mechanism in this class can close it — only the controller, which knows what time it is,
+    /// could.</para>
+    /// </summary>
+    private TimeSpan Elapsed(Instant at, DateTimeOffset now)
+    {
+        var wall = now - at.Wall;
+        if (Time is not { } time || at.Stamp is not { } stamp) return wall;
+
+        var monotonic = time.GetElapsedTime(stamp);
+        return wall < monotonic ? wall : monotonic;
     }
 
     /// <summary>
@@ -64,6 +121,9 @@ public sealed class ActuationHistory
     /// `max_rate_per_h` — limits a charter grants and the kernel enforces — began empty on every
     /// boot. A 300 s cooldown was enforced before a restart and gone three seconds after one, which
     /// made a reboot loop a way to actuate as often as you liked.
+    ///
+    /// <para>Monotonic stamps are deliberately NOT persisted: a reading from a counter that reset
+    /// when the process did would be a number pretending to be evidence.</para>
     /// </summary>
     public ActuationHistorySnapshot Snapshot(DateTimeOffset now) => new()
     {
@@ -73,9 +133,9 @@ public sealed class ActuationHistory
             .Select(capability => new ActuationHistoryEntry
             {
                 Capability = capability,
-                LastEnd = _lastEnd.TryGetValue(capability, out var end) ? end.ToWire() : "",
+                LastEnd = _lastEnd.TryGetValue(capability, out var end) ? end.Wall.ToWire() : "",
                 Starts = (_starts.TryGetValue(capability, out var starts) ? starts : [])
-                    .Select(at => at.ToWire()).ToList()
+                    .Select(at => at.Wall.ToWire()).ToList()
             })
             .ToList()
     };
@@ -83,9 +143,8 @@ public sealed class ActuationHistory
     /// <summary>
     /// Rehydrate from a snapshot, replacing whatever is here. Unparseable timestamps are dropped
     /// rather than defaulted — a budget entry nobody can read is not a budget entry, and inventing
-    /// one would be worse than losing it. `saved_at` becomes the monotone reference, so a mound that
-    /// comes up with a clock BEHIND the one that wrote the snapshot still ages its window from the
-    /// later, known-real instant instead of handing back a spent budget.
+    /// one would be worse than losing it. Restored entries carry no monotonic stamp, so they age on
+    /// the wall clock alone until a fresh actuation replaces them.
     /// </summary>
     public void Restore(ActuationHistorySnapshot snapshot)
     {
@@ -96,12 +155,13 @@ public sealed class ActuationHistory
         {
             if (string.IsNullOrWhiteSpace(entry.Capability)) continue;
 
-            if (ProtocolTime.TryParse(entry.LastEnd, out var end)) _lastEnd[entry.Capability] = end;
+            if (ProtocolTime.TryParse(entry.LastEnd, out var end))
+                _lastEnd[entry.Capability] = new Instant(end, null);
 
             var starts = entry.Starts
                 .Select(at => ProtocolTime.TryParse(at, out var parsed) ? parsed : (DateTimeOffset?)null)
                 .Where(at => at is not null)
-                .Select(at => at!.Value)
+                .Select(at => new Instant(at!.Value, null))
                 .ToList();
             if (starts.Count > 0) _starts[entry.Capability] = starts;
         }
@@ -114,6 +174,9 @@ public sealed class ActuationHistory
         _lastEnd.Clear();
         _starts.Clear();
     }
+
+    /// <summary>A recorded moment: what the wall clock said, and what the monotonic counter said if there was one.</summary>
+    private readonly record struct Instant(DateTimeOffset Wall, long? Stamp);
 }
 
 /// <summary>One capability's operating budget, as it persists. Timestamps are protocol strings, so
@@ -129,8 +192,9 @@ public sealed class ActuationHistoryEntry
 
 /// <summary>
 /// The whole operating history as it persists — see <see cref="ActuationHistory.Snapshot"/>.
-/// <c>saved_at</c> is provenance: when the writing mound believed it wrote this. It is not currently
-/// used to correct for a stepped clock — see the note on rate accounting in ROADMAP P0.5.
+/// <c>saved_at</c> is provenance: when the writing mound believed it wrote this. It is not used to
+/// correct for a stepped clock, and cannot be: the gap across a restart is unknowable from inside
+/// the mound — see the note on rate accounting in ROADMAP P0.5.
 /// </summary>
 public sealed class ActuationHistorySnapshot
 {

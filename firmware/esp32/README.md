@@ -3,8 +3,8 @@
 The ESP-IDF project that puts [`firmware/micromound-c`](../micromound-c/README.md) on a board. The
 software of the controller is finished and host-tested — the wire format, the reader and validators,
 the capability kernel, the device loop, and (since `v0.9.22`) the board layer: enrollment, the sync
-transport, the relay, probe and switch drivers as kernel executors, and the service loop, all written over an
-eight-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal.h)) and proven on
+transport, the relay, probe and switch drivers as kernel executors, and the service loop, all written over a
+nine-function hardware abstraction ([`mm_hal.h`](../micromound-c/include/mm_hal.h)) and proven on
 the host against a fake of it (`tests/test_board.c`). What this directory adds is the one file that
 knows it is on an ESP32 — `main/hal_esp32.c` — plus the board description and `app_main`.
 
@@ -16,9 +16,9 @@ every push with the same IDF version.
 
 | Configuration | Image | DRAM at link | What the board needs |
 |---|---|---|---|
-| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,026,704 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
-| **Serial link** (`sdkconfig.defaults.serial`) | 296,560 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
-| **Port server** (`sdkconfig.defaults.ports`) | 260,560 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
+| **Wi-Fi + HTTPS** (`sdkconfig.defaults`) | 1,027,216 B (33% of the 1.5 MB partition free) | 41.5% used, 105 KB free for Wi-Fi and the TLS handshake | a network, the controller's certificate chain, NTP |
+| **Serial link** (`sdkconfig.defaults.serial`) | 297,056 B (81% free) | 35.4% used, 116 KB free | a USB cable to a Pi running `micromound --bridge` |
+| **Port server** (`sdkconfig.defaults.ports`) | 260,736 B (83% free) | 12.2% used, 159 KB free | a USB cable to a Pi whose manifest names this board's pins by `link` |
 
 In the first two the board is a mound: its own identity, its own enrollment, its own kernel
 (`libmicromound_c.a` is 38–39 KB of flash code; the static `mm_app` 40 KB of DRAM, plus 11 KB for
@@ -37,9 +37,15 @@ typedef struct mm_hal {
     int (*kv_get)(void *ctx, const char *key, ...);               /* protected storage: seed, controller key, token */
     int (*kv_set)(void *ctx, const char *key, ...);
     int (*gpio_write)(void *ctx, int pin, int level);
+    int (*gpio_read)(void *ctx, int pin, int *level);             /* a limit switch; a fault is never a 0        */
     int (*adc_read)(void *ctx, int channel, double *volts);
-} mm_hal;
+    int64_t (*monotonic_s)(void *ctx);                            /* OPTIONAL: uptime, so a stepped clock cannot */
+} mm_hal;                                                         /*   hand back a cooldown. May be NULL.        */
 ```
+
+**Zero the struct before filling it in.** The optional hooks are recognised as absent by being NULL,
+so a board that assigns the fields one by one and misses one hands the library a stack value to
+call.
 
 That is the whole port. `hal_esp32.c` fills it with SNTP's clock (zero until the year is plausible),
 `esp_fill_random`, `esp_http_client` over esp-tls (the Mozilla root bundle, or a private CA embedded
@@ -48,7 +54,7 @@ namespace, `gpio_set_level`, and `adc_oneshot` with the target's calibration sch
 it — `mm_app`, `mm_enroll`, `mm_link`, `mm_drivers`, `mm_device`, `mm_kernel` — is the library,
 compiled unchanged from `../micromound-c/src` by `components/micromound_c`.
 
-**The serial link** (`CONFIG_MM_LINK_SERIAL`, PROTOCOL.md §12) swaps one of the seven: `http_post_json`
+**The serial link** (`CONFIG_MM_LINK_SERIAL`, PROTOCOL.md §12) swaps one of the nine: `http_post_json`
 becomes `mm_serial_post_json` — the same path and body, framed over a UART to a Pi running
 `micromound --bridge`, which performs the HTTPS half and frames the status and body back — and the
 clock is asked of the bridge (`micromound/link/time`) at boot and hourly instead of SNTP. Nothing else

@@ -36,7 +36,7 @@ needed when the buffer was too small.
 | `mm_decode` | `mm_decode.h` | The receive side: the envelope frame, **signature verified from the bytes as received**, `charter`/`stop`/`ack`/`action_record` into fixed-capacity structs, `EnvelopeValidator` and `CharterValidator` with the host's reason lines character for character, views to re-encode | `canonical-signed.txt` |
 | `mm_kernel` | `mm_kernel.h` | **The capability kernel**: compiled capability/routine tables, `KernelAuthority` (charter, lease, stop, quiesce, device limits), the fourteen authorization checks in the host's order, hardware ∩ device ∩ charter, duty cycle and rate, clamping, execution through a function pointer, the evidence gate; the host's refusal reasons and detail text | `kernel-decisions.txt` |
 | `mm_device` | `mm_device.h` | **The device loop** (`RunnerAnt`): signed, chained uplink on a bounded queue, the beat and its acknowledgement-driven drain, downlink verified from the bytes as received and handled stops-first, acks, lease renewal on the acknowledged beat, quiesce, offline as a normal state | `device-session.txt` (written here, verified by the host) |
-| `mm_hal` | `mm_hal.h` | **What a board supplies**, and nothing else: clock, entropy, one HTTPS POST, protected key/value storage, a digital output, an analog input, and — since `v0.9.27` — a digital input (`gpio_read`; a line that cannot be read is a fault, never a `0`): eight function pointers | `test_board.c`'s fake of it |
+| `mm_hal` | `mm_hal.h` | **What a board supplies**, and nothing else: clock, entropy, one HTTPS POST, protected key/value storage, a digital output, an analog input, and — since `v0.9.27` — a digital input (`gpio_read`; a line that cannot be read is a fault, never a `0`), and — since `v0.9.38` — an OPTIONAL monotonic uptime (`monotonic_s`, may be NULL): nine function pointers | `test_board.c`'s fake of it |
 | `mm_enroll` | `mm_enroll.h` | PROTOCOL.md §3 as `HttpEnrollmentClient` does it: the same request body, the same reading of the response, the same verdicts in the same words; persists the controller key before anything else | `enroll-exchange.txt` |
 | `mm_link` | `mm_link.h` | `HttpSyncTransport`: POST one envelope, split the JSON array that comes down into slices the device verifies; non-2xx is a failed exchange, no exchange is offline | `test_board.c` |
 | `mm_drivers` | `mm_drivers.h` | The three generic drivers as executors: `mm_relay` = `DigitalActuatorDriver` (safe at bring-up, held for the clamped `on_s`, released by `mm_relay_service` or any stop, **no evidence — a command is not evidence**); `mm_probe` = `AnalogSensorDriver` (volts × scale + offset, a `reading` evidence item; a failed read is a fault, never a zero); `mm_switch` = `DigitalSensorDriver` (`v0.9.27`: a digital input read through the manifest's polarity as a `reading` of 1 or 0 — the independent observation that lets an actuation be confirmed at all; a failed read is a fault with no reading) | `test_board.c` |
@@ -249,8 +249,14 @@ Above `mm_device` sits everything a board runs, written against eight function p
 #include "mm_app.h"
 
 static mm_relay relay;  static mm_probe probe;  static mm_app app;      /* static; nothing allocates */
-mm_hal hal = { &board, board_now, board_random, board_https_post, board_kv_get, board_kv_set,
-               board_gpio_write, board_adc_read, board_gpio_read };
+mm_hal hal = { 0 };                                                   /* zero FIRST: NULL is how an optional hook is declared absent */
+hal.ctx = &board;
+hal.now = board_now;                 hal.random_bytes = board_random;
+hal.http_post_json = board_https_post;
+hal.kv_get = board_kv_get;           hal.kv_set = board_kv_set;
+hal.gpio_write = board_gpio_write;   hal.gpio_read = board_gpio_read;
+hal.adc_read = board_adc_read;
+hal.monotonic_s = board_uptime_s;    /* optional; without it a stepped wall clock is believed */
 
 mm_relay_init(&relay, &hal, "act.relay_1", 5, 1);                     /* the line comes up at its SAFE level */
 mm_probe_init(&probe, &hal, "sense.temp", 0, 100.0, -50.0, "C");     /* volts × 100 − 50 → degrees */
@@ -305,6 +311,9 @@ replayed through `mm_enroll_read_response` and must reach the host's verdict in 
   record on the way through `mm_device_sync` peaks near 14 KB; `mm_enroll` adds a 4 KB response and a
   2 KB request on its own path — run the service loop on a task with 32 KB of stack, or lower
   `MM_DEVICE_BATCH`. Nothing allocates, so this is the whole budget.
+- **Zero an `mm_hal` before filling it in.** The optional hooks (`monotonic_s`) are recognised as
+  absent by being NULL; a board that assigns field by field and misses one passes a stack value the
+  library will call. `-Wextra` catches the initializer-list form of the mistake, not this one.
 - Storage keys are at most 15 characters (`mm.seed`, `mm.ctl_pk`, `mm.sync_s`, `mm.token`, `mm.stopped`): NVS's limit.
   A `kv_set` of zero bytes may be implemented as an erase; the library treats "absent" and "empty" alike.
 - Clock: the app never acts on a zero clock, and a relay hold is released when `now` passes the deadline

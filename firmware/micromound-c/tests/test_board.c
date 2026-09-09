@@ -269,6 +269,7 @@ static void fake_init(fake *f)
 
 static void hal_bind(mm_hal *hal, fake *f)
 {
+    memset(hal, 0, sizeof *hal);   /* every optional hook NULL by default — mm_hal's contract */
     hal->ctx = f;
     hal->now = f_now; hal->random_bytes = f_random; hal->http_post_json = f_http;
     hal->kv_get = f_kv_get; hal->kv_set = f_kv_set; hal->gpio_write = f_gpio; hal->gpio_read = f_gpio_read; hal->adc_read = f_adc;

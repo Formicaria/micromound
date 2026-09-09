@@ -226,9 +226,13 @@ public sealed class CapabilityKernel(
         {
             foreach (var key in target.HistoryKeys)
             {
+                // Asked of the history rather than computed here: with a monotonic source in hand
+                // "elapsed" is the smaller of what the two clocks claim, so a wall clock stepped
+                // forward cannot hand back a cooldown (`v0.9.38`, roadmap P0.5). `LastEnd` is still
+                // what the refusal NAMES — the instant the hardware actually stopped.
                 if (effectiveLimits.MinOffSeconds is { } minOff &&
                     History.LastEnd(key) is { } lastEnd &&
-                    now < lastEnd.AddSeconds(minOff))
+                    !History.MinOffElapsed(key, minOff, now))
                 {
                     return KernelDecision.Refuse(RefusalReason.DutyCycle,
                         $"'{key}': min_off_s {Num(minOff)} not elapsed since {lastEnd.ToWire()}", requested);

@@ -182,7 +182,11 @@ try
         Drivers = factories,
         GuardHeartbeatTimeoutSeconds = options.HeartbeatTimeoutSeconds,
         ControllerKeys = controllerKeys,
-        Transport = options.ControllerUrl is null ? null : new HttpSyncTransport(new Uri(options.ControllerUrl))
+        Transport = options.ControllerUrl is null ? null : new HttpSyncTransport(new Uri(options.ControllerUrl)),
+        // The real daemon on real hardware: cross-check every duty cycle and rate budget against a
+        // clock nobody can step. A Pi with a dead RTC boots at the epoch and jumps years forward on
+        // its first NTP sync; without this that jump reads as years of cooldown having elapsed.
+        Time = TimeProvider.System
     });
     service = new MoundService(host);
     // Honour the controller's sync cadence if it stated one. This throttles the sync beat ONLY; the

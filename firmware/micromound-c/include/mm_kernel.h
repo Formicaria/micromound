@@ -206,11 +206,24 @@ typedef struct mm_history_entry {
     int64_t last_end;
     int64_t starts[MM_HISTORY_STARTS];
     size_t n_starts;
+    /* Monotonic stamps taken when each instant above was recorded; 0 = none. See mm_history.monotonic_now. */
+    int64_t last_end_mono;
+    int64_t starts_mono[MM_HISTORY_STARTS];
 } mm_history_entry;
 
 typedef struct mm_history {
     mm_history_entry entries[MM_MAX_HISTORY_KEYS];
     size_t n_entries;
+    /*
+     * The current reading of a clock nobody can step (mm_hal.monotonic_s), or 0 for "none" —
+     * ActuationHistory.Time on the host. When it is set, an entry's age is the SMALLER of what the
+     * wall clock and this one claim, so a wall clock stepped FORWARD cannot hand back a cooldown or
+     * refresh a rate budget (v0.9.38, roadmap P0.5). For "has enough time passed?" the smaller
+     * answer is the safe one — the mirror image of the rule for releasing a hold, where the LARGER
+     * elapsed wins. 0 is wall-clock only, which is what a bare mm_kernel and the golden fixtures get.
+     * mm_app sets it from the HAL once per tick.
+     */
+    int64_t monotonic_now;
 } mm_history;
 
 /* ---- the kernel ---- */

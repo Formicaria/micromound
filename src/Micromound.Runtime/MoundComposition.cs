@@ -80,7 +80,8 @@ public static class MoundComposition
         int? evidenceHardCeiling = null,
         IEvidenceStore? evidenceStore = null,
         double heartbeatEvidenceIntervalSeconds = 60,
-        Func<TimeSpan, DateTimeOffset, DateTimeOffset>? settle = null)
+        Func<TimeSpan, DateTimeOffset, DateTimeOffset>? settle = null,
+        TimeProvider? time = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(moundId);
         ArgumentNullException.ThrowIfNull(capabilities);
@@ -96,7 +97,12 @@ public static class MoundComposition
             capabilityRegistry.Register(descriptor);
 
         var routines = new RoutineRegistry(capabilityRegistry);
-        var kernel = new CapabilityKernel(capabilityRegistry, routines, new KernelAuthority(moundId));
+
+        // The operating budgets are cross-checked against a monotonic source when one is supplied,
+        // so a wall clock stepped forward cannot hand back a cooldown or a rate budget (`v0.9.38`,
+        // roadmap P0.5). Null is wall-clock only — see HostOptions.Time for why that is the default.
+        var history = new ActuationHistory { Time = time };
+        var kernel = new CapabilityKernel(capabilityRegistry, routines, new KernelAuthority(moundId), history);
 
         foreach (var executor in executors)
             kernel.RegisterExecutor(executor);

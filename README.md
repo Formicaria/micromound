@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.37
+**Current version:** v0.9.38
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
 progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
@@ -130,7 +130,7 @@ scripted session against a fake controller is recorded as `device-session.txt`, 
 byte for byte and a C# test verifies with the host's verifier, chain validator and typed contracts —
 **the controller now accepts what the C device sends** — and — new in `v0.9.22` — **the board layer,
 host-simulated**: enrollment with the host's exact verdicts (`enroll-exchange.txt`), the sync transport,
-the relay and probe as kernel executors, and the service loop, all over a seven-function hardware
+the relay and probe as kernel executors, and the service loop, all over a nine-function hardware
 abstraction and driven through first boot, outage, refusal, enrollment, charter, hold, reboot, stop and
 trip against a fake of it; `firmware/esp32` binds that abstraction to ESP-IDF in one file and — new in
 `v0.9.23` — **compiles**: a 1.0 MB image under ESP-IDF v5.3.2, built by CI on every push, not yet flashed
@@ -151,6 +151,16 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.38`:** a clock that is stepped cannot hand back a cooldown. A duty cycle and a rate
+limit both answer "has enough time passed?", and both were computed by subtracting two readings of a
+wall clock — which moves for reasons other than time passing. A Pi or an ESP32 with no
+battery-backed RTC boots believing it is 1970 and steps forward by decades on its first sync; at that
+instant every cooldown read as elapsed and every rate window as empty. Each recorded instant now
+carries a monotonic stamp beside it, and an entry's age is the smaller of what the two clocks claim.
+The daemon and the board both do this; a bench with no real clock behind it keeps the wall-clock-only
+behaviour on purpose, so not one frozen byte moved. Across a restart the counter reset with the
+process, and that gap is named rather than papered over — only the controller could close it.
 
 **New in `v0.9.37`:** a mound that cannot record what it did must not do it. The uplink queue has
 always been bounded, but the bound was enforced *after* the effect: the actuation happened, the

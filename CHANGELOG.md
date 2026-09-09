@@ -12,6 +12,85 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.38 — P0.5: a stepped clock cannot hand back a cooldown
+
+Roadmap P0.5, the remaining half, and it closes the row. **No wire change. Not one frozen byte
+moved** — including `kernel-decisions.txt`, which is the point: the guard is off where there is no
+real clock to check against, and every fixture is exactly that.
+
+### What was wrong
+
+`min_off_s` and `max_rate_per_h` are both answers to "has enough time passed?", and both were
+computed by subtracting two readings of a wall clock. A wall clock moves for reasons other than time
+passing. The case is not exotic — it is the normal life of the hardware this runs on: a Pi or an
+ESP32 with no battery-backed RTC boots believing it is 1970 and its first NTP or controller sync
+steps it forward by decades. At that instant every cooldown reads as elapsed and every rate window
+as empty, at the exact moment the mound has least reason to trust its own sense of time.
+
+**Correcting this row's own claim.** P0.5 said `min_off_s` was "conservative in both" directions and
+only the rate window was exposed. That was wrong, and reading it again is what caught it: a forward
+step makes `now < last_end + min_off_s` false exactly as it ages starts out of the trailing hour.
+Both were exposed. Both are guarded now.
+
+### What changed
+
+Every recorded instant carries a monotonic stamp beside it, and an entry's age is the **smaller** of
+what the two clocks claim. For "has enough time passed?" the smaller answer is the safe one — the
+mirror image of `v0.9.31`'s rule for releasing a hold, where the question is "is it time to
+de-energize?" and the LARGER elapsed wins. A step backward was already conservative and stays so.
+
+`ActuationHistory.Time` and `mm_history.monotonic_now` are the two sides of it, and both default to
+absent. **That default is deliberate and is what kept every fixture byte-identical.** A bench that
+advances a fake wall clock by an hour between steps has no real hour to show a monotonic counter;
+pairing a fake wall clock with a real one would make every cooldown permanent and every golden file
+wrong. Absent means "no monotonic evidence, and the wall clock is all there is" — which is also the
+honest description of a restored entry. The daemon passes `TimeProvider.System`; on the board,
+`mm_hal` gained an OPTIONAL ninth hook, `monotonic_s`, filled by `hal_esp32.c` from
+`esp_timer_get_time()`, and left NULL by the port server, which keeps no budgets to age.
+
+`CapabilityKernel` now asks `History.MinOffElapsed(...)` rather than subtracting from `LastEnd`
+itself. `LastEnd` is still what the refusal DETAIL names, because an operator reading a record needs
+the instant the hardware actually stopped, not the number the guard used to decide.
+
+### The adversarial find: growing `mm_hal` segfaulted the test HAL
+
+Adding the ninth function pointer crashed `make test` immediately. The fake HAL fills the struct
+field by field on a stack local and never zeroed it, so the new slot held whatever was there — and
+the library called it. `-Wextra` catches the initializer-list form of this (it duly failed the board
+simulator's positional initializer, which is how that one was found) but has nothing to say about
+field-by-field assignment. `mm_hal.h` now states the contract in the struct's own comment, the C
+README's example was rewritten to zero first, and that example's field ORDER was wrong as well —
+`adc_read` and `gpio_read` were transposed, so anyone who copied it would have bound each to the
+other's slot.
+
+### Confirmed red first
+
+With the two-clock rule reverted to a plain wall-clock subtraction: on the host, the forward-step
+cooldown test, the forward-step rate test and the restored-entry test fail; in C, three checks in
+`test_kernel.c` fail, starting with `!d.authorized`. The other three host tests — real elapsed time
+still clears the cooldown, a backward step is conservative either way, and no monotonic source means
+the wall clock is believed — pass with and without the fix ON PURPOSE. They are there because
+`v0.9.33` shipped a guard for this that passed its own tests with the mechanism removed, and a guard
+that simply refused forever would be just as green as one that works.
+
+### Remaining, named and not closable here
+
+**Across a restart the monotonic counter reset with the process**, so a restored budget is aged on
+the wall clock alone. The real gap is unknowable from inside the mound — a mound cannot tell an
+eight-hour outage from an eight-hour clock error — and closing it needs the controller, which knows
+what time it is. That is a protocol question, not a mechanism, and it is not being decided inside a
+patch release.
+
+### Verified
+
+599 C# tests, 2,632 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, all three ESP-IDF images built under v5.3.2 (Wi-Fi 1,027,216 B; serial 297,056 B; port
+server 260,736 B), acceptance 18/18 on the firmware leg and 15/15 applicable in memory, the console
+harness, and the simulator's lifecycle claims. Every frozen fixture is byte-identical. Not run: the
+NuGet restore (firewalled), and any of it on real hardware.
+
+---
+
 ## v0.9.37 — P0.7: a mound that cannot record what it did must not do it
 
 Roadmap P0.7, the harder half, and it closes the row. **No wire change to any body or envelope.**

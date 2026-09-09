@@ -137,6 +137,19 @@ Also at this layer:
   silent failure for another. **Observation is exempt**, for the same reason a stop does not blind
   the mound, which means sensing can still fill a queue past that reserve; the mound then loses
   readings rather than the account of what it physically did.
+- **A clock that is STEPPED cannot hand back what the hardware owes.** A duty cycle and a rate limit
+  are answers to "has enough time passed?", and both were computed by subtracting two readings of a
+  wall clock — which moves for reasons other than time passing. The case is not exotic: a Pi or an
+  ESP32 with no battery-backed RTC boots believing it is 1970 and steps forward by decades on its
+  first sync, at which instant every cooldown reads as elapsed and every rate window as empty. Each
+  recorded instant now carries a monotonic stamp alongside it, and an entry's age is the SMALLER of
+  what the two clocks claim (`v0.9.38`, roadmap P0.5) — the mirror of the rule for releasing a hold,
+  where the question is "is it time to de-energize?" and the LARGER elapsed wins. A step backward was
+  already conservative and stays so. **Where the guard does not reach:** across a restart the
+  monotonic counter reset with the process, so a restored budget is aged on the wall clock alone;
+  the real gap is unknowable from inside the mound, and only the controller could close it. A board
+  whose HAL offers no monotonic source is likewise wall-clock only, and says so by leaving the hook
+  NULL rather than by pretending.
 - **What the hardware owes survives a restart.** A capability's minimum off-time and its rate budget
   are limits on the DEVICE, not on a session: they persist and are restored before anything may ask
   the hardware for more, so a reboot cannot hand back a cooldown that was already spent. And what the

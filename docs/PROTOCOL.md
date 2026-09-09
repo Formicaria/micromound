@@ -384,7 +384,7 @@ itself, reproducing the host's decisions against a scripted fixture (`v0.9.20`);
 beat, drain, downlink handling, stop, quiesce — whose recorded session the host's verifier accepts
 (`v0.9.21`, `device-session.txt`); and the board layer — the §3 enrollment exchange with the host's
 exact verdicts (`v0.9.22`, `enroll-exchange.txt`), the §7 sync transport, the two generic drivers as
-kernel executors, and the service loop, all over a seven-function hardware abstraction and proven on
+kernel executors, and the service loop, all over a nine-function hardware abstraction and proven on
 the host against a fake of it. `firmware/esp32` is the ESP-IDF project that binds that abstraction to
 a board; see `docs/ROADMAP.md` M5.
 

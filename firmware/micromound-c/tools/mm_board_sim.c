@@ -105,7 +105,8 @@ static int sim_adc_read(void *ctx, int channel, double *volts)
     return -1;
 }
 
-static const mm_hal HAL = { NULL, sim_now, sim_random, NULL, NULL, NULL, sim_gpio_write, sim_gpio_read, sim_adc_read };
+/* monotonic_s is NULL: a port server keeps no operating budgets, so it has nothing to age. */
+static const mm_hal HAL = { NULL, sim_now, sim_random, NULL, NULL, NULL, sim_gpio_write, sim_gpio_read, sim_adc_read, NULL };
 
 /* ---- the physics ---------------------------------------------------------------------------- */
 

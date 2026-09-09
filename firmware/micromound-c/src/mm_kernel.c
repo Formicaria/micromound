@@ -238,6 +238,19 @@ static mm_history_entry *history_find(mm_history *h, const char *key, int create
     return &h->entries[h->n_entries++];
 }
 
+/*
+ * How long ago a recorded instant happened, believing whichever clock claims LESS
+ * (ActuationHistory.Elapsed). With no monotonic reading — h->monotonic_now 0, or an entry recorded
+ * before there was one — this is the wall difference and nothing more.
+ */
+static int64_t history_elapsed(const mm_history *h, int64_t wall_at, int64_t mono_at, int64_t now)
+{
+    int64_t wall = now - wall_at, mono;
+    if (h->monotonic_now <= 0 || mono_at <= 0) return wall;
+    mono = h->monotonic_now - mono_at;
+    return wall < mono ? wall : mono;
+}
+
 static int history_starts_in_trailing_hour(const mm_history *h, const char *key, int64_t now)
 {
     size_t i, k;
@@ -245,7 +258,7 @@ static int history_starts_in_trailing_hour(const mm_history *h, const char *key,
     for (i = 0; i < h->n_entries; i++) {
         if (strcmp(h->entries[i].key, key) != 0) continue;
         for (k = 0; k < h->entries[i].n_starts; k++)
-            if (h->entries[i].starts[k] > now - 3600) count++;
+            if (history_elapsed(h, h->entries[i].starts[k], h->entries[i].starts_mono[k], now) < 3600) count++;
     }
     return count;
 }
@@ -257,12 +270,21 @@ static void history_record(mm_history *h, const char *key, int64_t started_at, i
     if (!e) return;
     e->has_last_end = 1;
     e->last_end = ended_at;
+    e->last_end_mono = h->monotonic_now;
     /* prune what the widest window can no longer see (as Record does, once there is more than one) */
-    if (e->n_starts >= MM_HISTORY_STARTS) { memmove(e->starts, e->starts + 1, (MM_HISTORY_STARTS - 1) * sizeof e->starts[0]); e->n_starts--; }
+    if (e->n_starts >= MM_HISTORY_STARTS) {
+        memmove(e->starts, e->starts + 1, (MM_HISTORY_STARTS - 1) * sizeof e->starts[0]);
+        memmove(e->starts_mono, e->starts_mono + 1, (MM_HISTORY_STARTS - 1) * sizeof e->starts_mono[0]);
+        e->n_starts--;
+    }
+    e->starts_mono[e->n_starts] = h->monotonic_now;
     e->starts[e->n_starts++] = started_at;
     if (e->n_starts > 1) {
         for (i = 0; i < e->n_starts; i++)
-            if (e->starts[i] > started_at - 3600) e->starts[kept++] = e->starts[i];
+            if (history_elapsed(h, e->starts[i], e->starts_mono[i], started_at) < 3600) {
+                e->starts_mono[kept] = e->starts_mono[i];
+                e->starts[kept++] = e->starts[i];
+            }
         e->n_starts = kept;
     }
 }
@@ -733,8 +755,11 @@ void mm_kernel_authorize(mm_kernel *k, const mm_request *request, int64_t now, m
     if (t.action_class > 0) {
         for (i = 0; i < t.n_history_keys; i++) {
             const mm_history_entry *e = history_find(&k->history, t.history_keys[i], 0);
+            /* min_off_s against the smaller of the two clocks (v0.9.38); the DETAIL still names the
+               instant the hardware actually stopped, which is what an operator needs to read. */
             if (d->effective_limits.min_off_s.present && e && e->has_last_end &&
-                (double)now < (double)e->last_end + d->effective_limits.min_off_s.value) {
+                (double)history_elapsed(&k->history, e->last_end, e->last_end_mono, now) <
+                    d->effective_limits.min_off_s.value) {
                 snprintf(detail, sizeof detail, "'%s': min_off_s %s not elapsed since %s", t.history_keys[i],
                          num(d->effective_limits.min_off_s.value, a), wire_time(e->last_end, tm));
                 refuse(d, MM_REFUSAL_DUTY_CYCLE, detail);

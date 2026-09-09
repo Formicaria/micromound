@@ -21,6 +21,7 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_random.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
@@ -320,6 +321,18 @@ static int adc_channel_ready(hal_ctx *h, int channel)
     return 0;
 }
 
+/*
+ * Seconds of uptime — a counter this board cannot step, unlike hal_now's SNTP-corrected wall clock.
+ * The kernel ages min_off_s and max_rate_per_h on whichever of the two claims LESS time passed, so
+ * the first SNTP correction on a board with a slow RTC cannot empty every budget at once
+ * (v0.9.38, roadmap P0.5). esp_timer runs from boot and is unaffected by any clock adjustment.
+ */
+static int64_t hal_monotonic_s(void *ctx)
+{
+    (void)ctx;
+    return esp_timer_get_time() / 1000000LL;
+}
+
 static int hal_adc_read(void *ctx, int channel, double *volts)
 {
     hal_ctx *h = (hal_ctx *)ctx;
@@ -374,6 +387,7 @@ int mm_hal_esp32_init(mm_hal *hal, const char *controller_url)
     hal->kv_set = hal_kv_set;
     hal->gpio_write = hal_gpio_write;
     hal->adc_read = hal_adc_read;
+    hal->monotonic_s = hal_monotonic_s;
     hal->gpio_read = hal_gpio_read;
     return 0;
 }

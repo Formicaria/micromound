@@ -206,6 +206,16 @@ void mm_app_tick(mm_app *app, int64_t now)
     if (now == 0) now = app->hal->now(app->hal->ctx);
     if (now == 0) return;                                        /* no clock: nothing is signed, nothing actuates */
 
+    /*
+     * The clock nobody can step, refreshed once per tick (v0.9.38, roadmap P0.5). `now` above is a
+     * WALL clock: a board whose RTC is slow until its first sync sees that correction as time
+     * passing, and every min_off_s and max_rate_per_h window would empty at once. The kernel ages
+     * those budgets on whichever of the two claims LESS. A HAL that offers no monotonic source
+     * leaves this 0, which is wall-clock only — the behaviour before this existed.
+     */
+    app->device.kernel.history.monotonic_now =
+        app->hal->monotonic_s ? app->hal->monotonic_s(app->hal->ctx) : 0;
+
     /* A stop is durable the moment it exists. This is the catch-all — anything that stopped the
        mound since the last tick is written through before this one does any work — and the two
        calls below close the window on the two things that can stop it DURING a tick: a relay that

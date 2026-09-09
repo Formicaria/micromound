@@ -55,6 +55,21 @@ public sealed class HostOptions
     /// own so a modelled world advances by the same span with no wall clock in the loop.
     /// </summary>
     public Func<TimeSpan, DateTimeOffset, DateTimeOffset>? Settle { get; init; }
+
+    /// <summary>
+    /// The monotonic source the operating budgets are cross-checked against (`v0.9.38`, roadmap
+    /// P0.5). A duty cycle and a rate limit answer "has enough time passed?", and a wall clock
+    /// stepped FORWARD — a slow RTC corrected by the first NTP sync — answers yes when the truth is
+    /// no. With a provider here, <see cref="ActuationHistory"/> believes whichever of the two clocks
+    /// claims LESS time passed.
+    ///
+    /// <para>Null — the default — is wall-clock only, and is what a deterministic bench wants: a
+    /// harness that advances a fake clock by an hour between steps has no real hour to show a
+    /// monotonic counter, and pairing a fake wall clock with a real monotonic one would make every
+    /// cooldown permanent. A bench that wants the guard supplies a fake monotonic source it advances
+    /// alongside its own clock. The daemon passes <see cref="TimeProvider.System"/>.</para>
+    /// </summary>
+    public TimeProvider? Time { get; init; }
 }
 
 /// <summary>
@@ -296,7 +311,8 @@ public sealed class MoundHost
                 options.GuardHeartbeatTimeoutSeconds,
                 evidenceStore: evidence,
                 heartbeatEvidenceIntervalSeconds: options.HeartbeatEvidenceIntervalSeconds,
-                settle: options.Settle);
+                settle: options.Settle,
+                time: options.Time);
 
             // Wire each evidence-source driver's readings into the shared sink.
             foreach (var driver in resolution.Drivers)
