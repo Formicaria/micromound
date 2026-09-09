@@ -70,6 +70,19 @@ public sealed class HostOptions
     /// alongside its own clock. The daemon passes <see cref="TimeProvider.System"/>.</para>
     /// </summary>
     public TimeProvider? Time { get; init; }
+
+    /// <summary>
+    /// How long any ONE driver may take over a safe-state or hold-release call before the mound stops
+    /// waiting for it, trips, and carries on to the rest (`v0.9.39`, roadmap P0.8). Default 5 s: a GPIO
+    /// write is microseconds and an I2C transfer milliseconds, so five seconds is already pathological,
+    /// while being long enough that no healthy driver is ever abandoned.
+    ///
+    /// <para>0 disables the bound and calls every driver inline on the caller's thread, which is
+    /// exactly the behaviour before this existed. A driver that blocks then wedges the whole walk —
+    /// that is the defect, not a mode — so 0 is for a deterministic bench that has no blocking drivers
+    /// and wants no thread pool in the loop, not for a device.</para>
+    /// </summary>
+    public double SafeStateTimeoutSeconds { get; init; } = 5;
 }
 
 /// <summary>
@@ -106,12 +119,19 @@ public sealed class MoundHost
     // in sync. Monitor is re-entrant, so the nested EnterSafeState inside Stop is fine.
     private readonly object _safeGate = new();
 
-    private MoundHost(string moundId, byte[] publicKey, IReadOnlyList<IDriver> drivers, ComposedMound mound)
+    // P0.8 (`v0.9.39`): how long any one driver may take over a safe-state or hold-release call
+    // before it is abandoned, and the ids of the drivers that have already spent it. See Bounded().
+    private readonly TimeSpan _safeStateTimeout;
+    private readonly HashSet<string> _abandoned = new(StringComparer.Ordinal);
+
+    private MoundHost(string moundId, byte[] publicKey, IReadOnlyList<IDriver> drivers, ComposedMound mound,
+        TimeSpan safeStateTimeout)
     {
         MoundId = moundId;
         _publicKey = publicKey;
         _drivers = drivers;
         _mound = mound;
+        _safeStateTimeout = safeStateTimeout;
     }
 
     public string MoundId { get; }
@@ -158,24 +178,84 @@ public sealed class MoundHost
     /// <summary>
     /// Drive every driver to its declared safe state — the physical half of "enter safe state". The
     /// software half (refusing actuation) is the kernel's; this is what actually de-energizes hardware.
-    /// A driver that throws while being made safe is isolated so the others still de-energize, but the
-    /// failure is NOT silent (SAFETY.md): it is recorded as a sticky safety trip and written to stderr,
-    /// because a device that cannot be proven safe must be treated as unsafe.
+    /// A driver that throws while being made safe is isolated so the others still de-energize, and a
+    /// driver that BLOCKS is abandoned after <see cref="HostOptions.SafeStateTimeoutSeconds"/> so the
+    /// others still de-energize too. Neither failure is silent (SAFETY.md): both are recorded as a
+    /// sticky safety trip and written to stderr, because a device that cannot be proven safe must be
+    /// treated as unsafe.
     /// </summary>
     public void EnterSafeState()
     {
         lock (_safeGate)
         {
             foreach (var driver in _drivers)
-            {
-                try { driver.EnterSafeState(); }
-                catch (Exception ex)
-                {
-                    Guard.ReportTrip("driver:" + driver.DriverId, "failed to enter safe state: " + ex.Message);
-                    Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to enter safe state: {ex.Message}");
-                }
-            }
+                Bounded(driver, "enter safe state", driver.EnterSafeState);
         }
+    }
+
+    /// <summary>
+    /// Call one driver with a bound on how long it may take — the supervised-liveness half of P0.8
+    /// (`v0.9.39`).
+    ///
+    /// <para><b>Why a driver that blocks is a different problem from one that throws.</b> `v0.9.29`
+    /// isolated the thrower: catch per driver, report, carry on. A driver that never returns cannot
+    /// be caught. It stops the walk at itself, and every driver after it in the manifest stays
+    /// energized — while the caller holds <c>_safeGate</c>, so the independent watchdog cannot get in
+    /// either. One stuck I2C transaction on a sensor would keep a pump running.</para>
+    ///
+    /// <para><b>What this can and cannot promise.</b> A blocked call cannot be cancelled in .NET;
+    /// nothing here interrupts the driver or makes ITS line safe. What it does is stop WAITING: the
+    /// call is run on the thread pool, given the bound, and then abandoned — so the rest of the walk
+    /// happens, the other outputs really do go safe, and the gate is released in bounded time. The
+    /// stuck line is reported as a trip, which <see cref="MoundService"/> escalates to a persisted
+    /// stop, and after that only an operator (or process supervision, which de-energizes at configure
+    /// time on restart) can help it. The guarantee is "one blocked driver cannot keep unrelated
+    /// outputs live", not "every output goes safe".</para>
+    ///
+    /// <para><b>An abandoned driver is not called again.</b> It has already proved it does not answer,
+    /// the mound is stopping because of it, and each attempt would strand another thread-pool thread.
+    /// Bounded by the driver count either way, which is manifest-sized.</para>
+    ///
+    /// <para>With the bound at zero the call is made inline on this thread, exactly as before this
+    /// existed — no task, no pool thread, no behaviour change. That is what a deterministic bench
+    /// wants, and it is why the mechanism is a bound rather than a rewrite.</para>
+    /// </summary>
+    private void Bounded(IDriver driver, string what, Action call)
+    {
+        if (_abandoned.Contains(driver.DriverId)) return;
+
+        try
+        {
+            if (_safeStateTimeout <= TimeSpan.Zero)
+            {
+                call();
+                return;
+            }
+
+            var work = Task.Run(call);
+            if (!work.Wait(_safeStateTimeout))
+            {
+                // Never joined again, and never observed for its exception by anyone waiting on it —
+                // so the continuation below retires it quietly if it ever does finish or throw.
+                _ = work.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
+                _abandoned.Add(driver.DriverId);
+                Trip(driver, $"did not {what} within {_safeStateTimeout.TotalSeconds:0.###}s; " +
+                             "abandoned so the remaining drivers can be made safe");
+                return;
+            }
+
+            work.GetAwaiter().GetResult();   // rethrow the driver's own exception on this thread
+        }
+        catch (Exception ex)
+        {
+            Trip(driver, $"failed to {what}: {ex.Message}");
+        }
+    }
+
+    private void Trip(IDriver driver, string detail)
+    {
+        Guard.ReportTrip("driver:" + driver.DriverId, detail);
+        Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' {detail}");
     }
 
     /// <summary>
@@ -194,12 +274,11 @@ public sealed class MoundHost
             {
                 if (driver is not ITimedDriver timed)
                     continue;
-                try { timed.ServiceHolds(now); }
-                catch (Exception ex)
-                {
-                    Guard.ReportTrip("driver:" + driver.DriverId, "failed to release a timed hold: " + ex.Message);
-                    Console.Error.WriteLine($"micromound: driver '{driver.DriverId}' failed to release a timed hold: {ex.Message}");
-                }
+                // Bounded for the same reason the safe-state walk is: this runs on every tick, over
+                // every driver, and a driver that blocks here holds every OTHER driver's elapsed hold
+                // open behind it — the line that should have de-energized five seconds ago stays hot
+                // because an unrelated sensor stopped answering.
+                Bounded(driver, "release a timed hold", () => timed.ServiceHolds(now));
             }
         }
     }
@@ -324,7 +403,8 @@ public sealed class MoundHost
             if (!applied.IsValid)
                 throw new HostStartupException("manifest refused: " + string.Join("; ", applied.Errors));
 
-            return new MoundHost(moundId, options.Keys.PublicKey, resolution.Drivers, composed);
+            return new MoundHost(moundId, options.Keys.PublicKey, resolution.Drivers, composed,
+                TimeSpan.FromSeconds(options.SafeStateTimeoutSeconds));
         }
         catch
         {

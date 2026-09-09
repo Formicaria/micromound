@@ -12,6 +12,84 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.39 — P0.8: no single driver may hold the safe-state walk
+
+Roadmap P0.8, the remaining half, and it closes the row. **Host only. No wire change, no C source
+change, no fixture moved** — the firmware images differ only by the version string compiled into
+them.
+
+### What was wrong
+
+`v0.9.29` fixed the driver that THROWS on the way to safe: caught per driver, reported as a trip,
+walk continues. A driver that BLOCKS is a different problem and it cannot be caught. It stops the
+walk at itself, so every driver after it in the manifest stays energized — and the caller holds
+`_safeGate` the whole time it waits, so the independent watchdog cannot take the gate either. One
+stuck I2C transaction on a temperature sensor keeps a pump running, and the watchdog whose job is to
+notice is locked out by the very call it would have rescued.
+
+`SAFETY.md` named this and pointed at systemd `Restart=always` as the backstop — which does not kill
+a still-running process, so it was a backstop that did not reach.
+
+### What changed
+
+Every per-driver safe-state and hold-release call goes through one bounded call
+(`HostOptions.SafeStateTimeoutSeconds`, default 5 s — a GPIO write is microseconds and an I2C
+transfer milliseconds, so five seconds is already pathological while being long enough that no
+healthy driver is ever abandoned). Past the bound the mound stops WAITING: it records a trip, which
+`MoundService` already escalates to a persisted stop, abandons that driver, and carries on to the
+rest.
+
+**The hold-release walk is bounded for the same reason**, and it is the one that leaves a line
+literally hot: it runs on every tick over every driver, so a driver that blocks there holds every
+*other* driver's elapsed hold open behind it. The line that should have de-energized five seconds ago
+stays live because an unrelated sensor stopped answering.
+
+**An abandoned driver is never called again.** It has proved it does not answer, the mound is
+stopping because of it, and each further attempt would strand another thread-pool thread — on a mound
+that goes safe on every tick that is a leak with no ceiling.
+
+**With the bound at zero the call is inline on the caller's thread**, exactly as before this existed:
+no task, no pool thread, no behaviour change. That is what a deterministic bench wants, and it is why
+this is a bound rather than a rewrite.
+
+### What this does NOT promise, stated exactly
+
+A blocked call cannot be cancelled in .NET. Nothing here interrupts the stuck driver or makes ITS
+line safe. The guarantee is narrower and worth saying precisely: **one blocked driver cannot keep
+unrelated outputs live**, and the safe-state gate is released in bounded time so the watchdog can
+take it. For the stuck line itself, process supervision remains the only thing that reaches it — but
+it is now the backstop for one line rather than for the whole mound.
+
+### Confirmed red — and this one did not fail, it hung
+
+With the bound removed and the call made inline, the test suite **does not finish**. It wedges in the
+first blocking test and was killed at 300 s; with the bound it completes in 17 s. That is the defect
+stated more precisely than any assertion could put it, and it is exactly what a mound would do in the
+field. The abandoned-set has its own narrower red: with only that guard removed, the suite completes
+and `A_driver_that_has_been_abandoned_is_not_called_again` fails 1 vs 2.
+
+Three tests, all on the two-actuator harness `v0.9.29` introduced: a stop with the first driver
+wedged (the second de-energizes, the trip is recorded, and the walk returns inside a bounded time),
+an idle tick past an expired lease with the first driver wedged (the second de-energizes and the
+mound ends up *stopped*, not merely quiesced — the trip escalates), and the abandoned driver never
+being asked twice.
+
+### Remaining, named
+
+The bound protects the WALK, not the line behind the stuck driver. Reaching that needs something
+outside the process, and process supervision is still what does it.
+
+### Verified
+
+602 C# tests, 2,632 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, all three ESP-IDF images rebuilt under v5.3.2 (Wi-Fi 1,027,216 B; serial 297,056 B;
+port server 260,736 B — unchanged but for the version string), acceptance 18/18 on the firmware leg
+and 15/15 applicable in memory, the console harness, and the simulator's lifecycle claims. Every
+frozen fixture is byte-identical. Not run: the NuGet restore (firewalled), and any of it on real
+hardware.
+
+---
+
 ## v0.9.38 — P0.5: a stepped clock cannot hand back a cooldown
 
 Roadmap P0.5, the remaining half, and it closes the row. **No wire change. Not one frozen byte

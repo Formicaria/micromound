@@ -77,10 +77,23 @@ Also at this layer:
   path is serialised behind one gate with a consistent lock order and a bounded wait so the watchdog
   cannot itself wedge, and the loop answers the watchdog at the top of each tick — through the Guard's
   lock, a memory barrier — so a loop resuming from a hang stops itself before it could actuate on a
-  stale, not-yet-stopped view of authority. The one residual case is a loop wedged *inside* a driver
-  op holding the gate: the watchdog records the trip it can and logs loudly, and process supervision
-  (systemd `Restart=`, whose restart de-energizes at configure time) is the backstop. Set the timeout
-  generously so an ordinary GC or scheduling pause never trips it.
+  stale, not-yet-stopped view of authority. Set the timeout generously so an ordinary GC or scheduling
+  pause never trips it.
+- **No single driver may hold the safe-state walk.** Two ways a driver fails on the way to safe, and
+  they need different answers. One that THROWS is caught per driver, reported as a trip, and the walk
+  continues (`v0.9.29`). One that BLOCKS cannot be caught at all: it stops the walk at itself, every
+  driver after it in the manifest stays energized, and the caller holds the safe-state gate while it
+  waits — so the independent watchdog cannot get in either, and one stuck I2C transaction on a sensor
+  keeps a pump running. Each driver now gets a bounded call (`v0.9.39`, roadmap P0.8, default 5 s;
+  a GPIO write is microseconds and an I2C transfer milliseconds, so five seconds is already
+  pathological). Past the bound the mound stops WAITING: it trips, abandons that driver — permanently,
+  because it has proved it does not answer and each retry would strand another thread — and makes the
+  rest safe. **Stated exactly, because the difference matters:** nothing interrupts the stuck driver or
+  makes ITS line safe; a blocked call cannot be cancelled. The guarantee is that one blocked driver
+  cannot keep unrelated outputs live, and that the gate is released in bounded time so the watchdog can
+  take it. For the stuck line itself, process supervision (systemd `Restart=`, whose restart
+  de-energizes at configure time) remains the backstop — but it is now the backstop for one line rather
+  than for the whole mound.
 - **A device never fakes its hardware by accident.** A manifest that names physical ports (a pin, a
   channel, a bus address) is refused by a daemon running on in-memory ports unless the operator says
   `--simulate` in so many words (`v0.9.17`): in-memory readings and actuations look real and are

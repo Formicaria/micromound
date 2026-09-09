@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.38
+**Current version:** v0.9.39
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
 progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
@@ -151,6 +151,16 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.39`:** no single driver may hold the safe-state walk. A driver that *throws* on the
+way to safe has been isolated since `v0.9.29`; a driver that *blocks* cannot be caught at all — it
+stops the walk at itself, every driver after it in the manifest stays energized, and the caller holds
+the safe-state gate while it waits, so the independent watchdog cannot get in either. One stuck I2C
+transaction on a sensor kept a pump running. Each per-driver call is now bounded: past the bound the
+mound stops waiting, trips, abandons that driver, and makes the rest safe. Nothing interrupts the
+stuck driver or makes its line safe — a blocked call cannot be cancelled — so the guarantee is stated
+as what it is: one blocked driver cannot keep unrelated outputs live, and the gate is released in
+bounded time.
 
 **New in `v0.9.38`:** a clock that is stepped cannot hand back a cooldown. A duty cycle and a rate
 limit both answer "has enough time passed?", and both were computed by subtracting two readings of a

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Micromound.Crypto;
 using Micromound.Drivers;
 using Micromound.Host;
@@ -101,6 +102,32 @@ public sealed class MoundServiceTests : IDisposable
             if (!high && State) throw new IOException("simulated: this line will not go safe");
             State = high;
         }
+    }
+
+    /// <summary>
+    /// A line that HANGS rather than throwing when asked to go safe — P0.8's other half. Like
+    /// <see cref="RefusesToGoSafe"/> the bring-up write (low while already low) returns, so
+    /// composition comes up; only a low write while HIGH blocks. The test releases it at the end so
+    /// no thread-pool thread is stranded for the rest of the run.
+    /// </summary>
+    private sealed class BlocksGoingSafe : IDigitalOutput, IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new(false);
+        public bool State { get; private set; }
+        public int Calls { get; private set; }
+
+        public void Write(bool high)
+        {
+            if (!high && State)
+            {
+                Calls++;
+                _release.Wait();          // never returns until the test says so
+                return;
+            }
+            State = high;
+        }
+
+        public void Dispose() { _release.Set(); _release.Dispose(); }
     }
 
     private static DriverFactoryRegistry FactoriesWith(IDigitalOutput line)
@@ -667,5 +694,108 @@ public sealed class MoundServiceTests : IDisposable
         });
         reborn.Restore(Now.AddSeconds(5));
         Assert.Equal("chartered", reborn.State);
+    }
+
+    // ---- P0.8: a driver that BLOCKS, not one that throws (v0.9.39) ------------------------------
+
+    /// <remarks>
+    /// `v0.9.29` isolated the driver that THROWS. This is the other half, and it is the one that
+    /// cannot be caught: a driver that never returns stops the safe-state walk at itself, so every
+    /// driver after it in the manifest stays energized — while the caller holds the safe-state gate,
+    /// so the independent watchdog cannot get in either. One stuck I2C transaction keeps a pump
+    /// running.
+    ///
+    /// <para>Nothing here interrupts the stuck driver or makes ITS line safe; that is not possible.
+    /// What is possible is to stop WAITING for it, which is what the other line's state proves.</para>
+    /// </remarks>
+    [Fact]
+    public void A_driver_that_blocks_going_safe_does_not_keep_the_others_energized()
+    {
+        using var stuck = new BlocksGoingSafe();
+        var ordinary = new InMemoryDigitalOutput();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s20"),
+            StateDirectory = _dir, Drivers = FactoriesWithPair(stuck, ordinary),
+            SafeStateTimeoutSeconds = 0.2
+        });
+
+        stuck.Write(true);
+        ordinary.Write(true);
+
+        var started = Stopwatch.StartNew();
+        host.Stop();
+        started.Stop();
+
+        Assert.False(ordinary.State);                              // the second line went safe anyway
+        Assert.True(host.Guard.HasTrip);                           // and the stuck one was reported, not swallowed
+
+        // The gate is released in bounded time, which is what lets the independent watchdog take it.
+        // Generous, because a loaded CI box schedules the pool thread when it feels like it — the
+        // claim under test is "bounded", not "prompt".
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(10),
+            $"the safe-state walk took {started.Elapsed.TotalSeconds:0.##}s; it must not wait on a stuck driver");
+    }
+
+    /// <remarks>
+    /// The same guarantee on the path an expired lease takes, and with the escalation the trip earns:
+    /// a driver that will not go safe is a trip, and the tick's own watchdog response turns a trip
+    /// into a persisted stop. An idle mound, nobody asking it for anything, one wedged driver — and it
+    /// still ends up stopped with every line it could reach de-energized.
+    /// </remarks>
+    [Fact]
+    public void An_expired_lease_still_de_energizes_what_it_can_when_a_driver_blocks()
+    {
+        using var stuck = new BlocksGoingSafe();
+        var ordinary = new InMemoryDigitalOutput();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s21"),
+            StateDirectory = _dir, Drivers = FactoriesWithPair(stuck, ordinary),
+            SafeStateTimeoutSeconds = 0.2
+        });
+        host.Major.AcceptCharter(TwoActuatorCharter("mm-s21"), Now);
+
+        stuck.Write(true);
+        ordinary.Write(true);
+
+        new MoundService(host).Tick(host.Authority.LeaseExpiresAt.AddSeconds(1));
+
+        Assert.False(ordinary.State);
+        Assert.Equal("stopped", host.State);
+    }
+
+    /// <remarks>
+    /// A driver that has already spent its bound is not called again. It has proved it does not
+    /// answer, the mound is stopping because of it, and every further attempt would strand another
+    /// thread-pool thread — on a mound that goes safe on every tick, that is a leak with no ceiling.
+    /// The second walk therefore has to be immediate as well as harmless.
+    /// </remarks>
+    [Fact]
+    public void A_driver_that_has_been_abandoned_is_not_called_again()
+    {
+        using var stuck = new BlocksGoingSafe();
+        var ordinary = new InMemoryDigitalOutput();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s22"),
+            StateDirectory = _dir, Drivers = FactoriesWithPair(stuck, ordinary),
+            SafeStateTimeoutSeconds = 0.2
+        });
+
+        stuck.Write(true);
+        ordinary.Write(true);
+        host.EnterSafeState();
+        Assert.Equal(1, stuck.Calls);
+
+        ordinary.Write(true);
+        var again = Stopwatch.StartNew();
+        host.EnterSafeState();
+        again.Stop();
+
+        Assert.Equal(1, stuck.Calls);                              // never asked a second time
+        Assert.False(ordinary.State);                              // and the rest of the walk still ran
+        Assert.True(again.Elapsed < TimeSpan.FromSeconds(1),
+            $"the second walk waited {again.Elapsed.TotalSeconds:0.##}s on a driver already known not to answer");
     }
 }
