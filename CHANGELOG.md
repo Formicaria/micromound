@@ -12,6 +12,64 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.40 — the roadmap says what actually happened
+
+**Documentation only. No source file changed, no test changed, no fixture moved.**
+
+### What was wrong
+
+`docs/ROADMAP.md`'s phase section was titled **"After the bench: the phase plan"**, and the P0–P7
+status read "Planned; P0 is next" — while P0 had been running since `v0.9.29` and eight of its ten
+items had shipped. The document described an order the work had not followed.
+
+It was also wrong as a plan, which is the more useful half. P0 is the correctness and recovery debt,
+and every row in it is a defect that the whole test suite, the simulator and the eighteen acceptance
+criteria were green through: an unreachable `verified` outcome, a lease that expired only when
+somebody asked, a stop a reboot cleared, an actuation nobody could account for, a cooldown a clock
+step refunded, a blocked driver that kept unrelated outputs live. Those are exactly what a bench
+surfaces the expensive way — intermittently, one at a time, with a relay wired to the end of them. A
+mound with those closed is a far better thing to attach hardware to. So P0 belongs before the bench,
+and the heading now says the thing that actually governs: the phases are ordered against each other,
+not against the hardware run.
+
+### What changed
+
+- The section is **"Beyond the bench: the phase plan"**, with a paragraph saying plainly that the old
+  title was wrong twice over and why P0 came first. The anchor and the link to it move with it.
+- **M4 and M5 read "Built; open on the bench run alone"** rather than "In progress". Both are
+  finished and host-verified; each waits on the same single thing — `docs/DEPLOY.md` walked to the
+  end on a Pi, and any one of the three ESP32 images flashed — and neither is waiting on code or can
+  be closed from this repository. The Status preamble says so at the top, where it is answerable at a
+  glance.
+- **The P0–P7 row states what has actually shipped** (`v0.9.29`–`v0.9.39`; P0.1–P0.5, P0.7, P0.8,
+  P0.10 done, P0.6 and P0.9 half done) instead of "Planned".
+- **Three "known gaps, recorded" are struck through and marked closed** — P0.1's wrong-reading
+  confirmation (`v0.9.30`), P0.5's reset duty cycle (`v0.9.33`, `v0.9.38`) and P0.2's pre-sync wall
+  clock (`v0.9.31`). They had been sitting in the list as open findings for up to ten releases after
+  they were fixed.
+- **Two counts in the milestone record that had gone stale**: the C kernel's "thirteen authorization
+  checks" (fourteen since `v0.9.37`) and `mm_hal`'s "seven-function" abstraction (nine now). The
+  milestone rows are history and stay as written, so both are dated rather than rewritten.
+- **One present-tense claim the last release made false**: M4's note that a loop wedged inside a
+  driver op cannot be de-energized by the watchdog, with process supervision as the backstop. `v0.9.39`
+  closed that for the walk; supervision is now the backstop for the stuck line alone.
+- `README.md`'s status line stops saying M4 and M5 are "in progress".
+
+### Why this is its own release rather than a line in the next one
+
+Because the sweep rule exists — every release must leave no stale documentation anywhere — and this
+is what it looks like when the rule is applied to the sweep's own blind spot. The rule catches
+counts, sizes and version markers that a *change* made untrue. It did not catch a heading that had
+quietly become untrue because of the ORDER the work was done in, and nothing but reading the document
+as a whole would have. Recorded here so the next such drift is looked for deliberately.
+
+### Verified
+
+`bash scripts/validate.sh` guards, 602 C# tests, 2,632 C checks. Nothing else could change, and
+nothing did.
+
+---
+
 ## v0.9.39 — P0.8: no single driver may hold the safe-state walk
 
 Roadmap P0.8, the remaining half, and it closes the row. **Host only. No wire change, no C source
