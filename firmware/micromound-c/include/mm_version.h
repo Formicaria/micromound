@@ -6,6 +6,6 @@
 #ifndef MM_VERSION_H
 #define MM_VERSION_H
 
-#define MM_VERSION "0.9.43"
+#define MM_VERSION "0.9.44"
 
 #endif

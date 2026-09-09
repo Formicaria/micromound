@@ -12,6 +12,58 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.44 — a test may not starve a resource the rest of the suite shares
+
+**Fixes a regression shipped in `v0.9.42`.** Tests only; no source file changed.
+
+### What was wrong
+
+`v0.9.42` fixed a real defect — the safe-state bound ran on the thread pool, so a blocked driver
+starved the next driver's call — and pinned it two ways. One of those was a test that **saturated the
+thread pool** and then made the mound safe, reproducing the starvation directly on any machine.
+
+It reproduced it. It also broke `LinkPortsTests.A_silent_board_is_a_timeout_not_a_hang_and_a_keepalive_keeps_saying_hello`,
+which failed with `0 hello(s)` on the maintainer's machine and not on the build box.
+
+xunit runs test collections in parallel, and the thread pool is process-global. `StartKeepalive` uses
+a `System.Threading.Timer`, whose callbacks run on the pool. So a test in one class held the pool
+down for a couple of hundred milliseconds while a test in another class waited for a timer that could
+not get a thread. Nothing was wrong with either test in isolation, which is exactly why it took a
+different machine to show it.
+
+### What changed
+
+The saturation test and its helper are removed. What remains is the assertion that names the fix
+directly:
+
+```csharp
+Assert.Equal(false, ordinary.RanOnThreadPool);
+```
+
+That is deterministic on any machine, needs no timing, touches nothing shared, and still fails
+against the `v0.9.39` implementation — verified by reverting to it: `neq: False vs True`.
+
+### The rule this is worth recording as
+
+A test may not damage a process-global resource to make its point when a property of the mechanism
+says the same thing for free. Under a parallel runner, "reproduce the hostile condition" and "inflict
+the hostile condition on everything else running" are the same act.
+
+### Note, not fixed here
+
+The test that broke is itself timing-sensitive — a 150 ms keepalive, a 700 ms sleep, at least two
+hellos — so a heavily loaded machine could still flake it without any help from this suite. That is
+its own question and not this release's.
+
+### Verified
+
+604 C# tests, 2,658 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, acceptance 18/18 on the firmware leg and 15/15 applicable in memory, the console
+harness, and the simulator's lifecycle claims. Every frozen fixture is byte-identical. Not run: the
+NuGet restore (firewalled), and any of it on real hardware.
+
+---
+
 ## v0.9.43 — P0.7: the replay ledger is written when it changes, not when a beat happens
 
 Roadmap P0.7's remaining storage item. **No wire change, no format change, no fixture moved.**

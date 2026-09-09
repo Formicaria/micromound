@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.43
+**Current version:** v0.9.44
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 built
 (`v0.9.2`–`v0.9.17`) and M5 built (`v0.9.18`–`v0.9.27`), both open on a hardware run and nothing
@@ -152,6 +152,12 @@ executable sequence ([`docs/ACCEPTANCE.md`](docs/ACCEPTANCE.md)), **all eighteen
 both legs**. It earned its keep immediately: it found that the `verified` outcome was unreachable for
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
+
+**New in `v0.9.44`:** a test that starved the thread pool is gone. `v0.9.42` shipped one that
+saturated the pool to reproduce, directly, the starvation it had just fixed. It reproduced it — and
+it broke an unrelated test, because xunit runs test collections in parallel and the thread pool is
+process-global, so the saturation reached a `Timer`-driven keepalive in another class. The property
+it was proving is already asserted without touching anything shared.
 
 **New in `v0.9.43`:** the replay ledger is written when it changes, not when a beat happens. It is
 bounded — 2,048 entries, 162 KB at its cap — so its problem was never the uplink queue's problem of
