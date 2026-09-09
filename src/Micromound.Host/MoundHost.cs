@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using System.Text;
 using Micromound.Capabilities;
 using Micromound.Crypto;
@@ -123,6 +124,7 @@ public sealed class MoundHost
     // before it is abandoned, and the ids of the drivers that have already spent it. See Bounded().
     private readonly TimeSpan _safeStateTimeout;
     private readonly HashSet<string> _abandoned = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DriverWorker> _workers = new(StringComparer.Ordinal);
 
     private MoundHost(string moundId, byte[] publicKey, IReadOnlyList<IDriver> drivers, ComposedMound mound,
         TimeSpan safeStateTimeout)
@@ -232,23 +234,86 @@ public sealed class MoundHost
                 return;
             }
 
-            var work = Task.Run(call);
-            if (!work.Wait(_safeStateTimeout))
+            if (!Worker(driver).Run(call, _safeStateTimeout))
             {
-                // Never joined again, and never observed for its exception by anyone waiting on it —
-                // so the continuation below retires it quietly if it ever does finish or throw.
-                _ = work.ContinueWith(t => _ = t.Exception, TaskScheduler.Default);
                 _abandoned.Add(driver.DriverId);
                 Trip(driver, $"did not {what} within {_safeStateTimeout.TotalSeconds:0.###}s; " +
                              "abandoned so the remaining drivers can be made safe");
                 return;
             }
-
-            work.GetAwaiter().GetResult();   // rethrow the driver's own exception on this thread
         }
         catch (Exception ex)
         {
             Trip(driver, $"failed to {what}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// The thread this driver's bounded calls run on — one per driver, created on first use and kept.
+    ///
+    /// <para><b>Not the thread pool, and that distinction is the whole mechanism</b> (`v0.9.42`).
+    /// `v0.9.39` used <c>Task.Run</c>, which was wrong in a way that only shows on a small machine:
+    /// the blocked driver occupies a pool thread, and the NEXT driver's call then waits for the pool
+    /// to inject another — which it does on a hill-climbing delay of roughly a second. On a two-core
+    /// box with a 0.2 s bound, the second driver times out as well, is abandoned, and its line stays
+    /// live. The guarantee inverted itself exactly where it matters most: the smaller the machine,
+    /// the more completely one stuck driver takes the others down with it, and a Pi is a small
+    /// machine. CI caught it on the very test written to pin the guarantee.</para>
+    ///
+    /// <para>A dedicated thread per driver means a driver can only ever wedge ITSELF. It also costs
+    /// nothing per call, which matters because the hold-release walk runs on every tick — creating a
+    /// thread per driver per second, forever, would have been the other wrong answer.</para>
+    /// </summary>
+    private DriverWorker Worker(IDriver driver)
+    {
+        if (!_workers.TryGetValue(driver.DriverId, out var worker))
+        {
+            worker = new DriverWorker(driver.DriverId);
+            _workers[driver.DriverId] = worker;
+        }
+        return worker;
+    }
+
+    /// <summary>One driver's own thread: hand it a call, wait a bounded time, and never post again if it did not come back.</summary>
+    private sealed class DriverWorker
+    {
+        private readonly SemaphoreSlim _work = new(0, 1);
+        private readonly SemaphoreSlim _done = new(0, 1);
+        private Action _call = () => { };
+        private Exception? _error;
+
+        public DriverWorker(string driverId)
+        {
+            var thread = new Thread(Loop)
+            {
+                IsBackground = true,           // a wedged driver must never keep the process alive
+                Name = "mm-driver:" + driverId
+            };
+            thread.Start();
+        }
+
+        /// <summary>True if the call came back inside the bound; the driver's own exception is rethrown here.</summary>
+        public bool Run(Action call, TimeSpan bound)
+        {
+            _call = call;
+            _work.Release();
+            if (!_done.Wait(bound)) return false;
+
+            var error = _error;
+            _error = null;
+            if (error is not null) ExceptionDispatchInfo.Capture(error).Throw();
+            return true;
+        }
+
+        private void Loop()
+        {
+            while (true)
+            {
+                _work.Wait();
+                try { _call(); _error = null; }
+                catch (Exception ex) { _error = ex; }
+                _done.Release();
+            }
         }
     }
 

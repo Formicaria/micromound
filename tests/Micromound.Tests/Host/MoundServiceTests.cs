@@ -130,6 +130,39 @@ public sealed class MoundServiceTests : IDisposable
         public void Dispose() { _release.Set(); _release.Dispose(); }
     }
 
+    /// <summary>An ordinary line that also remembers which kind of thread was used to make it safe.</summary>
+    private sealed class RecordsItsThread : IDigitalOutput
+    {
+        public bool State { get; private set; }
+        public bool? RanOnThreadPool { get; private set; }
+
+        public void Write(bool high)
+        {
+            if (!high && State) RanOnThreadPool = Thread.CurrentThread.IsThreadPoolThread;
+            State = high;
+        }
+    }
+
+    /// <summary>
+    /// Occupies the thread pool so a mound composed inside it sees what a small machine sees.
+    /// Everything is released on Dispose, so a failure cannot leave the suite starved.
+    /// </summary>
+    private sealed class SaturatedThreadPool : IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new(false);
+
+        public SaturatedThreadPool()
+        {
+            ThreadPool.GetMinThreads(out var workers, out _);
+            var occupied = new CountdownEvent(workers + 2);
+            for (var i = 0; i < workers + 2; i++)
+                ThreadPool.UnsafeQueueUserWorkItem(_ => { occupied.Signal(); _release.Wait(); }, null);
+            occupied.Wait(TimeSpan.FromSeconds(5));
+        }
+
+        public void Dispose() { _release.Set(); _release.Dispose(); }
+    }
+
     private static DriverFactoryRegistry FactoriesWith(IDigitalOutput line)
     {
         var factories = new DriverFactoryRegistry();
@@ -712,7 +745,7 @@ public sealed class MoundServiceTests : IDisposable
     public void A_driver_that_blocks_going_safe_does_not_keep_the_others_energized()
     {
         using var stuck = new BlocksGoingSafe();
-        var ordinary = new InMemoryDigitalOutput();
+        var ordinary = new RecordsItsThread();
         var host = MoundHost.Create(new HostOptions
         {
             Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s20"),
@@ -729,6 +762,12 @@ public sealed class MoundServiceTests : IDisposable
 
         Assert.False(ordinary.State);                              // the second line went safe anyway
         Assert.True(host.Guard.HasTrip);                           // and the stuck one was reported, not swallowed
+
+        // And it went safe on a thread of its own rather than one borrowed from the pool. `v0.9.39`
+        // used Task.Run, so the blocked driver held a pool thread and the next driver's call waited
+        // for the pool to inject another — about a second — which on a two-core box is longer than
+        // the bound. The second driver timed out too. This is the assertion that names the fix.
+        Assert.Equal(false, ordinary.RanOnThreadPool);
 
         // The gate is released in bounded time, which is what lets the independent watchdog take it.
         // Generous, because a loaded CI box schedules the pool thread when it feels like it — the
@@ -797,5 +836,38 @@ public sealed class MoundServiceTests : IDisposable
         Assert.False(ordinary.State);                              // and the rest of the walk still ran
         Assert.True(again.Elapsed < TimeSpan.FromSeconds(1),
             $"the second walk waited {again.Elapsed.TotalSeconds:0.##}s on a driver already known not to answer");
+    }
+
+    /// <remarks>
+    /// The `v0.9.39` defect, made deterministic on any machine. That release ran each bounded call on
+    /// the thread pool, so the blocked driver occupied a pool thread and the next driver's call had
+    /// to wait for the pool to inject another — hill-climbing, roughly a second, far longer than the
+    /// bound. On a two-core runner the second driver timed out as well and its line stayed live: the
+    /// guarantee inverted itself exactly where it matters most, because the smaller the machine the
+    /// more completely one stuck driver took the others with it. And a Pi is a small machine.
+    ///
+    /// <para>Saturating the pool reproduces that on any box. With a thread per driver it makes no
+    /// difference at all, which is the point.</para>
+    /// </remarks>
+    [Fact]
+    public void A_starved_thread_pool_does_not_stop_the_other_drivers_going_safe()
+    {
+        using var stuck = new BlocksGoingSafe();
+        var ordinary = new RecordsItsThread();
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = TwoActuatorManifest("mm-s23"),
+            StateDirectory = _dir, Drivers = FactoriesWithPair(stuck, ordinary),
+            SafeStateTimeoutSeconds = 0.2
+        });
+
+        stuck.Write(true);
+        ordinary.Write(true);
+
+        using (new SaturatedThreadPool())
+            host.Stop();
+
+        Assert.False(ordinary.State);
+        Assert.Equal(false, ordinary.RanOnThreadPool);
     }
 }

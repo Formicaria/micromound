@@ -12,6 +12,58 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.42 — the safe-state bound needed a thread of its own
+
+**Fixes a defect shipped in `v0.9.39`.** Host only; no wire change, no C change, no fixture moved.
+
+### What was wrong
+
+`v0.9.39` bounded every per-driver safe-state and hold-release call by running it with `Task.Run` and
+waiting with a timeout. On the thread pool.
+
+The blocked driver occupies a pool thread. The next driver's call then needs another, and the pool
+injects new threads on a hill-climbing delay of roughly a second — far longer than the 0.2 s bound
+the test used, and longer than the 5 s default whenever several drivers are affected. So the second
+driver timed out as well, was abandoned, and **its line stayed live**.
+
+The shape of the failure is the bad part. It is not "sometimes slow": the fewer cores, the more
+completely one stuck driver takes every other driver down with it, and a Raspberry Pi is a small
+machine. The mechanism was weakest exactly where it was needed most, and the release note claimed
+the opposite.
+
+### How it was caught
+
+CI, on `A_driver_that_blocks_going_safe_does_not_keep_the_others_energized` — the test written to
+pin the guarantee, failing at `Assert.False(ordinary.State)`. It had passed on the build box by
+timing luck. Nothing about the test was wrong; the implementation was.
+
+### What changed
+
+Each driver gets **a thread of its own**, created on first bounded use and kept. A driver can then
+only ever wedge itself, whatever the machine and whatever else is running on it. It also costs
+nothing per call, which matters: the hold-release walk runs on every tick over every driver, and
+creating a thread per driver per second forever would have been the other wrong answer.
+
+### Pinned so it cannot come back
+
+Two assertions, both deterministic on any machine:
+
+- **The call did not run on a pool thread.** `Assert.Equal(false, ordinary.RanOnThreadPool)` — the
+  property that distinguishes the two designs, rather than a timing that happens to work here.
+- **A saturated thread pool changes nothing.** A new test occupies the pool, then makes the mound
+  safe with one driver wedged, and the other line still de-energizes. Against the `v0.9.39`
+  implementation both fail, on this machine, every time.
+
+### Verified
+
+603 C# tests, 2,658 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, acceptance 18/18 on the firmware leg and 15/15 applicable in memory, the console
+harness, and the simulator's lifecycle claims. Every frozen fixture is byte-identical. The firmware
+is untouched apart from its version string. Not run: the NuGet restore (firewalled), and any of it on
+real hardware.
+
+---
+
 ## v0.9.41 — P0.9: an identity that exists is never silently replaced
 
 Roadmap P0.9, the write path, and it closes the row. **No wire change. No fixture moved.** One

@@ -88,7 +88,12 @@ Also at this layer:
   a GPIO write is microseconds and an I2C transfer milliseconds, so five seconds is already
   pathological). Past the bound the mound stops WAITING: it trips, abandons that driver — permanently,
   because it has proved it does not answer and each retry would strand another thread — and makes the
-  rest safe. **Stated exactly, because the difference matters:** nothing interrupts the stuck driver or
+  rest safe. **Each driver's bounded calls run on a thread of that driver's own** (`v0.9.42`), never
+  a shared pool: `v0.9.39` used the thread pool, so a blocked driver occupied a pool thread and the
+  next driver's call waited on the pool to inject another — about a second, longer than the bound.
+  On a small machine the second driver timed out as well and its line stayed live. The guarantee
+  inverted itself exactly where it matters most, because a Pi *is* a small machine. A driver with its
+  own thread can only ever wedge itself. **Stated exactly, because the difference matters:** nothing interrupts the stuck driver or
   makes ITS line safe; a blocked call cannot be cancelled. The guarantee is that one blocked driver
   cannot keep unrelated outputs live, and that the gate is released in bounded time so the watchdog can
   take it. For the stuck line itself, process supervision (systemd `Restart=`, whose restart
