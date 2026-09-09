@@ -183,7 +183,7 @@ between components, and the existing tests check components.
 | **P0.7** ⚠️ *storage half done in `v0.9.34`* | **The audit path was unbounded and rewritten whole.** `DurableUplinkQueue` keeps an unbounded `List<Envelope>` and reserializes the entire pending list on every change. The evidence store's item ceiling does not bound evidence already embedded in queued envelopes | **Done (`v0.9.34`):** segment storage — one small document per envelope keyed by sequence, plus a tiny head, so an enqueue is O(1). **Measured on this repo's own store: 4,000 queued action records was a 2.4 MB document rewritten in full on every enqueue at ~12 ms each; it is now a 609 B largest document at a flat ~2 ms.** Item and byte limits (5,000 / 8 MiB by default), oldest-first spill, the count riding the `mound_sync` beat as `spilled_envelopes` so a chain gap can be explained and not merely detected, and in-place migration of a pre-`v0.9.34` queue so an upgrade never puts a gap in a chain itself. **Remaining, and the harder half: RESERVE capacity before an effect.** Today the bound is enforced after the fact by spilling; the C device already does it the right way round (a full queue refuses to record). Doing that on the host is a new kernel refusal — "a mound that cannot record what it did must not do it" — which means a fourteenth authorization check, the C mirror, and `kernel-decisions.txt`. Also remaining: the reserved area for critical records, and the same treatment for the `downlink-ledger` key, which has the same whole-list-rewrite shape at a much smaller bound |
 | **P0.8** ✅ *first half done in `v0.9.29`* | **One throwing driver could leave the others energized.** `MoundHost.EnterSafeState()` is properly isolated — per-driver `try`/`catch`, a reported trip, under `_safeGate`. But `WatchingForSafeState`, the path taken on *every* transition into stopped or quiesced from a sync, a mission, or (since `v0.9.27`) an expired lease, calls `driver.EnterSafeState()` raw in a bare `foreach`: the first driver to throw aborts the loop, every later driver stays live, the failure reports no trip, and the exception escapes into the caller. It also runs outside `_safeGate`, so it races the watchdog thread. Separately, a loop wedged *inside* a driver call is named in `SAFETY.md` as relying on `Restart=always`, which does not itself kill a still-running process | **Done (`v0.9.29`):** both bare walks — `WatchingForSafeState` and `Restore`'s cold start — now route through `MoundHost.EnterSafeState()`, with two-actuator regression tests, because every prior safe-state test used a single actuator and so could not see it. **Remaining:** a real supervised-liveness failure path with bounded escalation for a driver that *blocks* rather than throws, and proof that one blocked driver cannot keep unrelated outputs live |
 | **P0.9** ⚠️ *the erase is closed in `v0.9.35`* | **Boot can erase the device's identity.** `app_main.c` calls `nvs_flash_erase()` on `ESP_ERR_NVS_NO_FREE_PAGES` / `NEW_VERSION_FOUND` — the ordinary ESP-IDF idiom, which on a mound throws away the identity seed and the controller key, and would throw away a persisted stop | **Done (`v0.9.35`):** the autonomous images refuse. A partition that is full or written by a newer format halts the board in `halt_safe` with every output at its safe level and the reason logged, rather than answering "the flash is full" by minting a new mound and clearing a halt — and it is the reboot after a fault that is most likely to hit a full page, which is exactly when this matters. Reprovisioning is deliberate (`idf.py erase-flash`, or a development build with `MM_ALLOW_NVS_ERASE`, default off). The port-server image still erases, because it holds no identity and no authority to lose. **Remaining: the write path itself.** A corrupt or interrupted write is still only as safe as NVS's own atomicity, nothing is checksummed above it, and none of that is tested — that needs a fault-injecting HAL in `test_board.c` (a kv layer that fails mid-write, returns garbage, or truncates), which is a slice of its own |
-| **P0.10** | **.NET 9 reaches end of support on 10 November 2026.** `Directory.Build.props` targets `net9.0`; the open dependency-update PRs are untriaged | Migrate to .NET 10 LTS and re-run the canonical-byte, signature and C interoperability fixtures — **a runtime upgrade must not change a signed byte.** Triage the open PRs on their merits rather than merging or losing them wholesale. Record the ESP-IDF and toolchain pins with their support dates |
+| **P0.10** ✅ *done in `v0.9.36`* (one item deferred, named) | **.NET 9 reaches end of support on 10 November 2026.** `Directory.Build.props` targets `net9.0`; the open dependency-update PRs are untriaged | **Done (`v0.9.36`):** `net10.0`, the LTS line, supported to 14 November 2028. `LangVersion` stays at 13 deliberately — a runtime move must be provable, and a language change folded into it would make the proof weaker. **The gates were not re-run, they were re-derived:** all eight C#-written frozen fixtures (`canonical-envelopes`, `-bodies`, `-strings`, `-doubles`, `-signed`, `enroll-exchange`, `kernel-decisions`, `link-frames`) were regenerated from scratch under .NET 10 with `MICROMOUND_UPDATE_GOLDEN=1` and came back byte-identical — including the double-layout fixture that pins .NET's own number formatting, which is the single most likely thing a runtime change would move. The C mirror then read those same files and agreed, 2,576 checks. The seven open dependency PRs are triaged in P7 below, on their merits, and none merged blind: five are CI-only Action majors that belong in their own change, one is the Ed25519 signer and needs a slice that re-proves `canonical-signed.txt`, one is test-only. Toolchain pins and support dates recorded in P7. **Deferred, named:** ANTHILL compiles against these sources and has to take the same runtime move — a coordination item with the upstream, not closable here |
 
 Two design notes these rows depend on, so they are decided once rather than per row.
 
@@ -424,12 +424,32 @@ interpretation improves a named task without acquiring any control privilege.
 
 ### P7 — maintainable and shippable (starts during P0)
 
-**Runtime currency is now urgent: .NET 9 reaches end of support on 10 November 2026.** Plan the
-.NET 10 LTS migration now, coordinate the shared protocol and crypto packages with the controller,
-and re-run the canonical-byte and C interoperability gates — the upgrade must not move a signed byte.
-Triage the open dependency-update PRs on their merits; an open version-bump PR is not by itself
-evidence of a vulnerability. Record toolchain support dates and publish a dependency and licence
-inventory per release profile.
+**Runtime currency: done for the host at `v0.9.36`.** `Directory.Build.props` targets `net10.0` —
+the LTS line, supported to 14 November 2028 — two months before .NET 9's 10 November 2026 end of
+support. The canonical-byte and C interoperability gates were not merely re-run: every frozen
+C#-written fixture was regenerated from scratch on the new runtime and compared byte for byte, and
+nothing moved. **What this does NOT cover: the controller.** ANTHILL compiles against this
+repository's `Micromound.Protocol` and `Micromound.Crypto` sources, so it has to take the same
+runtime move or pin an older commit; that is a coordination item with the upstream, not something
+this repository can close on its own.
+
+**Toolchain pins and their support dates.** .NET 10 LTS, released 11 November 2025, supported to
+14 November 2028. ESP-IDF v5.3.2 — Espressif gives each minor release 30 months from its initial
+stable release (12 months Service, then 18 months Maintenance: bug fixes only), and v5.3 stabilised
+in August 2024, so it is in Maintenance now and leaves support in the first half of 2027; read the
+exact date off the branch's own release note before the bench work locks a version in. BouncyCastle
+2.5.0 and the xunit/test-SDK line are pinned by `.csproj` and tracked by Dependabot below. Still
+open from P7: a dependency and licence inventory per release profile.
+
+**The open dependency-update PRs, triaged (2026-09-09) rather than merged wholesale.** Seven, none
+of them a vulnerability report; an open version-bump PR is not by itself evidence of one. The five
+GitHub-Actions major bumps (`checkout` v4→v7, `download-artifact` v4→v8, `upload-artifact` v4→v7,
+`setup-dotnet` v4→v6, `codeql-action` v3→v4) change only CI and cannot be verified anywhere but on
+GitHub; the current `setup-dotnet@v4` installs `10.0.x` fine, so none of them blocks this migration
+and they should land as their own CI-only change where a red run is cheap. `BouncyCastle.Cryptography`
+2.5.0→2.7.0 is the Ed25519 signer and is the one bump that could move a signed byte — it goes in a
+slice of its own that regenerates `canonical-signed.txt` and proves it did not. The grouped
+xunit/`Microsoft.NET.Test.Sdk` bump touches no shipped code.
 
 Ship separate **release profiles** — minimal host, host with selected adapters, MCU port server,
 serial mound, Wi-Fi mound — with firmware flash bundles carrying exact bootloader/partition/app

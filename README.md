@@ -63,7 +63,7 @@ state. Reconnection resumes nothing.
 
 ## Status
 
-**Current version:** v0.9.35
+**Current version:** v0.9.36
 
 **M0 frozen at `v0.2.1`; M1 done at `v0.3.0`; M2 done at `v0.6.0`; M3 done at `v0.9.1`; M4 in
 progress (`v0.9.2`–`v0.9.17`); M5 in progress (`v0.9.18`–`v0.9.27`).** Protocol contracts, Ed25519 signing, frozen wire bytes, the
@@ -152,6 +152,14 @@ both legs**. It earned its keep immediately: it found that the `verified` outcom
 any honest actuator, and that a lease only expired when somebody happened to ask — both fixed in the
 same release. What's still ahead for M4 is only the board itself.
 
+**New in `v0.9.36`:** the runtime is .NET 10 LTS, and not one signed byte moved. .NET 9 is a
+standard-term release that leaves support on 10 November 2026 — two months from now — while .NET 10
+is supported to 14 November 2028. The migration is one line, so the whole slice is the proof: every
+frozen wire fixture was **regenerated from scratch** on .NET 10 and came back byte-identical, which
+is the only evidence worth having when a mound in the field verifies signatures produced by a mound
+that was upgraded. The language version deliberately stays at C# 13; a runtime move should not also
+change how the code is written.
+
 **New in `v0.9.35`:** the C mound's stop is durable, and its identity is not erased to make room. A
 stop lived in RAM on the ESP32, so power-cycling a stopped board brought it back willing to actuate —
 the one thing [`docs/SAFETY.md`](docs/SAFETY.md) says a restart must never do. It is now one byte in
@@ -239,7 +247,8 @@ physical ports is refused unless you pass `--simulate`. [`docs/DEPLOY.md`](docs/
 step-by-step bring-up (systemd unit and installer in `deploy/`).
 Releases are cut with `scripts/release.sh` (or `scripts/release.ps1`) from a synced `main`.
 
-Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) — the LTS line,
+supported to 14 November 2028. The language version stays at C# 13.
 
 ## Layout
 

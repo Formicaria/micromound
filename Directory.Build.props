@@ -4,7 +4,13 @@
     Directory.Build.props so the two solutions stay convention-compatible.
   -->
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <!--
+      net10.0 since v0.9.36 (roadmap P0.10). .NET 9 is STS and leaves support on 10 November 2026;
+      .NET 10 is LTS to 14 November 2028. The LANGUAGE version deliberately stays at 13: this slice
+      is a runtime move, and a runtime move must not change a signed byte, so nothing about how the
+      code is written changes with it. C# 14 is a separate decision, on its own merits.
+    -->
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>13.0</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -18,7 +24,7 @@
       to it, and never just because it is the numeric successor to v0.9.x. The release scripts read
       this value literally and never assume the next release; bump it here by hand per slice.
     -->
-    <MicromoundVersion>0.9.35</MicromoundVersion>
+    <MicromoundVersion>0.9.36</MicromoundVersion>
     <Version>$(MicromoundVersion)</Version>
     <Authors>ANTHILL Project</Authors>
     <Product>MICROMOUND</Product>

@@ -349,5 +349,13 @@ Runtime, Drivers ← Host
 
 ## Build conventions
 
-`Directory.Build.props` pins net9.0, C# 13, nullable enabled, deterministic builds. Project names
+`Directory.Build.props` pins net10.0, C# 13, nullable enabled, deterministic builds. Project names
 use the `Micromound.*` prefix.
+
+The runtime and the language are pinned separately and moved separately, on purpose. `net10.0` is
+the LTS runtime (`v0.9.36`, roadmap P0.10; .NET 9 is standard-term and leaves support on 10 November
+2026, .NET 10 is supported to 14 November 2028). `LangVersion 13.0` is the language this code is
+written in, and it did not move with the runtime: a runtime upgrade has to be *provable* — the
+frozen wire fixtures are regenerated on the new runtime and compared byte for byte — and folding a
+language change into that comparison would make it prove less. C# 14 is available on this runtime
+and is a separate decision, on its own merits.

@@ -12,6 +12,105 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.36 — P0.10: .NET 10 LTS, and not one signed byte moved
+
+Roadmap P0.10. **No wire change, and that is the whole point of the release.** No source file
+changed at all: `Directory.Build.props` targets `net10.0`, the CI workflows install `10.0.x`, and
+the documentation says so.
+
+### Why now
+
+.NET 9 is a standard-term release and leaves support on **10 November 2026** — two months out. .NET
+10 is the LTS line, released 11 November 2025 and supported to **14 November 2028**. The release
+workflow publishes self-contained single-file binaries for `linux-arm64` and `win-x64`, so the
+runtime is not something a deployed mound can be upgraded away from independently: whatever the
+tag builds is what runs on the Pi until it is replaced. Shipping a mound on a runtime that stops
+getting security fixes in two months is not a thing to leave until it is urgent.
+
+### The migration is one line, so the release is the proof
+
+A runtime upgrade must not change a signed byte. That claim is easy to make and easy to get wrong
+quietly — a device in the field verifies signatures over canonical bytes produced by a mound that
+may have been upgraded, and the two have to agree exactly or the chain breaks with no useful error.
+
+So the fixtures were not re-run. They were **re-derived**: every C#-written frozen fixture deleted
+and regenerated from scratch on .NET 10 with `MICROMOUND_UPDATE_GOLDEN=1`, then compared to what is
+committed. All eight came back byte-identical — `git status` on `Golden/files` clean:
+
+```
+canonical-envelopes.txt   canonical-bodies.txt   canonical-strings.txt   canonical-doubles.txt
+canonical-signed.txt      enroll-exchange.txt    kernel-decisions.txt    link-frames.txt
+```
+
+`canonical-doubles.txt` is the one that mattered most. It pins .NET's own `double` layout — the rule
+`mm_format.c` reimplements in C from first principles — and a number-formatting change between
+runtimes would be exactly the kind of silent divergence that shows up months later as a mound whose
+readings no longer verify. It did not move. `canonical-signed.txt` carries real Ed25519 signatures
+over those bytes and did not move either.
+
+Then the C mirror read the regenerated files and agreed: 2,576 checks under gcc and clang at `-O0`
+and `-O2`, and again under ASan + UBSan with recovery off.
+
+### The language version deliberately did NOT move
+
+`LangVersion` stays at `13.0` on a runtime that offers C# 14. Mixing a language change into a
+runtime migration would make the byte-for-byte comparison above prove less than it does — a clean
+diff would no longer isolate the runtime. C# 14 is a separate decision on its own merits, and this
+release does not pre-empt it.
+
+### The seven open dependency PRs, triaged rather than merged wholesale
+
+P0.10 asked for a verdict on each. None is a vulnerability report; an open version-bump PR is not
+by itself evidence of one.
+
+| PR | Verdict |
+|---|---|
+| `actions/checkout` v4→v7 | CI only. Land as one CI-only change where a red run costs nothing |
+| `actions/download-artifact` v4→v8 | as above |
+| `actions/upload-artifact` v4→v7 | as above |
+| `actions/setup-dotnet` v4→v6 | as above — and **not** a blocker here: `setup-dotnet@v4` installs `10.0.x` |
+| `github/codeql-action` v3→v4 | as above |
+| `BouncyCastle.Cryptography` 2.5.0→2.7.0 | **The Ed25519 signer** — the one bump that can move a signed byte. Its own slice, which regenerates `canonical-signed.txt` and proves it did not |
+| xunit + `Microsoft.NET.Test.Sdk` (grouped) | Test-only; touches no shipped code |
+
+Five CI-only bumps merged blind alongside a runtime migration would make a red CI run ambiguous
+about which change caused it, which is the reason to keep them separate rather than a reason to
+leave them open.
+
+### Toolchain pins recorded, as P0.10 asked
+
+- **.NET 10** — LTS, 11 Nov 2025 → **14 Nov 2028**.
+- **ESP-IDF v5.3.2** — Espressif supports each minor release for 30 months from its initial stable
+  release (12 months Service, then 18 months Maintenance, bug fixes only). v5.3 stabilised in
+  August 2024, so it is in Maintenance now and leaves support in the first half of 2027. The exact
+  date is on the branch's own release note and should be read there before the bench work pins a
+  version for hardware.
+- **BouncyCastle.Cryptography 2.5.0** — the only NuGet dependency in shipped code, and only because
+  the BCL has no Ed25519.
+
+### Two things this does not do
+
+**It does not migrate the controller.** ANTHILL compiles against this repository's
+`Micromound.Protocol` and `Micromound.Crypto` *sources*, so it has to take the same runtime move or
+pin an older commit. That is a coordination item with the upstream and cannot be closed here.
+
+**It does not verify the NuGet restore.** api.nuget.org is firewalled in the sandbox this was built
+in, so `BouncyCastle.Cryptography` 2.5.0 building and signing under .NET 10 is asserted from its
+`netstandard2.0` targeting, not observed. CI's restore is the check. Everything else below WAS run.
+
+**One operational prerequisite:** the machine that runs `scripts/validate.ps1 -Full` needs the .NET
+10 SDK installed. With only the .NET 9 SDK present the build fails at the first project with "the
+current .NET SDK does not support targeting .NET 10.0".
+
+### Verified
+
+585 C# tests on .NET 10, all eight frozen fixtures regenerated byte-identical, 2,576 C checks under
+gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with recovery off, acceptance 18/18 on
+the firmware leg and 15/15 applicable in memory, the console harness, and the simulator's lifecycle
+claims. Not run: the NuGet restore, and any of it on real hardware.
+
+---
+
 ## v0.9.35 — P0.6/P0.9: on the board, a stop survives the power, and a full flash is not a new mound
 
 Roadmap P0.6 (the sticky stop half) and P0.9 (the erase). **No wire change. No refusal reason
