@@ -12,6 +12,73 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.43 — P0.7: the replay ledger is written when it changes, not when a beat happens
+
+Roadmap P0.7's remaining storage item. **No wire change, no format change, no fixture moved.**
+
+### Measured before deciding, because the row's own prescription was wrong
+
+P0.7 said the `downlink-ledger` key "has the same whole-list-rewrite shape at a much smaller bound"
+and should get "the same treatment" as the uplink queue — one small document per entry. Measuring it
+first says otherwise:
+
+```
+ledger at the cap (2,048 entries): 161,805 bytes
+  rewritten every 15s beat:  889 MB/day
+  rewritten every 60s beat:  222 MB/day
+```
+
+The queue's problem was **size**: an unbounded list reserialized whole, 2.4 MB and growing, on every
+enqueue. The ledger cannot grow — `MaxLedgerEntries` caps it at 2,048, which is 162 KB and stays 162
+KB. Its problem is **frequency**: it was written on every sync beat whether or not one id had
+changed. On an SD card the writes are the thing that wears out, and 889 MB a day of *identical bytes*
+is the whole cost.
+
+Segmenting it into 2,048 tiny documents would have added inodes and fsyncs to fix a problem it does
+not have. The phrase "at a much smaller bound" in the row was the clue, and it was written as though
+it were a detail.
+
+### What changed
+
+The ledger is written only when it has actually changed since the last write. `_ledgerDirty` is set
+wherever the handled-downlink set is mutated — a downlink handled, a mission id remembered, an entry
+pruned by the horizon or dropped by the cap — and `TryTakeLedgerSnapshot` reports it and clears it.
+`RestoreLedger` leaves it clean, because after a restart what is in memory is exactly what is on
+disk, so the first beat owes no write.
+
+Most beats change nothing. An idle chartered mound now writes the ledger zero times.
+
+The one thing this leaves on disk is entries the horizon has already expired, if nothing else ever
+changes: harmless, since they are refused on sight and the set is bounded, and rewritten the moment
+anything real happens.
+
+### Pinned
+
+Over the real `FileStateStore` the daemon runs, by whether the file exists at all — no mock, and no
+dependence on timestamp granularity. Four idle beats on a fresh mound leave no ledger file. A beat
+that prunes an entry past the horizon creates one. Both fail against the old code.
+
+The second test is the one that stops this being "never write it": without it, the first would pass
+just as well against a mound that had quietly stopped persisting what it has acted on — which is the
+`v0.9.33` defect, where a restart let a completed mission run a second time.
+
+### Remaining in P0.7, named
+
+Observation is deliberately exempt from the kernel's check 14 — a stop does not blind the mound, and
+neither should a full queue — so sensing can still fill a queue past the reserve. The mound then
+loses readings rather than the account of what it physically did, which is the right way round, but
+it is a real limit and not a claim to have closed.
+
+### Verified
+
+605 C# tests, 2,658 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, acceptance 18/18 on the firmware leg and 15/15 applicable in memory, the console
+harness, and the simulator's lifecycle claims. Every frozen fixture is byte-identical. The firmware
+is untouched apart from its version string. Not run: the NuGet restore (firewalled), and any of it on
+real hardware.
+
+---
+
 ## v0.9.42 — the safe-state bound needed a thread of its own
 
 **Fixes a defect shipped in `v0.9.39`.** Host only; no wire change, no C change, no fixture moved.

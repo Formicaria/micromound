@@ -101,6 +101,63 @@ public sealed class MoundHostTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_dir, "state")));   // durable state directory created
     }
 
+    // ---- P0.7: the replay ledger is written when it changes, not when a beat happens (v0.9.43) ----
+
+    /// <remarks>
+    /// The ledger is bounded — 2,048 entries, 162 KB at the cap, and it cannot grow past that — so
+    /// its problem was never SIZE, the way the uplink queue's was. It was FREQUENCY: it was written
+    /// on every sync beat whether or not one id had changed, which at a 15 s cadence is 889 MB a day
+    /// of identical bytes onto an SD card, where the writes are what wears out.
+    ///
+    /// <para>Asserted over the real <c>FileStateStore</c> the daemon runs, by whether the file is
+    /// there at all — no mock, and no dependence on timestamp granularity.</para>
+    /// </remarks>
+    [Fact]
+    public void Beats_that_change_nothing_never_write_the_replay_ledger()
+    {
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = Greenhouse("mm-host-lg1"), StateDirectory = _dir
+        });
+
+        for (var i = 0; i < 4; i++) host.Sync(Now.AddSeconds(15 * i));
+
+        Assert.False(File.Exists(LedgerPath()),
+            "a mound that has handled nothing has nothing to say about what it has handled");
+    }
+
+    /// <remarks>
+    /// The other half, and the one that stops the fix being "never write it": a beat that really
+    /// does change the ledger writes it. Without this the test above would pass just as well against
+    /// a mound that had quietly stopped persisting what it has acted on — which is the `v0.9.33`
+    /// defect, where a restart let a completed mission run a second time.
+    /// </remarks>
+    [Fact]
+    public void A_beat_that_changes_the_ledger_does_write_it()
+    {
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(), Manifest = Greenhouse("mm-host-lg2"), StateDirectory = _dir
+        });
+
+        // A ledger as a restart would leave it: in memory, already on disk, nothing owed.
+        host.Runner.RestoreLedger(new DownlinkLedgerSnapshot
+        {
+            Handled = [new DownlinkLedgerEntry { Id = "e-1", SentAt = Now.ToWire() }]
+        });
+
+        host.Sync(Now.AddSeconds(15));                    // inside the horizon: nothing changed
+        Assert.False(File.Exists(LedgerPath()));
+
+        host.Sync(Now.AddHours(25));                      // past it: the entry is pruned, and that is a change
+        Assert.True(File.Exists(LedgerPath()),
+            "a ledger the mound pruned must not be left on disk as it was");
+    }
+
+    // CacheAnt namespaces its keys, and DurableFiles percent-encodes the colon. Spelled out rather
+    // than computed because that encoder is internal to Micromound.Sync.
+    private string LedgerPath() => Path.Combine(_dir, "state", "cache%3Adownlink-ledger.json");
+
     /// <remarks>
     /// P0.7, `v0.9.37`: the kernel's check 14 is only as real as the composition that attaches it.
     /// A kernel with no audit path wired skips the check entirely — the right default for one built

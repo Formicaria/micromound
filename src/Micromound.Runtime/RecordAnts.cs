@@ -327,6 +327,7 @@ public sealed class RunnerAnt : IRunnerAnt
 
     private int _forgottenDownlink;
     private DateTimeOffset _now;
+    private bool _ledgerDirty;
 
     /// <summary>The replay ledger as it persists — see <see cref="ReplayHorizon"/>.</summary>
     public DownlinkLedgerSnapshot LedgerSnapshot() => new()
@@ -335,6 +336,34 @@ public sealed class RunnerAnt : IRunnerAnt
             .Select(e => new DownlinkLedgerEntry { Id = e.Key, SentAt = e.Value.ToWire() })
             .ToList()
     };
+
+    /// <summary>
+    /// The ledger, but only when it has actually changed since the last time it was taken
+    /// (`v0.9.43`, roadmap P0.7). False means the copy on disk is already correct.
+    ///
+    /// <para><b>Why this rather than the segment storage the queue got.</b> The uplink queue's
+    /// problem was SIZE — an unbounded list reserialized whole, 2.4 MB and growing, on every
+    /// enqueue. The ledger's is FREQUENCY: it is bounded at
+    /// <see cref="MaxLedgerEntries"/> entries, which measures 162 KB at the cap and cannot grow past
+    /// it, but it was written on every sync beat whether or not a single id had changed. At a 15 s
+    /// cadence that is <b>889 MB a day</b> of identical bytes, and on an SD card the writes are the
+    /// thing that wears out. Splitting it into 2,048 tiny documents would have added inodes and
+    /// fsyncs to fix a problem that is not size; not writing when nothing changed removes almost all
+    /// of it and leaves the format alone. Most beats change nothing: the ledger only moves when a
+    /// downlink is handled or a prune drops something.</para>
+    /// </summary>
+    public bool TryTakeLedgerSnapshot(out DownlinkLedgerSnapshot snapshot)
+    {
+        if (!_ledgerDirty)
+        {
+            snapshot = new DownlinkLedgerSnapshot();
+            return false;
+        }
+
+        snapshot = LedgerSnapshot();
+        _ledgerDirty = false;
+        return true;
+    }
 
     /// <summary>
     /// Rehydrate the replay ledger. Entries whose timestamp will not parse are dropped — an entry
@@ -348,6 +377,11 @@ public sealed class RunnerAnt : IRunnerAnt
         foreach (var entry in snapshot.Handled)
             if (!string.IsNullOrWhiteSpace(entry.Id) && ProtocolTime.TryParse(entry.SentAt, out var at))
                 _handledDownlink[entry.Id] = at;
+
+        // What is in memory is now exactly what is on disk, so the first beat after a restart owes
+        // no write. Entries the horizon has already expired are the one thing this leaves behind on
+        // disk until something else changes; they are refused on sight and the set stays bounded.
+        _ledgerDirty = false;
     }
 
     private static DateTimeOffset SentAtOf(Envelope envelope) =>
@@ -369,7 +403,10 @@ public sealed class RunnerAnt : IRunnerAnt
     {
         var horizon = now - ReplayHorizon;
         foreach (var id in _handledDownlink.Where(e => e.Value < horizon).Select(e => e.Key).ToList())
+        {
             _handledDownlink.Remove(id);
+            _ledgerDirty = true;
+        }
 
         if (_handledDownlink.Count <= MaxLedgerEntries) return;
 
@@ -379,6 +416,7 @@ public sealed class RunnerAnt : IRunnerAnt
         {
             _handledDownlink.Remove(id);
             _forgottenDownlink++;
+            _ledgerDirty = true;
         }
     }
 
@@ -554,6 +592,7 @@ public sealed class RunnerAnt : IRunnerAnt
     private bool HandleAck(Envelope envelope, long beatSeq)
     {
         _handledDownlink[envelope.Id] = SentAtOf(envelope);
+        _ledgerDirty = true;
 
         var ack = Deserialize<AckBody>(envelope);
         if (ack is null || ack.ThroughSeq < 0) return false;
@@ -589,6 +628,7 @@ public sealed class RunnerAnt : IRunnerAnt
             // copies inside the SAME batch — Add returning false is the second copy. Without it,
             // a controller whose ack was lost mid-exchange could make one mission run twice.
             if (!_handledDownlink.TryAdd(envelope.Id, SentAtOf(envelope))) return false;
+            _ledgerDirty = true;
 
             switch (envelope.Kind)
             {
@@ -668,7 +708,7 @@ public sealed class RunnerAnt : IRunnerAnt
                         break;
                     }
 
-                    if (missionKey is not null) _handledDownlink[missionKey] = SentAtOf(envelope);
+                    if (missionKey is not null) { _handledDownlink[missionKey] = SentAtOf(envelope); _ledgerDirty = true; }
 
                     // The coordinator executes; the Runner only reports what it said. The report
                     // goes up whatever the verdict was — a refused mission is reported exactly

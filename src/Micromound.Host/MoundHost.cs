@@ -552,7 +552,10 @@ public sealed class MoundHost
         var outcome = WatchingForSafeState(() => Runner.Sync(now));
         Cache.SaveAuthority(Authority);
         Cache.SaveHistory(Kernel.History, now);   // a downlinked mission actuates through this path too
-        Cache.SaveLedger(Runner.LedgerSnapshot());   // ...and what it has already acted on
+        // ...and what it has already acted on — but only when a beat actually changed it. Most do
+        // not, and the ledger is 162 KB at its cap: writing it every beat regardless was 889 MB a
+        // day of identical bytes at a 15 s cadence (`v0.9.43`, roadmap P0.7).
+        if (Runner.TryTakeLedgerSnapshot(out var ledger)) Cache.SaveLedger(ledger);
         return outcome;
     }
 
