@@ -53,6 +53,15 @@ extern "C" {
 #define MM_DEVICE_AUDIT 8
 #define MM_DEVICE_BATCH 16
 
+/*
+ * The slice of the queue held back for records that EXPLAIN rather than records that report new
+ * physical work: the kernel's check-14 refusal itself, acks, the beat that carries the mound's
+ * state out. Mirrors DurableUplinkQueue.ReserveDivisor on the host — an eighth of the bound, never
+ * less than one slot — so a mound that refuses to act can still say so, and can still be heard.
+ * Without it check 14 would swap one silent failure for another.
+ */
+#define MM_DEVICE_RESERVE (MM_DEVICE_QUEUE / 8 > 0 ? MM_DEVICE_QUEUE / 8 : 1)
+
 /* A queued uplink envelope: the signed wire bytes and what the chain needs to know about it. */
 typedef struct mm_queued {
     char wire[MM_DEVICE_WIRE_CAP];

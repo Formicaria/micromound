@@ -336,6 +336,17 @@ void test_kernel(void)
                     expired_charter(&c); accept(&k, &c, at, actual, sizeof actual);
                 } else if (strstr(label, "a charter naming what this device does not have")) {
                     mismatched_charter(&c); accept(&k, &c, at, actual, sizeof actual);
+                } else if (strstr(label, "so the audit path is tested against real authority")) {
+                    benign_charter(&c); accept(&k, &c, at, actual, sizeof actual);
+                } else if (strstr(label, "the audit path reaches capacity")) {
+                    /* check 14's two numbers, set by hand exactly as the C# script sets them */
+                    k.audit_pending = 40; k.audit_capacity = 40;
+                    snprintf(actual, sizeof actual, "audit path: %d pending, capacity %d",
+                             k.audit_pending, k.audit_capacity);
+                } else if (strstr(label, "one slot opens")) {
+                    k.audit_pending = 39;
+                    snprintf(actual, sizeof actual, "audit path: %d pending, capacity %d",
+                             k.audit_pending, k.audit_capacity);
                 } else {
                     snprintf(actual, sizeof actual, "(no C mapping for event '%s')", label);
                 }
@@ -401,5 +412,5 @@ void test_kernel(void)
         if (eof) break;
     }
     fclose(f);
-    CHECK(steps == 42);
+    CHECK(steps == 48);
 }

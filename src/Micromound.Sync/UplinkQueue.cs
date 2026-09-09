@@ -59,11 +59,28 @@ public sealed class DurableUplinkQueue : IUplinkQueue
     /// </summary>
     public const long DefaultMaxPendingBytes = 8L * 1024 * 1024;
 
+    /// <summary>
+    /// The fraction of each bound held back for records that EXPLAIN rather than records that
+    /// report new physical work — the refusal the kernel's check 14 produces, the acknowledgements
+    /// and beats that let the mound climb back out, a stop's answer.
+    ///
+    /// <para>An eighth, and the reasoning is a duration rather than a number: the reserve has to
+    /// outlast the outage that filled the queue, at the rate refusals are produced — which is at
+    /// most the rate work was being attempted, and is the same rate that filled it. A refusal
+    /// record is also far smaller than an action record carrying inline evidence, so an eighth of
+    /// the BYTE bound buys very much more than an eighth of the time. An eighth of 5,000 records is
+    /// 625 refusals: four days at a ten-minute schedule, which is longer than the mound could have
+    /// been recording in the first place.</para>
+    /// </summary>
+    public const int ReserveDivisor = 8;
+
     private readonly IStateStore? _store;
     private readonly List<Envelope> _pending = [];
     private readonly Dictionary<long, int> _segmentBytes = [];
     private readonly int _maxPending;
     private readonly long _maxPendingBytes;
+    private readonly int _reservedRecords;
+    private readonly long _reservedBytes;
     private long _nextSeq;
     private string _lastDigest = "";
     private long _ackedThrough = -1;
@@ -76,6 +93,8 @@ public sealed class DurableUplinkQueue : IUplinkQueue
         _store = store;
         _maxPending = maxPending > 0 ? maxPending : DefaultMaxPending;
         _maxPendingBytes = maxPendingBytes > 0 ? maxPendingBytes : DefaultMaxPendingBytes;
+        _reservedRecords = Math.Max(1, _maxPending / ReserveDivisor);
+        _reservedBytes = Math.Max(1, _maxPendingBytes / ReserveDivisor);
 
         if (_store is not null && _store.TryGet(StoreKey, out var saved))
             RestoreFrom(saved);
@@ -105,6 +124,32 @@ public sealed class DurableUplinkQueue : IUplinkQueue
     public long AcknowledgedThroughSeq => _ackedThrough;
 
     public int Depth => _pending.Count;
+
+    /// <summary><see cref="IAuditCapacity.PendingRecords"/> — see <see cref="CapacityForNewWork"/>.</summary>
+    public int PendingRecords => _pending.Count;
+
+    /// <summary>
+    /// <see cref="IAuditCapacity.CapacityForNewWork"/>: the depth at which the kernel stops
+    /// authorizing new physical work, because the record it would produce has nowhere to live.
+    ///
+    /// <para>Normally the item bound less the reserve. When the BYTE bound is the one that has been
+    /// reached — which is the usual case on a real mound, since action records carrying inline
+    /// evidence run orders of magnitude larger than beats — the item count can still be far below
+    /// its own ceiling, so this reports the current depth instead. That keeps the kernel's rule a
+    /// single comparison over two integers (<c>pending &lt; capacity</c>) that the C mirror applies
+    /// identically, rather than a bool whose meaning could drift between the two implementations
+    /// without any fixture noticing.</para>
+    /// </summary>
+    public int CapacityForNewWork
+    {
+        get
+        {
+            var byCount = _maxPending - _reservedRecords;
+            return _pendingBytes >= _maxPendingBytes - _reservedBytes
+                ? Math.Min(byCount, _pending.Count)
+                : byCount;
+        }
+    }
 
     public void Enqueue(Envelope envelope)
     {

@@ -55,6 +55,13 @@ public class KernelDecisionsTests
         }
     }
 
+    /// <summary>An audit path whose two numbers the script sets by hand, so check 14 is scriptable without a queue.</summary>
+    private sealed class ScriptedAudit : IAuditCapacity
+    {
+        public int PendingRecords { get; set; }
+        public int CapacityForNewWork { get; set; }
+    }
+
     private static (CapabilityKernel kernel, Dictionary<string, ScriptedExecutor> executors) Device()
     {
         var caps = new CapabilityRegistry();
@@ -256,6 +263,25 @@ public class KernelDecisionsTests
         var mismatched = Charter("c0000000-0000-4000-8000-000000000004", "benign", 600, ["act.relay_1", "act.laser"], [],
             new Dictionary<string, CapabilityLimits> { ["act.dimmer"] = new() { Max = 10 } }, []);
         Event("a charter naming what this device does not have", T0.AddSeconds(7300), () => Accept(mismatched, T0.AddSeconds(7300)));
+
+        // --- check 14: a mound that cannot record what it did must not do it ---
+        //
+        // Everything above ran with no audit path wired, which is the kernel's default and means the
+        // check does not apply — so the steps before this one are untouched by it. From here one is
+        // attached, and the last steps pin the fourteenth refusal in both implementations. The rule
+        // is `pending < capacity` over two integers and nothing else, so C and C# cannot come to
+        // disagree about what "full" means.
+        var audit = new ScriptedAudit();
+        kernel.Audit = audit;
+        Event("a fresh benign charter, so the audit path is tested against real authority", T0.AddSeconds(10000),
+            () => Accept(charter, T0.AddSeconds(10000)));
+        Event("the audit path reaches capacity", T0.AddSeconds(10001),
+            () => { audit.PendingRecords = 40; audit.CapacityForNewWork = 40; return "audit path: 40 pending, capacity 40"; });
+        Request("the audit path is full: actuation refused before anything moves", T0.AddSeconds(10002), "act.relay_1", on(5));
+        Request("the audit path is full: sensing continues", T0.AddSeconds(10003), "sense.temp");
+        Event("one slot opens", T0.AddSeconds(10004),
+            () => { audit.PendingRecords = 39; return "audit path: 39 pending, capacity 40"; });
+        Request("one slot left in the audit path: actuation proceeds", T0.AddSeconds(10005), "act.relay_1", on(5));
 
         GoldenFile.Verify("kernel-decisions.txt", report.ToString());
     }

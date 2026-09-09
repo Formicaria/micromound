@@ -102,6 +102,18 @@ int mm_device_act(mm_device *d, const mm_request *request, int64_t now, mm_actio
     char id[MM_ID_CAP];
     mm_action_record_view view;
     d->cfg.new_id(d->cfg.new_id_ctx, id);
+
+    /*
+     * Check 14's two numbers, refreshed from the queue this device owns, immediately before the
+     * kernel decides. Until v0.9.37 this function did the work FIRST and only then discovered it
+     * had nowhere to put the record ("uplink queue full: nothing more is recorded until the
+     * controller acknowledges") — an actuation nobody can account for, which is exactly the failure
+     * the check exists to remove. The queue never dropped anything, so the C side was half right
+     * already; it was the ORDER that was wrong.
+     */
+    d->kernel.audit_pending = (int)d->queue_len;
+    d->kernel.audit_capacity = MM_DEVICE_QUEUE - MM_DEVICE_RESERVE;
+
     mm_kernel_execute(&d->kernel, request, now, id, record);
     mm_action_record_bind(record, &view);
     return mm_device_publish(d, MM_KIND_ACTION_RECORD, mm_body_action_record, &view.record, now);

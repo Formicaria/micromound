@@ -432,4 +432,27 @@ void test_device(void)
         CHECK(mm_device_beat(&dev, T0 + 300) == -1);
         CHECK(strstr(mm_device_audit_at(&dev, mm_device_audit_count(&dev) - 1), "uplink queue full") != NULL);
     }
+
+    /*
+     * P0.7 check 14: with the queue past its capacity the KERNEL refuses new physical work, rather
+     * than the device doing the work and only then discovering it has nowhere to file the record.
+     * Sensing filled the queue above, and sensing is deliberately exempt (a reading that cannot be
+     * queued is a lost reading; an actuation that cannot be queued is a physical change nobody can
+     * account for) — which is why the pending count here is past the capacity rather than equal to
+     * it, and why a mound can still sense itself blind. The relay is what must not move.
+     */
+    {
+        int before = relay.n;
+        /* Authority back by hand: this block is about the audit path, not about how a lease is regained. */
+        dev.kernel.authority.quiesced = 0;
+        dev.kernel.authority.lease_expires_at = T0 + 100000;
+
+        mm_device_act(&dev, &act_relay, T0 + 400, &record);
+        CHECK_STR_EQ("refused", record.outcome);
+        CHECK(strstr(record.detail, "no_record_capacity") != NULL);
+        CHECK(strstr(record.detail, "16 of 14 records pending") != NULL);
+        CHECK(relay.n == before);                                        /* the line never moved */
+        CHECK(dev.kernel.audit_capacity == MM_DEVICE_QUEUE - MM_DEVICE_RESERVE);
+        CHECK(dev.kernel.audit_pending == (int)mm_device_queue_depth(&dev));
+    }
 }

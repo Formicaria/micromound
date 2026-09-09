@@ -67,6 +67,7 @@ const char *mm_refusal_reason_wire(int reason)
         case MM_REFUSAL_RATE_LIMIT: return "rate_limit";
         case MM_REFUSAL_EXECUTOR_MISSING: return "executor_missing";
         case MM_REFUSAL_DRIVER_FAULT: return "driver_fault";
+        case MM_REFUSAL_NO_RECORD_CAPACITY: return "no_record_capacity";
         default: return "refused";
     }
 }
@@ -792,6 +793,26 @@ void mm_kernel_authorize(mm_kernel *k, const mm_request *request, int64_t now, m
     if (!bound) {
         snprintf(detail, sizeof detail, "'%s' is authorized but no executor is bound to it", t.id);
         refuse(d, MM_REFUSAL_EXECUTOR_MISSING, detail);
+        return;
+    }
+
+    /*
+     * 14. And the mound has to be able to SAY that it did it.
+     *
+     * The uplink queue is bounded, and a bound enforced after the effect trades history the mound
+     * already owes for work it has not done yet. Refusing loses only the latter, and the controller
+     * can ask again. LAST, so a refusal an operator could act on is never masked by this one; and
+     * observation is exempt for the same reason a stop does not blind the mound — a reading that
+     * cannot be queued is a lost reading, while an actuation that cannot be queued is a physical
+     * change nobody can account for.
+     */
+    if (t.action_class > 0 && k->audit_capacity > 0 &&
+        k->audit_pending >= k->audit_capacity) {
+        snprintf(detail, sizeof detail,
+                 "the audit path is full (%d of %d records pending); "
+                 "a mound that cannot record what it did must not do it",
+                 k->audit_pending, k->audit_capacity);
+        refuse(d, MM_REFUSAL_NO_RECORD_CAPACITY, detail);
         return;
     }
 

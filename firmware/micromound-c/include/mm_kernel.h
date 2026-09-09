@@ -135,7 +135,8 @@ enum mm_refusal_reason {
     MM_REFUSAL_DUTY_CYCLE,
     MM_REFUSAL_RATE_LIMIT,
     MM_REFUSAL_EXECUTOR_MISSING,
-    MM_REFUSAL_DRIVER_FAULT
+    MM_REFUSAL_DRIVER_FAULT,
+    MM_REFUSAL_NO_RECORD_CAPACITY
 };
 
 /* RefusalReasons.ToWire. */
@@ -226,6 +227,18 @@ typedef struct mm_kernel {
     int inline_evidence;                    /* 1 on a reduced-profile device: the items an executor produced ride
                                                inline on the record (PROTOCOL.md §6). 0 mirrors the host kernel,
                                                whose items travel by evidence_bundle from the store. */
+    /*
+     * Check 14 (IAuditCapacity): how much room the uplink queue has left for the record a new
+     * actuation would produce. The rule is exactly `audit_pending < audit_capacity`, over these two
+     * integers and nothing else, so the C and C# kernels cannot drift on what "full" means — a bool
+     * could differ between them with no fixture able to see it.
+     *
+     * audit_capacity <= 0 = no bound is in force and the check does not apply, which is what a bare
+     * mm_kernel gets by default (mm_kernel_init zeroes both). mm_device sets them from its own queue
+     * before every act, so a real board always has the check.
+     */
+    int audit_pending;
+    int audit_capacity;
 } mm_kernel;
 
 /*

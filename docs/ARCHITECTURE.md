@@ -85,8 +85,15 @@ for the full check order and rationale.
 The kernel owns: the capability registry, capability availability, charter authorization, lease
 checks, action-class checks, stop state, parameter validation, hardware-limit enforcement,
 device-limit enforcement, charter-limit enforcement, duty-cycle limits, rate limits,
-workspace/geofence limits, routine authorization, safe-state enforcement, and structured refusal
-reasons.
+workspace/geofence limits, routine authorization, safe-state enforcement, audit capacity, and
+structured refusal reasons.
+
+Audit capacity is the newest of those and the one that reads oddest in a list of authority checks
+(`v0.9.37`, roadmap P0.7). The kernel refuses new physical work when the mound's uplink queue has
+no room for the record that work would produce, because an actuation nobody can account for is the
+silent failure SAFETY.md prohibits — and it is worse than the actuation not happening, which can
+simply be asked for again. It is the last check, so it never masks a refusal an operator could act
+on, and it does not apply to observation, so a backed-up queue never blinds the mound.
 
 No ant, no Mound Major, no local model, and no upstream mission bypasses it.
 

@@ -212,6 +212,125 @@ public class UplinkQueueTests
         Assert.Equal(0, queue.Depth);
         Assert.Equal(0, queue.NextSeq);
     }
+
+    // ---- P0.7: reserve capacity BEFORE the effect (v0.9.37) ------------------------------------
+
+    /// <remarks>
+    /// The queue reports capacity as the bound minus a reserve, not the bound. The reserve is what
+    /// holds the refusal the kernel's check 14 produces — a mound that could refuse but not record
+    /// the refusal has swapped one silent failure for another.
+    /// </remarks>
+    [Fact]
+    public void Capacity_for_new_work_is_the_bound_less_a_reserve()
+    {
+        var queue = new DurableUplinkQueue(maxPending: 16);
+
+        Assert.Equal(14, queue.CapacityForNewWork);   // 16 - 16/8
+        Assert.Equal(0, queue.PendingRecords);
+    }
+
+    /// <remarks>
+    /// A bound of 1 must not produce a capacity of 1: that would leave nothing for the refusal.
+    /// The reserve floors at one slot however small the bound is, so capacity can reach zero — and
+    /// a capacity of zero or less means "no bound in force" to the kernel, which is the wrong
+    /// reading. Pinned so a future change to the divisor cannot open that gap quietly.
+    /// </remarks>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(8)]
+    [InlineData(5000)]
+    public void The_reserve_is_never_zero_at_any_bound(int bound)
+    {
+        var queue = new DurableUplinkQueue(maxPending: bound);
+
+        Assert.True(queue.CapacityForNewWork < bound,
+            $"bound {bound} left no reserve: capacity {queue.CapacityForNewWork}");
+    }
+
+    /// <remarks>
+    /// The byte bound is the one that actually binds on a real mound — an action record carrying
+    /// inline evidence is orders of magnitude larger than a beat — and when it does, the item count
+    /// is still far below its own ceiling. Capacity has to collapse to the current depth then, so
+    /// the kernel's single comparison (`pending &lt; capacity`) still says "full". A bool here would
+    /// have been a second definition of fullness for the C mirror to disagree with.
+    /// </remarks>
+    [Fact]
+    public void The_byte_bound_closes_capacity_even_with_item_slots_to_spare()
+    {
+        var queue = new DurableUplinkQueue(maxPending: 1000, maxPendingBytes: 4096);
+        for (var i = 0; i < 12; i++) queue.Enqueue(Next(queue));
+
+        Assert.True(queue.PendingBytes >= 4096 - 4096 / 8,
+            $"the byte reserve was not reached: {queue.PendingBytes} bytes");
+        Assert.True(queue.Depth < 1000 - 1000 / 8, "the item bound was reached instead; the test proves nothing");
+        Assert.Equal(queue.Depth, queue.CapacityForNewWork);
+        Assert.False(queue.PendingRecords < queue.CapacityForNewWork, "the kernel would still have authorized");
+    }
+
+    /// <remarks>
+    /// The join, end to end over the real classes: a queue at its capacity, the real adapter, the
+    /// real kernel — and an actuation refused with `no_record_capacity` BEFORE the executor is
+    /// touched. Before this the mound acted and then spilled the oldest envelope to make room for
+    /// the record, trading history it already owed for work it had not done yet.
+    /// </remarks>
+    [Fact]
+    public void A_full_audit_path_refuses_actuation_but_never_observation()
+    {
+        var queue = new DurableUplinkQueue(maxPending: 16);          // capacity 14
+        while (queue.Depth < queue.CapacityForNewWork) queue.Enqueue(Next(queue));
+
+        var caps = new CapabilityRegistry();
+        caps.Register(new CapabilityDescriptor { Id = "sense.temp", Class = ActionClass.Observe });
+        caps.Register(new CapabilityDescriptor { Id = "act.relay_1", Class = ActionClass.Benign });
+        var authority = new KernelAuthority("mm-1");
+        authority.AcceptCharter(Benign("mm-1"), Now);
+        var kernel = new CapabilityKernel(caps, new RoutineRegistry(caps), authority)
+        {
+            Audit = new UplinkAuditCapacity(queue)
+        };
+        var relay = new RecordingExecutor("act.relay_1");
+        kernel.RegisterExecutor(relay);
+        kernel.RegisterExecutor(new RecordingExecutor("sense.temp"));
+
+        var refused = kernel.Authorize(new CapabilityRequest { Capability = "act.relay_1" }, Now);
+        var sensed = kernel.Authorize(new CapabilityRequest { Capability = "sense.temp" }, Now);
+
+        Assert.False(refused.Authorized);
+        Assert.Equal(RefusalReason.NoRecordCapacity, refused.Refusal);
+        Assert.Contains("14 of 14 records pending", refused.Detail);
+
+        // A full queue must not blind the mound, for the same reason a stop does not: a reading that
+        // cannot be queued is a lost reading, an actuation that cannot be queued is a physical
+        // change nobody can account for. Only the second is worth refusing over.
+        Assert.True(sensed.Authorized, sensed.DescribeRefusal());
+
+        // And nothing was touched on the way to the refusal.
+        kernel.Execute(new CapabilityRequest { Capability = "act.relay_1" }, Now);
+        Assert.Equal(0, relay.Runs);
+    }
+
+    private sealed class RecordingExecutor(string id) : ICapabilityExecutor
+    {
+        public string CapabilityId { get; } = id;
+        public bool IsAvailable => true;
+        public int Runs { get; private set; }
+
+        public ExecutionOutcome Execute(CapabilityExecution execution)
+        {
+            Runs++;
+            return ExecutionOutcome.Ok([], execution.StartedAt);
+        }
+    }
+
+    private static Charter Benign(string moundId) => new()
+    {
+        CharterId = "c-1", MoundId = moundId, MissionRef = "m",
+        IssuedAt = Now.ToWire(), ExpiresAt = Now.AddHours(2).ToWire(),
+        LeaseTtlSeconds = 3600, ActionCeiling = "benign",
+        Capabilities = ["sense.temp", "act.relay_1"],
+        SafeState = "all_actuators_off"
+    };
 }
 
 /// <summary>

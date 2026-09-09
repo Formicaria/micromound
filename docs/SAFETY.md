@@ -124,9 +124,19 @@ Also at this layer:
 - **The audit path is bounded, and what it loses is counted.** A queue that grows without limit ends
   in a full disk, and a mound that cannot write cannot record what it did. The uplink queue is
   therefore bounded by items and bytes, spills oldest-first when it must, and reports the count on
-  the next beat — the chain makes a gap detectable, and the count makes it explicable. A
-  reduced-profile device does the stricter thing and refuses to record rather than dropping; moving
-  the host to the same rule is named work, not a claim already made.
+  the next beat — the chain makes a gap detectable, and the count makes it explicable.
+- **A mound that cannot record what it did must not do it.** The bound above is now enforced BEFORE
+  the effect rather than after it: the kernel's fourteenth check refuses new physical work once the
+  audit path has no room for the record that work would produce (`no_record_capacity`, `v0.9.37`).
+  Enforcing it afterwards meant spilling — trading history the mound already owed for work it had
+  not done yet, which is the wrong trade in a system whose whole claim is that every actuation is
+  accounted for. Refusing loses only the work, and the controller can ask again. Both profiles do
+  this now; the reduced-profile device used to refuse to *record* while still acting, which was the
+  same defect wearing the opposite failure. The queue holds a slice of its bound back so the refusal
+  can always itself be recorded — a mound that could refuse but not say so would have swapped one
+  silent failure for another. **Observation is exempt**, for the same reason a stop does not blind
+  the mound, which means sensing can still fill a queue past that reserve; the mound then loses
+  readings rather than the account of what it physically did.
 - **What the hardware owes survives a restart.** A capability's minimum off-time and its rate budget
   are limits on the DEVICE, not on a session: they persist and are restored before anything may ask
   the hardware for more, so a reboot cannot hand back a cooldown that was already spent. And what the

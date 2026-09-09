@@ -101,6 +101,28 @@ public sealed class MoundHostTests : IDisposable
         Assert.True(Directory.Exists(Path.Combine(_dir, "state")));   // durable state directory created
     }
 
+    /// <remarks>
+    /// P0.7, `v0.9.37`: the kernel's check 14 is only as real as the composition that attaches it.
+    /// A kernel with no audit path wired skips the check entirely — the right default for one built
+    /// with no queue behind it — so a regression in the wiring would be invisible in every other
+    /// test, including the fixture that pins the rule itself.
+    /// </remarks>
+    [Fact]
+    public void A_composed_host_wires_its_uplink_queue_to_the_kernels_audit_check()
+    {
+        var host = MoundHost.Create(new HostOptions
+        {
+            Keys = Ed25519KeyPair.Generate(),
+            Manifest = Greenhouse("mm-host-01"),
+            StateDirectory = _dir
+        });
+
+        Assert.NotNull(host.Kernel.Audit);
+        Assert.True(host.Kernel.Audit!.CapacityForNewWork > 0,
+            "a real mound must present a bound to check 14; zero or less reads as 'no bound in force'");
+        Assert.Equal(0, host.Kernel.Audit.PendingRecords);
+    }
+
     [Fact]
     public void A_mission_runs_end_to_end_and_the_generic_actuator_clamps_to_its_hardware_limit()
     {

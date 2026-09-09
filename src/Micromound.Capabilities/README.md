@@ -57,9 +57,20 @@ The order is a safety statement, not an implementation detail:
 | 11 | Trailing-hour rate | `rate_limit` |
 | 12 | Clamp rather than refuse, and say what narrowed | — |
 | 13 | An executor is bound | `executor_missing` |
+| 14 | The audit path can hold the record this would produce | `no_record_capacity` |
 
 Stop is first because it must work when everything else is broken. Hazardous is refused before
 authority is even consulted, so that no charter can ever be the reason it was allowed.
+
+Audit capacity is LAST for the mirror-image reason: everything above answers "may this happen?",
+and those answers are the ones somebody can act on — a lease to renew, a charter to widen, a
+cooldown to wait out. Check 14 answers "can we account for it?", and it must not mask a refusal
+anyone could fix. It applies only above `observe`: a reading that cannot be queued is a lost
+reading, while an actuation that cannot be queued is a physical change nobody can account for, and
+darkening the instruments when the queue backs up would take an operator's eyes away exactly when
+they are needed. The kernel learns the two numbers it compares through `IAuditCapacity`, and
+applies one rule — `pending < capacity` — so the C mirror cannot come to mean something different
+by "full".
 
 ## Three limit tiers
 

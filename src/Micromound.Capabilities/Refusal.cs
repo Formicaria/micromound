@@ -42,7 +42,13 @@ public enum RefusalReason
     /// <summary>Authorized, but nothing is wired up to actually perform it.</summary>
     ExecutorMissing,
     /// <summary>The driver refused or faulted at execution time.</summary>
-    DriverFault
+    DriverFault,
+    /// <summary>
+    /// The audit path cannot accept the record this work would produce. A mound that cannot record
+    /// what it did must not do it — an unrecorded actuation is the silent failure SAFETY.md
+    /// prohibits, and it is worse than the work not happening.
+    /// </summary>
+    NoRecordCapacity
 }
 
 public static class RefusalReasons
@@ -66,6 +72,7 @@ public static class RefusalReasons
         RefusalReason.RateLimit => "rate_limit",
         RefusalReason.ExecutorMissing => "executor_missing",
         RefusalReason.DriverFault => "driver_fault",
+        RefusalReason.NoRecordCapacity => "no_record_capacity",
         _ => "refused"
     };
 }

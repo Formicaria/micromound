@@ -280,8 +280,12 @@ Every actuation produces an `action_record`:
   `stopped`, `unknown_capability`, `capability_unavailable`, `no_charter`, `lease_expired`,
   `not_granted`, `routine_not_registered`, `routine_not_enabled`, `action_class_exceeded`,
   `hazardous_prohibited`, `missing_parameter`, `unknown_parameter`, `duty_cycle`, `rate_limit`,
-  `executor_missing`, `driver_fault`.
-- Refused actions are queued for the controller exactly like successful ones.
+  `executor_missing`, `driver_fault`, `no_record_capacity`.
+- Refused actions are queued for the controller exactly like successful ones. **`no_record_capacity`
+  is the one that exists because of that** (added in `v0.9.37`): a mound whose uplink queue has no
+  room left for the record an actuation would produce refuses the actuation rather than performing
+  it and losing the record. The queue holds a slice of its bound back so the refusal itself can
+  always be filed, which is what makes the refusal visible to a controller rather than a silence.
 - **`evidence` carries the referenced items themselves** (added in `v0.9.24`). A reduced-profile
   device (§8) has no `evidence_bundle` and no evidence store, so this is the only road a reading has
   to the controller: a device inlines every item its `evidence_refs` name. A Pi-class mound leaves
@@ -640,7 +644,7 @@ frame to the same payload. `mm_serial` is the board's HAL `http_post_json` over 
 ### Port requests (the board as a subordinate)
 
 The same framing, the roles reversed: a Pi-class mound's **own kernel** authorizes every action
-(hardware ∩ device ∩ charter, the thirteen checks, evidence gating — all on the Pi), and its generic
+(hardware ∩ device ∩ charter, the fourteen checks, evidence gating — all on the Pi), and its generic
 drivers reach the board's pins and channels as ports over the link. The board holds no key and
 decides nothing about authority. It keeps exactly two things for itself, because a board that
 merely obeyed would let a fault on the Pi become a fault in the world:

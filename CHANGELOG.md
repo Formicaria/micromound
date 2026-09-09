@@ -12,6 +12,95 @@ wire change is never a footnote here.
 
 ---
 
+## v0.9.37 — P0.7: a mound that cannot record what it did must not do it
+
+Roadmap P0.7, the harder half, and it closes the row. **No wire change to any body or envelope.**
+One addition to a closed set: `no_record_capacity` joins the refusal reasons (PROTOCOL.md §6), which
+a controller reading refusals by name will see for the first time.
+
+### What was wrong
+
+The uplink queue has been bounded since `v0.9.34` — it has to be, or a mound offline long enough
+fills its disk. But the bound was enforced *after* the effect. The actuation happened, the record
+was written, `Trim()` noticed the queue was over its ceiling, and the OLDEST envelope was spilled to
+make room. That trades history the mound already owes for work it has not done yet, which is exactly
+backwards for a system whose entire claim is that every physical action is accounted for. Refusing
+loses only the work, and a controller can ask for that again; spilling loses the account of
+something that already happened, and nobody can ask for that back.
+
+**The C mound had the same defect wearing the opposite failure.** The roadmap row used to say the
+reduced-profile device "already does it the right way round (a full queue refuses to record)". It
+does refuse to record — `mm_device` never drops anything — but `mm_device_act` ran
+`mm_kernel_execute` FIRST and only then discovered it had nowhere to file the result. The relay
+moved and the record was lost with an audit line saying so. Reading it again while writing this
+slice is what caught it; the row is corrected.
+
+### What changed
+
+**A fourteenth authorization check.** Last in the order, deliberately: everything above it answers
+"may this happen?", and those answers are the ones somebody can act on — a lease to renew, a charter
+to widen, a cooldown to wait out. This one answers "can we account for it?", and it must not mask a
+refusal anyone could fix.
+
+**Observation is exempt**, for the same reason a stop does not blind the mound (SAFETY.md Layer 3).
+A reading that cannot be queued is a lost reading; an actuation that cannot be queued is a physical
+change nobody can account for. Only the second is worth refusing over, and darkening the instruments
+when the queue backs up would take an operator's eyes away exactly when they are needed.
+
+**The queue holds a reserve back.** An eighth of each bound — items and bytes — for records that
+EXPLAIN rather than report: the refusal this check produces, acknowledgements, the beat that carries
+the mound's state out. A mound that could refuse but not record the refusal would have swapped one
+silent failure for another. An eighth is chosen as a duration rather than a number: the reserve has
+to outlast the outage that filled the queue, at the rate refusals are produced, which is at most the
+rate work was being attempted — the same rate that filled it. An eighth of 5,000 records is 625
+refusals, four days at a ten-minute schedule.
+
+**Two integers, one rule, both implementations.** The kernel learns `PendingRecords` and
+`CapacityForNewWork` through `IAuditCapacity` and applies exactly `pending < capacity`; `mm_kernel`
+applies the same rule over the same two `int`s. A bool would have let "full" come to mean two
+different things in C and C# with no fixture able to see it — the failure this whole mirror exists
+to prevent. When the BYTE bound is the one reached (the usual case on a real mound, where an action
+record with inline evidence dwarfs a beat) the queue reports capacity as the current depth, so the
+one comparison still says "full" without the kernel learning what a byte is.
+
+The join lives in `Micromound.Runtime` (`UplinkAuditCapacity`), because `Micromound.Sync` is Layer 1
+and must not take a reference up to Layer 3 for one pair of integers.
+
+### Pinned
+
+`kernel-decisions.txt` gained six steps, 42 → 48, appended so every earlier step stayed
+byte-identical: the audit path reaching capacity, an actuation refused before anything moves, a
+`sense` in the same state still authorized, a slot opening, and the actuation then proceeding. The C
+kernel replays all 48 and reproduces every reason, detail line and record. `test_device.c` pins the
+wiring the fixture cannot see — that `mm_device_act` feeds the kernel its own queue's numbers, and
+that the relay does not move.
+
+### Confirmed red first
+
+Each new assertion was run against the unfixed code before being kept: with check 14 disabled, the
+fixture and the end-to-end refusal test fail; with the reserve removed, all four queue tests fail;
+with the composition line commented out, the wiring test fails; and in C, with the two assignments in
+`mm_device_act` removed, six checks fail — including `relay.n == before`, which is the one that says
+the line really did move.
+
+### Remaining, named
+
+**Sensing can still fill the queue past the reserve**, because check 14 exempts it. The mound then
+loses readings rather than the account of what it physically did, which is the right way round, but
+it is a real limit and not a claim to have closed. **The `downlink-ledger` key still rewrites whole**
+— the same shape `v0.9.34` fixed for the uplink queue, at a much smaller bound.
+
+### Verified
+
+593 C# tests, 2,624 C checks under gcc and clang at `-O0` and `-O2` and again under ASan + UBSan with
+recovery off, all three ESP-IDF images built under v5.3.2 (Wi-Fi 1,027,056 B; serial 296,768 B; port
+server 260,704 B — the port server has no kernel and is unchanged), acceptance 18/18 on the firmware
+leg and 15/15 applicable in memory, the console harness, and the simulator's lifecycle claims. Every
+frozen fixture other than `kernel-decisions.txt` is byte-identical. Not run: the NuGet restore
+(firewalled), and any of it on real hardware.
+
+---
+
 ## v0.9.36 — P0.10: .NET 10 LTS, and not one signed byte moved
 
 Roadmap P0.10. **No wire change, and that is the whole point of the release.** No source file

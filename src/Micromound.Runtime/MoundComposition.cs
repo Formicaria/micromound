@@ -107,6 +107,14 @@ public static class MoundComposition
         // policy is identical either way, only the substrate differs.
         evidenceStore ??= new InMemoryEvidenceStore(evidenceCapacity, evidenceHardCeiling);
         var queue = new DurableUplinkQueue(store);
+
+        // The kernel's check 14: new physical work is refused once the queue has no room for the
+        // record that work would produce. Wired here because this is the only place holding both
+        // ends. Left unwired the kernel's `Audit` is null and the check does not apply, which is the
+        // right default for a kernel composed with no audit path at all — but every real mound comes
+        // through here, so every real mound has it.
+        kernel.Audit = new UplinkAuditCapacity(queue);
+
         var cache = new CacheAnt(store);
 
         // The guard's health evidence rides the evidence sink defined below, so a watchdog that forced

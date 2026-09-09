@@ -378,3 +378,48 @@ state:     chartered
 at:        2026-08-14T23:05:51Z  (+7300s)
 event:     charter refused: capability 'act.laser' is not physically present on this device; limits key 'act.dimmer' matches no granted capability or routine
 state:     chartered
+
+## step 43 — a fresh benign charter, so the audit path is tested against real authority
+at:        2026-08-14T23:50:51Z  (+10000s)
+event:     charter accepted | review: charter limits for 'act.relay_1' try to widen the hardware bound; the hardware bound stands
+state:     chartered
+
+## step 44 — the audit path reaches capacity
+at:        2026-08-14T23:50:52Z  (+10001s)
+event:     audit path: 40 pending, capacity 40
+state:     chartered
+
+## step 45 — the audit path is full: actuation refused before anything moves
+at:        2026-08-14T23:50:53Z  (+10002s)
+request:   act.relay_1 {"on_s":5}
+decision:  refused no_record_capacity
+detail:    the audit path is full (40 of 40 records pending); a mound that cannot record what it did must not do it
+effective: {} clamped=false evidence_required=false
+limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
+state:     chartered
+record:    {"action_id":"a-45","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{},"started_at":"2026-08-14T23:50:53Z","ended_at":"2026-08-14T23:50:53Z","outcome":"refused","evidence_required":true,"evidence_refs":[],"evidence":[],"detail":"no_record_capacity: the audit path is full (40 of 40 records pending); a mound that cannot record what it did must not do it"}
+
+## step 46 — the audit path is full: sensing continues
+at:        2026-08-14T23:50:54Z  (+10003s)
+request:   sense.temp {}
+decision:  authorized
+detail:    
+effective: {} clamped=false evidence_required=false
+limits:    {"max_on_s":null,"min_off_s":null,"min":null,"max":null,"max_rate_per_h":null}
+state:     chartered
+record:    {"action_id":"a-46","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"sense.temp","routine_id":"","requested_parameters":{},"parameters":{},"started_at":"2026-08-14T23:50:54Z","ended_at":"2026-08-14T23:50:54Z","outcome":"succeeded","evidence_required":false,"evidence_refs":["e-sense.temp-5"],"evidence":[],"detail":""}
+
+## step 47 — one slot opens
+at:        2026-08-14T23:50:55Z  (+10004s)
+event:     audit path: 39 pending, capacity 40
+state:     chartered
+
+## step 48 — one slot left in the audit path: actuation proceeds
+at:        2026-08-14T23:50:56Z  (+10005s)
+request:   act.relay_1 {"on_s":5}
+decision:  authorized
+detail:    
+effective: {"on_s":5} clamped=false evidence_required=true
+limits:    {"max_on_s":30,"min_off_s":300,"min":null,"max":null,"max_rate_per_h":4}
+state:     chartered
+record:    {"action_id":"a-48","mission_id":"","charter_id":"c0000000-0000-4000-8000-000000000001","capability":"act.relay_1","routine_id":"","requested_parameters":{"on_s":5},"parameters":{"on_s":5},"started_at":"2026-08-14T23:50:56Z","ended_at":"2026-08-14T23:51:01Z","outcome":"succeeded","evidence_required":true,"evidence_refs":["e-act.relay_1-6"],"evidence":[],"detail":""}

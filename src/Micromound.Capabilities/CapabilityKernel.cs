@@ -26,9 +26,10 @@ namespace Micromound.Capabilities;
 ///  11. rate            — actuations in the trailing hour
 ///  12. clamp           — narrow the request rather than refusing it, and say so
 ///  13. executor        — something is actually wired up to do it
+///  14. audit capacity  — the mound can still record that this happened
 ///
-/// Authorization is a pure function of (registries, authority, history, request, now), so the
-/// rules are testable with no hardware, no simulator, and no wall clock.
+/// Authorization is a pure function of (registries, authority, history, audit capacity, request,
+/// now), so the rules are testable with no hardware, no simulator, and no wall clock.
 /// </summary>
 public sealed class CapabilityKernel(
     CapabilityRegistry capabilities,
@@ -45,6 +46,13 @@ public sealed class CapabilityKernel(
     public KernelAuthority Authority { get; } = authority;
 
     public ActuationHistory History { get; } = history ?? new ActuationHistory();
+
+    /// <summary>
+    /// The audit path this kernel must be able to record into, for check 14. Null means no bounded
+    /// audit path is wired to this kernel — the in-memory case, where there is no bound to hit — and
+    /// the check does not apply. <c>MoundHost</c> always wires the real uplink queue.
+    /// </summary>
+    public IAuditCapacity? Audit { get; set; }
 
     /// <summary>
     /// Bind a driver to a capability or routine. Returns the reasons it was rejected; an empty
@@ -243,6 +251,37 @@ public sealed class CapabilityKernel(
         if (!_executors.ContainsKey(target.Id))
             return KernelDecision.Refuse(RefusalReason.ExecutorMissing,
                 $"'{target.Id}' is authorized but no executor is bound to it", requested);
+
+        // 14. And the mound has to be able to SAY that it did it.
+        //
+        //     Every actuation owes the controller a record, and that record has to survive in the
+        //     uplink queue until it is acknowledged. The queue is bounded, and until `v0.9.37` the
+        //     bound was enforced after the fact: the work happened, the record was written, and the
+        //     oldest envelope was spilled to make room. That trades history the mound already owes
+        //     for work it has not done yet — the wrong way round. Refusing loses only the latter,
+        //     and the controller can ask again.
+        //
+        //     LAST, deliberately. Everything above answers "may this happen?", and those answers
+        //     are the ones an operator can act on — a lease to renew, a charter to widen, a
+        //     cooldown to wait out. This one answers "can we account for it?", and it should not
+        //     mask a refusal someone could fix. It is also why the queue holds a reserve back: the
+        //     refusal this produces is itself a record, and a mound that could refuse but not
+        //     record the refusal would have swapped one silent failure for another.
+        //
+        //     Observation is exempt, for the same reason a stop does not blind the mound
+        //     (SAFETY.md Layer 3). A reading that cannot be queued is a lost reading; an actuation
+        //     that cannot be queued is a physical change nobody can account for. Only the second is
+        //     worth refusing over, and darkening the instruments when the queue backs up would take
+        //     the mound's eyes away exactly when an operator needs them.
+        if (target.Class > ActionClass.Observe && Audit is { } audit)
+        {
+            var capacity = audit.CapacityForNewWork;
+            var pending = audit.PendingRecords;
+            if (capacity > 0 && pending >= capacity)
+                return KernelDecision.Refuse(RefusalReason.NoRecordCapacity,
+                    $"the audit path is full ({pending} of {capacity} records pending); " +
+                    "a mound that cannot record what it did must not do it", requested);
+        }
 
         double? duration = target.DurationParameter is { } durationName &&
                            effective.TryGetValue(durationName, out var durationValue)
